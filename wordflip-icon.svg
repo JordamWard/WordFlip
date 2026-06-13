@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="140%" y2="140%">
+      <stop offset="0%" style="stop-color:#1e3248"/>
+      <stop offset="100%" style="stop-color:#0a1520"/>
+    </linearGradient>
+    <linearGradient id="mintTile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00e8b8"/>
+      <stop offset="100%" style="stop-color:#00c49f"/>
+    </linearGradient>
+    <linearGradient id="amberTile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffc620"/>
+      <stop offset="100%" style="stop-color:#e6a800"/>
+    </linearGradient>
+    <linearGradient id="darkTile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a2f45"/>
+      <stop offset="100%" style="stop-color:#0e1e2e"/>
+    </linearGradient>
+    <!-- Flipping tile face gradient -->
+    <linearGradient id="flipFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f5edd6"/>
+      <stop offset="100%" style="stop-color:#e8dfc8"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glowMint">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowAmber">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- App background -->
+  <rect width="512" height="512" rx="110" ry="110" fill="url(#bg)"/>
+
+  <!-- Subtle grid texture -->
+  <pattern id="dots" x="0" y="0" width="30" height="30" patternUnits="userSpaceOnUse">
+    <circle cx="15" cy="15" r="1.5" fill="#1e3a55" opacity="0.5"/>
+  </pattern>
+  <rect width="512" height="512" rx="110" ry="110" fill="url(#dots)"/>
+
+  <!--
+    Layout: 2×2 grid of tiles.
+    Settled tiles: 108×108, gap 14. Total: 230. Start x=(512-230)/2=141, y same.
+    Top-left: dark (face-down)
+    Top-right: mint found — W
+    Bottom-right: amber selected — F
+    Center: THE FLIPPING TILE (mid-air, bigger, raised)
+    The flipping tile is bottom-left, shown in perspective as it rotates.
+    We simulate a mid-flip by drawing it as a thin trapezoid (perspective squish)
+    with the face side partially revealed.
+  -->
+
+  <!-- TOP-LEFT: dark face-down tile -->
+  <rect x="130" y="118" width="108" height="108" rx="18" ry="18"
+        fill="url(#darkTile)" stroke="#2a4060" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="184" y="185" text-anchor="middle" font-size="38" fill="#2a4060" font-weight="900" font-family="serif">✦</text>
+
+  <!-- TOP-RIGHT: mint found — W -->
+  <rect x="274" y="118" width="108" height="108" rx="18" ry="18"
+        fill="url(#mintTile)" stroke="#00F5C4" stroke-width="1.5" filter="url(#glowMint)"/>
+  <text x="328" y="201" text-anchor="middle" font-size="70" font-weight="800"
+        font-family="'Courier New', Courier, monospace" fill="#083d2c">W</text>
+
+  <!-- BOTTOM-RIGHT: amber selected — F -->
+  <rect x="274" y="286" width="108" height="108" rx="18" ry="18"
+        fill="url(#amberTile)" stroke="#FFB703" stroke-width="1.5" filter="url(#glowAmber)"/>
+  <text x="328" y="369" text-anchor="middle" font-size="70" font-weight="800"
+        font-family="'Courier New', Courier, monospace" fill="#4a2e00">F</text>
+
+  <!--
+    BOTTOM-LEFT: MID-FLIP tile.
+    Simulate a card rotating ~60° around its vertical axis using a perspective-squished trapezoid.
+    The "back" (dark) is mostly gone; we see the front face (ivory) emerging from the left.
+    The tile is slightly elevated (translate up ~10px) and has a bigger shadow.
+
+    Front face: ivory trapezoid (wide on right, narrow on left — mid-rotation)
+    We'll use a parallelogram shape for the face.
+  -->
+
+  <!-- Shadow beneath flipping tile (elongated) -->
+  <ellipse cx="184" cy="408" rx="58" ry="10" fill="#000" opacity="0.35"/>
+
+  <!-- Back face peeking (dark, thin sliver on the left) -->
+  <polygon points="134,275 148,275 148,385 134,385"
+           fill="#0e1e2e" stroke="#2a4060" stroke-width="1"/>
+
+  <!-- Front face of flipping tile (perspective trapezoid, ivory) -->
+  <!-- Left edge x=148, right edge x=238. Top/bottom rounded via clipPath trick -->
+  <clipPath id="flipClip">
+    <rect x="148" y="272" width="92" height="116" rx="14" ry="14"/>
+  </clipPath>
+  <rect x="148" y="272" width="92" height="116" rx="14" ry="14"
+        fill="url(#flipFace)" clip-path="url(#flipClip)" filter="url(#shadow)"/>
+  <!-- Letter O being revealed -->
+  <text x="194" y="355" text-anchor="middle" font-size="60" font-weight="800"
+        font-family="'Courier New', Courier, monospace" fill="#0D1B2A"
+        clip-path="url(#flipClip)">O</text>
+  <!-- Shine line on front face -->
+  <line x1="158" y1="280" x2="158" y2="376" stroke="#fff" stroke-width="2" opacity="0.25" clip-path="url(#flipClip)"/>
+
+  <!-- Motion lines to show the tile is flipping (3 arcs above) -->
+  <path d="M 155 265 Q 184 248 213 265" fill="none" stroke="#00F5C4" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M 162 255 Q 184 240 206 255" fill="none" stroke="#00F5C4" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+  <path d="M 169 246 Q 184 233 199 246" fill="none" stroke="#00F5C4" stroke-width="1.5" stroke-linecap="round" opacity="0.25"/>
+
+</svg>

@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>WordFlip</title>
+  <meta name="description" content="WordFlip — a daily word memory game. Flip tiles, spell words, earn points." />
+  <meta name="theme-color" content="#0D1B2A" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="icon" href="/wordflip-icon.svg" type="image/svg+xml" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="WordFlip" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- Social / Open Graph -->
+  <meta property="og:title" content="WordFlip" />
+  <meta property="og:description" content="A daily word memory game — flip tiles, spell words, earn points." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://wordflipgame.netlify.app" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="WordFlip" />
+  <meta name="twitter:description" content="A daily word memory game — flip tiles, spell words, earn points." />
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body, #root { height: 100%; min-height: 100%; }
+    body { background: #0D1B2A; overflow-x: hidden; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+// ─── Word Bank ────────────────────────────────────────────────────────────────
+// 200 common 4-letter words, grouped into themed sets of 4 and 9
+const ALL_WORDS_4 = [
+  ["FROG","JUMP","CLAW","WAVE"],["BOLT","FIRE","GUST","RAIN"],
+  ["FISH","DART","GLOW","RUNE"],["PINE","DUSK","HAZE","MIST"],
+  ["BARK","LEAF","ROOT","SEED"],["COVE","FOAM","TIDE","REEF"],
+  ["GOLD","LOOM","SPIN","YARN"],["BASK","HUSH","VIBE","ZEAL"],
+  ["BARN","CROP","FARM","PLOW"],["ARCH","DOME","GATE","WALL"],
+  ["BREW","CAFE","MALT","POUR"],["BELL","DRUM","HORN","TUNE"],
+  ["CAVE","GUST","PEAK","SNOW"],["BIRD","NEST","SONG","WING"],
+  ["BOOK","CLUB","READ","TALE"],["BOAT","OARS","SAIL","WAKE"],
+  ["CHEF","HERB","SALT","STEW"],["CLAY","KILN","MOLD","OVEN"],
+  ["COIN","MINT","RICH","SAFE"],["CORK","CASK","VINE","WINE"],
+  ["DAMP","FERN","MOSS","POND"],["DAWN","MORN","PINK","ROSY"],
+  ["DEER","FAWN","HERD","WILD"],["DESK","LAMP","NOTE","PENS"],
+  ["DUNE","SAND","SURF","WIND"],["EAST","MAPS","ROAD","TREK"],
+  ["EDEN","LUSH","PALM","WARM"],["FEAT","BOLD","HERO","MYTH"],
+  ["FLAG","LAND","PORT","SHIP"],["FLEX","GRIP","PUMP","SLIM"],
+  ["FLUX","GEAR","GYRO","SPIN"],["FOLK","JIVE","STEP","SWAY"],
+  ["FORD","LAKE","RAFT","ROCK"],["FUSE","LAMP","PLUG","WIRE"],
+  ["GALE","GUST","HAIL","SNOW"],["GLUE","NAIL","TAPE","WOOD"],
+  ["GRAM","KILO","CUBE","UNIT"],["GRIN","JEST","JOKE","WINK"],
+  ["HIKE","MAPS","PACK","TREK"],["HOPE","KIND","LOVE","WARM"],
+  ["HUNT","PREY","TRAP","WILD"],["IRIS","LILY","ROSE","STEM"],
+];
+
+const ALL_WORDS_9 = [
+  ["FROG","JUMP","CLAW","WAVE","BOLT","FIRE","GUST","RAIN","MIST"],
+  ["PINE","DUSK","HAZE","BARK","LEAF","ROOT","COVE","FOAM","TIDE"],
+  ["GOLD","LOOM","SPIN","YARN","BASK","GLOW","HUSH","VIBE","REEF"],
+  ["BARN","CROP","FARM","PLOW","SEED","SOIL","RAIN","HUSK","BALE"],
+  ["ARCH","DOME","GATE","WALL","BEAM","BOLT","TILE","ROOF","STEP"],
+  ["BIRD","NEST","SONG","WING","BEAK","CLAW","FERN","VALE","REED"],
+  ["BOAT","OARS","SAIL","WAKE","WAVE","FOAM","ROPE","DECK","MAST"],
+  ["CAVE","PEAK","SNOW","MELT","ROCK","MOSS","FERN","GLEN","RILL"],
+  ["DAWN","MORN","PINK","ROSY","DUSK","HAZE","GLOW","STAR","HALO"],
+];
+
+// Daily words: deterministic by date from the 4-word bank
+function getDailyWords() {
+  const d = new Date();
+  const idx = (d.getFullYear() * 500 + (d.getMonth()+1) * 31 + d.getDate()) % ALL_WORDS_4.length;
+  return ALL_WORDS_4[idx];
+}
+
+function dateKey() {
+  const d = new Date();
+  return `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length-1; i>0; i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+
+function pickRandom(pool) {
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function buildTiles(words) {
+  const tiles = [];
+  words.forEach((word,wi) => word.split("").forEach((letter,li) => {
+    tiles.push({ id:`${wi}-${li}`, letter });
+  }));
+  return shuffle(tiles);
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms/1000), m = Math.floor(s/60);
+  return `${m}:${String(s%60).padStart(2,"0")}`;
+}
+
+function scoreCalc(ms, wordResults, wrongGuesses) {
+  const greenPts = wordResults.filter(r=>r==="green").length * 300;
+  const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
+  const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
+  const guessBonus = Math.max(0, 1200 - (wrongGuesses||0) * 100); // 1200 pts, -100/wrong guess
+  return greenPts + yellowPts + timeBonus + guessBonus;
+}
+
+// ─── localStorage helpers ─────────────────────────────────────────────────────
+function getLeaderboard() {
+  try { return JSON.parse(localStorage.getItem("wf_leaderboard")||"[]"); } catch { return []; }
+}
+function saveScore(entry) {
+  const lb = getLeaderboard();
+  lb.push(entry); lb.sort((a,b)=>b.score-a.score);
+  localStorage.setItem("wf_leaderboard", JSON.stringify(lb.slice(0,20)));
+}
+function getDailyBest() {
+  try { return JSON.parse(localStorage.getItem(dateKey()+"_best")||"null"); } catch { return null; }
+}
+function saveDailyBest(score) {
+  const best = getDailyBest();
+  if (!best || score > best) localStorage.setItem(dateKey()+"_best", JSON.stringify(score));
+}
+function getDailyDone() {
+  try { return JSON.parse(localStorage.getItem(dateKey()+"_done")||"null"); } catch { return null; }
+}
+function setDailyDone(result) {
+  localStorage.setItem(dateKey()+"_done", JSON.stringify(result));
+}
+
+// ─── Streak helpers (no login needed — stored per device) ─────────────────────
+function getStreak() {
+  try { return JSON.parse(localStorage.getItem("wf_streak")||'{"count":0,"lastDate":""}'); }
+  catch { return { count:0, lastDate:"" }; }
+}
+function updateStreak() {
+  const today = dateKey();
+  const s = getStreak();
+  const yesterday = (() => {
+    const d = new Date(); d.setDate(d.getDate()-1);
+    return `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+  })();
+  if (s.lastDate === today) return s; // already counted today
+  const newCount = s.lastDate === yesterday ? s.count + 1 : 1;
+  const updated = { count: newCount, lastDate: today };
+  localStorage.setItem("wf_streak", JSON.stringify(updated));
+  return updated;
+}
+
+// ─── Share helper ─────────────────────────────────────────────────────────────
+function buildShareText(turns, ms, score, wordResults) {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const blocks = wordResults.map(r => r === "green" ? "\u{1F7E9}" : "\u{1F7E8}").join("");
+  return "WordFlip Daily \u00B7 " + date + "\n"
+    + blocks + "\n"
+    + turns + " guess" + (turns !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + score.toLocaleString() + " pts\n"
+    + "wordflipgame.netlify.app";
+}
+
+// ─── Fireworks ────────────────────────────────────────────────────────────────
+function Fireworks({ active }) {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+  const particles = useRef([]);
+  useEffect(() => {
+    if (!active) return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+    const colors = ["#00F5C4","#FFB703","#FF5E5B","#9B5DE5","#F5EDD6","#00BBF9"];
+    particles.current = [];
+    for (let b=0; b<8; b++) {
+      const x=Math.random()*canvas.width, y=Math.random()*canvas.height*0.6+50;
+      const color=colors[Math.floor(Math.random()*colors.length)];
+      for (let p=0; p<40; p++) {
+        const angle=(Math.PI*2*p)/40+Math.random()*0.3, speed=Math.random()*6+2;
+        particles.current.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed-2,alpha:1,color,r:Math.random()*3+1});
+      }
+    }
+    function frame() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      particles.current = particles.current.filter(p=>p.alpha>0.02);
+      particles.current.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.alpha*=0.96;
+        ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+      });
+      ctx.globalAlpha=1;
+      if (particles.current.length>0) animRef.current=requestAnimationFrame(frame);
+    }
+    animRef.current=requestAnimationFrame(frame);
+    return ()=>cancelAnimationFrame(animRef.current);
+  },[active]);
+  if (!active) return null;
+  return <canvas ref={canvasRef} style={{position:"fixed",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:999}} />;
+}
+
+// ─── Score Info Tooltip ───────────────────────────────────────────────────────
+function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
+  const [open, setOpen] = useState(false);
+  const results = wordResults || [];
+  const greens = results.filter(r=>r==="green").length;
+  const yellows = results.filter(r=>r==="yellow").length;
+  const secs = Math.floor(elapsed/1000);
+  const timeBonus = Math.max(0, 600 - secs);
+  const guessBonus = Math.max(0, 1200 - (wrongGuesses||0)*100);
+  const current = greens*300 + yellows*100 + timeBonus + guessBonus;
+  return (
+    <span style={{ position:"relative", display:"inline-flex", alignItems:"center", marginLeft:4 }}>
+      <button onClick={e=>{ e.stopPropagation(); setOpen(o=>!o); }}
+        style={{ background:"#1e3048", border:"1.5px solid #2a4060", borderRadius:"50%", width:16, height:16, cursor:"pointer", padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", color:"#7a9cc0", fontSize:"0.6rem", fontWeight:900, lineHeight:1, flexShrink:0 }}
+        onMouseEnter={e=>{e.currentTarget.style.background="#2a4060";e.currentTarget.style.color="#F5EDD6";}}
+        onMouseLeave={e=>{e.currentTarget.style.background="#1e3048";e.currentTarget.style.color="#7a9cc0";}}
+        aria-label="Score info">i</button>
+      {open && (<>
+        <span onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:99}} />
+        <div style={{ position:"absolute", top:"calc(100% + 8px)", left:"50%", transform:"translateX(-50%)", background:"#0e1f30", border:"1.5px solid #2a4060", borderRadius:10, padding:"12px 14px", zIndex:100, width:230, boxShadow:"0 8px 32px #000a", animation:"menuIn 0.15s ease" }}>
+          <div style={{position:"absolute",top:-6,left:"50%",transform:"translateX(-50%)",width:10,height:6,overflow:"hidden"}}>
+            <div style={{width:10,height:10,background:"#2a4060",transform:"rotate(45deg)",transformOrigin:"bottom",marginTop:3}}/>
+          </div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORE FORMULA</p>
+          {[
+            {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"#00F5C4"},
+            {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"#FFB703"},
+            {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"#3a5570"},
+            {label:`🎯 Accuracy (${wrongGuesses||0} missed)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
+          ].map(row=>(
+            <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>{row.label}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:row.color,fontSize:"0.65rem",fontWeight:700,flexShrink:0}}>{row.val}</span>
+            </div>
+          ))}
+          <div style={{borderTop:"1px solid #1e3048",marginTop:6,paddingTop:6,display:"flex",justifyContent:"space-between"}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",fontWeight:700}}>Score so far</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.8rem",fontWeight:700}}>{current.toLocaleString()}</span>
+          </div>
+        </div>
+      </>)}
+    </span>
+  );
+}
+
+// ─── Tile ─────────────────────────────────────────────────────────────────────
+function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum }) {
+  return (
+    <div onClick={isFound?undefined:onClick} style={{width:"100%",aspectRatio:"1",perspective:"600px",cursor:isFound?"default":"pointer"}}>
+      <div style={{
+        position:"relative",width:"100%",height:"100%",transformStyle:"preserve-3d",
+        animation: isFound?"tileVanish 0.5s cubic-bezier(.4,0,.2,1) 0.15s both":"none",
+        transition: isFound?"none":"transform 0.22s cubic-bezier(.4,2,.6,1)",
+        transform: isFlipped?"rotateY(180deg)":"rotateY(0deg)",
+      }}>
+        <div style={{
+          position:"absolute",inset:0,backfaceVisibility:"hidden",
+          background:"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)",
+          borderRadius:10,border:"1.5px solid #1e3048",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          boxShadow:"0 2px 8px #00000066",
+          backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px)`,
+          backgroundSize:"12px 12px",
+        }}>
+          <span style={{color:"#1e3048",fontSize:"1.4em",fontWeight:900}}>✦</span>
+        </div>
+        <div style={{
+          position:"absolute",inset:0,backfaceVisibility:"hidden",
+          transform:"rotateY(180deg)",borderRadius:10,
+          background: isError?"#FF5E5B":isSelected?"linear-gradient(135deg,#FFB703,#ffcf40)":isFound&&foundInOrder?"linear-gradient(135deg,#00c49f,#00F5C4)":isFound?"linear-gradient(135deg,#c9a800,#FFB703)":"#F5EDD6",
+          border: isSelected?"2px solid #FFB703":isFound&&foundInOrder?"2px solid #00F5C4":isFound?"2px solid #FFB703":"2px solid #d4c9b0",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          boxShadow:isSelected?"0 0 16px #FFB70388":"0 2px 8px #00000044",
+          transition:"background 0.2s,box-shadow 0.2s,border 0.2s",
+        }}>
+          <span style={{
+            fontFamily:"'JetBrains Mono',monospace",
+            fontSize:"clamp(1.1rem,3.5vw,1.8rem)",fontWeight:800,
+            color:isError?"#fff":isSelected?"#3d2800":isFound&&!foundInOrder?"#3d2800":"#0D1B2A",letterSpacing:"0.05em",
+          }}>{tile.letter}</span>
+          {isFlipped&&!isFound&&orderNum!==undefined&&(
+            <span style={{position:"absolute",bottom:4,right:6,fontSize:"0.55em",fontWeight:700,opacity:0.4,color:isSelected?"#3d2800":"#0D1B2A"}}>{orderNum+1}</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Found Word Banner ────────────────────────────────────────────────────────
+function FoundWordBanner({ words, wordResults }) {
+  return (
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginBottom:12}}>
+      {words.map((word,i)=>{
+        const result = wordResults?.[i];
+        const isFound = !!result;
+        return (
+          <div key={i} style={{
+            padding:"4px 14px",borderRadius:20,
+            background: result==="green"?"linear-gradient(90deg,#00c49f,#00F5C4)":result==="yellow"?"linear-gradient(90deg,#c9a800,#FFB703)":"#0e1f30",
+            border: isFound?"none":"1.5px solid #1e3048",
+            fontFamily:"'JetBrains Mono',monospace",fontWeight:800,letterSpacing:"0.18em",
+            fontSize:"clamp(0.7rem,2.5vw,1rem)",
+            color: result==="green"?"#0a2e24":result==="yellow"?"#3d2800":"#3a5570",
+            transition:"all 0.4s cubic-bezier(.4,2,.6,1)",
+            transform:isFound?"scale(1.08)":"scale(1)",
+            boxShadow: result==="green"?"0 0 16px #00F5C466":result==="yellow"?"0 0 14px #FFB70355":"none",
+          }}>{word}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Game Board ───────────────────────────────────────────────────────────────
+function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
+  const cols = words.length===4?4:6;
+  const [tiles] = useState(()=>buildTiles(words));
+  const [flipped, setFlipped] = useState([]);
+  const [found, setFound] = useState([]);
+  const [foundTileIds, setFoundTileIds] = useState(new Set());
+  const [error, setError] = useState([]);
+  const [turns, setTurns] = useState(0);
+  const [hadError, setHadError] = useState(false);
+  const [wrongGuesses, setWrongGuesses] = useState(0);
+  const [wordResults, setWordResults] = useState({});
+  const [foundInOrderSet, setFoundInOrderSet] = useState(new Set());
+  const [elapsed, setElapsed] = useState(0);
+  const [started, setStarted] = useState(false);
+  const [flash, setFlash] = useState(null);
+  const timerRef = useRef(null);
+  const startRef = useRef(null);
+
+  useEffect(()=>{
+    if (!started) return;
+    startRef.current = Date.now()-elapsed;
+    timerRef.current = setInterval(()=>{
+      const e = Date.now()-startRef.current;
+      setElapsed(e);
+      if (timeLimit && e>=timeLimit*1000) { clearInterval(timerRef.current); onTimeUp&&onTimeUp(); }
+    },200);
+    return ()=>clearInterval(timerRef.current);
+  },[started]);
+
+  useEffect(()=>{
+    if (found.length===words.length) {
+      clearInterval(timerRef.current);
+      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses}),600);
+    }
+  },[found]);
+
+  const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
+
+  function handleTileClick(tile) {
+    if (!started) setStarted(true);
+    if (foundTileIds.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
+    const newFlipped=[...flipped,tile.id];
+    setFlipped(newFlipped);
+    if (newFlipped.length===4) {
+      setTurns(t=>t+1);
+      const ft = newFlipped.map(id=>tiles.find(t=>t.id===id));
+      const letters = ft.map(t=>t.letter);
+      const sorted = [...letters].sort().join("");
+      const matchIdx = words.findIndex((w,i)=>!found.includes(i)&&[...w].sort().join("")===sorted);
+      if (matchIdx===-1) {
+        setError(newFlipped); setFlash("bad"); setHadError(true); setWrongGuesses(g=>g+1);
+        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);},900); return;
+      }
+
+      const inOrder = letters.join("") === words[matchIdx];
+      setFlash(inOrder ? "good" : "goodYellow");
+      setTimeout(()=>{
+        setFound(f=>[...f,matchIdx]);
+        setWordResults(prev=>({...prev,[matchIdx]: inOrder?"green":"yellow"}));
+        if (inOrder) setFoundInOrderSet(prev=>new Set([...prev,...newFlipped]));
+        setFoundTileIds(prev=>new Set([...prev,...newFlipped]));
+        setHadError(false);
+        setFlipped([]); setFlash(null);
+      },420);
+    }
+  }
+
+  return (
+    <div style={{width:"100%",maxWidth:480,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",display:"flex",alignItems:"center",gap:4}}>
+          Guesses: <strong style={{color:"#FFB703"}}>{turns}</strong>
+          <ScoreInfoTip words={words} wordResults={Object.values(wordResults)} elapsed={elapsed} wrongGuesses={wrongGuesses} />
+        </span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",color:timeLeft!==null&&timeLeft<15?"#FF5E5B":"#7a9cc0"}}>
+          {timeLeft!==null?`⏱ ${timeLeft}s`:`⏱ ${formatTime(elapsed)}`}
+        </span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem"}}>
+          Found: <strong style={{color:"#00F5C4"}}>{found.length}/{words.length}</strong>
+        </span>
+      </div>
+      <FoundWordBanner words={words} wordResults={wordResults} />
+      <div style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:4}}>
+        {flash&&(
+          <span style={{fontFamily:"'Fraunces',serif",fontSize:"0.95rem",fontWeight:700,animation:"fadeInOut 0.5s ease",
+            color:flash==="good"?"#00F5C4":flash==="goodYellow"?"#FFB703":"#FF5E5B"}}>
+            {flash==="good"&&"🟩 Nice — bonus points!"}
+            {flash==="goodYellow"&&"🟨 Found! Try in order for more pts"}
+            {flash==="bad"&&"✗ Not a valid word here"}
+          </span>
+        )}
+      </div>
+      <div style={{
+        display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,
+        gap:"clamp(4px,1.5vw,10px)",padding:"clamp(4px,2vw,12px)",
+        background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
+        boxShadow:"0 4px 32px #00000055",
+      }}>
+        {tiles.map(tile=>(
+          <Tile key={tile.id} tile={tile}
+            isFlipped={flipped.includes(tile.id)}
+            isFound={foundTileIds.has(tile.id)}
+            foundInOrder={foundInOrderSet.has(tile.id)}
+            isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
+            isError={error.includes(tile.id)}
+            onClick={()=>handleTileClick(tile)}
+            orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined}
+          />
+        ))}
+      </div>
+      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>🟩 +300 · 🟨 +100 · bonus pts for speed & accuracy</p>
+    </div>
+  );
+}
+
+// ─── Score Receipt ────────────────────────────────────────────────────────────
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score }) {
+  const greens = wordResults.filter(r=>r==="green").length;
+  const yellows = wordResults.filter(r=>r==="yellow").length;
+  const wordPts = greens*300 + yellows*100;
+  const timePts = Math.max(0, 600 - Math.floor(elapsed/1000));
+  const guessPts = Math.max(0, 1200 - wrongGuesses*100);
+
+  const rows = [
+    { icon:"\u{1F524}", label:`Words (${greens}\u{1F7E9} ${yellows}\u{1F7E8})`, pts:wordPts, color:"#00F5C4" },
+    { icon:"\u23F1", label:`Time (${formatTime(elapsed)})`, pts:timePts, color:"#9B5DE5" },
+    { icon:"\u{1F3AF}", label:`Guesses (${wrongGuesses} missed)`, pts:guessPts, color:"#00BBF9" },
+  ];
+
+  return (
+    <div style={{
+      background:"#0a1520", border:"1.5px solid #1e3048", borderRadius:14,
+      padding:"16px 18px", marginBottom:20, textAlign:"left",
+    }}>
+      {rows.map((row,i)=>(
+        <div key={row.label} style={{
+          display:"flex", justifyContent:"space-between", alignItems:"baseline",
+          marginBottom:8, opacity:0,
+          animation:`receiptIn 0.3s ease ${0.15*(i+1)}s forwards`,
+        }}>
+          <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem"}}>
+            {row.icon} {row.label}
+          </span>
+          <span style={{
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:800,
+            color:row.color, fontSize:"0.88rem", flexShrink:0, marginLeft:12,
+          }}>
+            +{row.pts.toLocaleString()}
+          </span>
+        </div>
+      ))}
+      <div style={{
+        borderTop:"1.5px dashed #1e3048", marginTop:10, paddingTop:10,
+        display:"flex", justifyContent:"space-between", alignItems:"baseline",
+        opacity:0, animation:"receiptTotal 0.4s cubic-bezier(.4,2,.6,1) 0.65s forwards",
+      }}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem", fontWeight:700}}>
+          TOTAL
+        </span>
+        <span style={{fontFamily:"'Fraunces',serif", fontWeight:900, color:"#FFB703", fontSize:"1.6rem"}}>
+          {score.toLocaleString()} <span style={{fontSize:"0.85rem", fontWeight:700}}>pts</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Win Screen ───────────────────────────────────────────────────────────────
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak }) {
+  const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || "yellow");
+  const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses);
+  const [copied, setCopied] = useState(false);
+
+  function handleShare() {
+    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr);
+    const shareData = { title:"WordFlip Daily", text };
+    const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      navigator.share(shareData).catch(tryClipboard);
+    } else { tryClipboard(); }
+  }
+
+  return (
+    <div style={{textAlign:"center",maxWidth:400,margin:"0 auto",padding:20}}>
+      <div style={{fontSize:"3rem",marginBottom:8}}>🎉</div>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
+        {mode==="daily"?"Daily Complete!":"You Win!"}
+      </h2>
+      <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
+        {result.words.join(" · ")}
+      </p>
+      {isDaily&&streak&&(
+        <div style={{
+          display:"inline-flex",alignItems:"center",gap:8,
+          background:"#1a1200",border:"1.5px solid #FFB703",
+          borderRadius:20,padding:"6px 16px",marginBottom:16,
+        }}>
+          <span style={{fontSize:"1.2rem"}}>🔥</span>
+          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>
+            {streak} day streak
+          </span>
+        </div>
+      )}
+      <ScoreReceipt
+        wordResults={wordResultsArr}
+        elapsed={result.elapsed}
+        wrongGuesses={result.wrongGuesses||0}
+        turns={result.turns}
+        score={score}
+      />
+      <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
+        {isDaily&&(
+          <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"#1e3048",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
+            {copied?"✓ Copied!":"📤 Share"}
+          </button>
+        )}
+        {!isDaily&&(
+          <button onClick={onPlayAgain} style={btnStyle("#00F5C4","#0a2e24")}>Play Again</button>
+        )}
+        <button onClick={onMenu} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+      </div>
+    </div>
+  );
+}
+
+function btnStyle(bg,color) {
+  return {
+    background:bg,color,border:"none",borderRadius:10,
+    padding:"10px 24px",fontFamily:"'JetBrains Mono',monospace",
+    fontWeight:700,fontSize:"0.9rem",cursor:"pointer",transition:"opacity 0.15s",
+  };
+}
+
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+function LeaderboardView({ onBack }) {
+  const lb = getLeaderboard().filter(e => e.mode === "daily");
+  const streak = getStreak();
+  return (
+    <div style={{maxWidth:420,margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:0}}>Daily Leaderboard</h2>
+        <div style={{display:"flex",alignItems:"center",gap:6,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:16,padding:"4px 12px"}}>
+          <span>🔥</span>
+          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700,fontSize:"0.9rem"}}>{streak.count} day streak</span>
+        </div>
+      </div>
+      {lb.length===0?(
+        <p style={{color:"#2a4060",fontFamily:"'JetBrains Mono',monospace"}}>No scores yet. Complete a Daily Challenge to get on the board!</p>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {lb.map((entry,i)=>(
+            <div key={i} style={{
+              display:"flex",justifyContent:"space-between",alignItems:"center",
+              background:"#0a1520",borderRadius:10,padding:"10px 16px",
+              border:i===0?"1.5px solid #FFB703":"1.5px solid #1e3048",
+            }}>
+              <span style={{fontFamily:"'Fraunces',serif",color:i===0?"#FFB703":i===1?"#aaa":i===2?"#cd7f32":"#2a4060",fontWeight:700,fontSize:"1.1rem",minWidth:28}}>{i+1}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",flex:1,marginLeft:8}}>
+                {entry.date} · {entry.turns} guesses · {formatTime(entry.elapsed)}
+              </span>
+              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{entry.score.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Local Multiplayer ────────────────────────────────────────────────────────
+function LocalMultiScreen({ onBack }) {
+  const [playerCount,setPlayerCount] = useState(2);
+  const [started,setStarted] = useState(false);
+  const [scores,setScores] = useState([0,0]);
+  const [currentPlayer,setCurrentPlayer] = useState(0);
+  const [gameOver,setGameOver] = useState(false);
+  const [words] = useState(()=>pickRandom(ALL_WORDS_9));
+  const [foundWords,setFoundWords] = useState([]);
+  const [tiles] = useState(()=>buildTiles(words));
+  const [flipped,setFlipped] = useState([]);
+  const [error,setError] = useState([]);
+  const [flash,setFlash] = useState(null);
+  const [turns,setTurns] = useState(0);
+  const [foundTileIdsMulti,setFoundTileIdsMulti] = useState(new Set());
+  const COLORS=["#00F5C4","#FFB703","#FF5E5B","#9B5DE5"];
+  const playerNames=Array.from({length:playerCount},(_,i)=>`Player ${i+1}`);
+
+  useEffect(()=>{ if (!started) setScores(Array(playerCount).fill(0)); },[playerCount]);
+
+  if (!started) return (
+    <div style={{textAlign:"center",maxWidth:360,margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 20px"}}>Local Multiplayer</h2>
+      <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",marginBottom:8}}>Players</p>
+      <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:20}}>
+        {[2,3,4].map(n=>(
+          <button key={n} onClick={()=>setPlayerCount(n)} style={{...btnStyle(playerCount===n?"#FFB703":"#1e3048",playerCount===n?"#0D1B2A":"#7a9cc0"),padding:"8px 18px"}}>{n}</button>
+        ))}
+      </div>
+      <button onClick={()=>setStarted(true)} style={{...btnStyle("#00F5C4","#0a2e24"),width:"100%",padding:"14px",borderRadius:12}}>Start Game</button>
+    </div>
+  );
+
+  if (gameOver) {
+    const maxScore=Math.max(...scores);
+    const winners=scores.map((s,i)=>s===maxScore?i:-1).filter(i=>i>=0);
+    return (
+      <div style={{textAlign:"center",maxWidth:360,margin:"0 auto"}}>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 20px"}}>
+          {winners.length===1?`${playerNames[winners[0]]} Wins!`:"It's a Tie!"}
+        </h2>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
+          {scores.map((s,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",background:"#0a1520",borderRadius:10,padding:"10px 16px",border:`1.5px solid ${s===maxScore?COLORS[i]:"#1e3048"}`}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:COLORS[i],fontWeight:700}}>{playerNames[i]}</span>
+              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{s} words</span>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+          <button onClick={()=>{ setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); }} style={btnStyle("#00F5C4","#0a2e24")}>Rematch</button>
+          <button onClick={onBack} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+        </div>
+      </div>
+    );
+  }
+
+  const foundWordSet=new Set(foundWords.map(f=>f.wordIndex));
+
+  function handleTileClick(tile) {
+    if (foundTileIdsMulti.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
+    const newFlipped=[...flipped,tile.id];
+    setFlipped(newFlipped);
+    if (newFlipped.length===4) {
+      setTurns(t=>t+1);
+      const ft=newFlipped.map(id=>tiles.find(t=>t.id===id));
+      const letters=ft.map(t=>t.letter);
+      const sorted=[...letters].sort().join("");
+      const matchIdx=words.findIndex((w,i)=>!foundWordSet.has(i)&&[...w].sort().join("")===sorted);
+      if (matchIdx===-1) {
+        setError(newFlipped); setFlash("bad");
+        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);setCurrentPlayer(p=>(p+1)%playerCount);},700); return;
+      }
+      setFlash("good");
+      setTimeout(()=>{
+        const newFW=[...foundWords,{wordIndex:matchIdx,player:currentPlayer}];
+        setFoundWords(newFW);
+        setFoundTileIdsMulti(prev=>new Set([...prev,...newFlipped]));
+        const ns=[...scores]; ns[currentPlayer]++; setScores(ns);
+        setFlipped([]); setFlash(null);
+        if (newFW.length===words.length) setGameOver(true);
+      },400);
+    }
+  }
+
+  return (
+    <div style={{width:"100%",maxWidth:500,margin:"0 auto"}}>
+      <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:10,flexWrap:"wrap"}}>
+        {playerNames.map((name,i)=>(
+          <div key={i} style={{padding:"4px 14px",borderRadius:20,background:i===currentPlayer?COLORS[i]+"22":"#0a1520",border:`1.5px solid ${i===currentPlayer?COLORS[i]:"#1e3048"}`,fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8rem",color:i===currentPlayer?COLORS[i]:"#2a4060",fontWeight:i===currentPlayer?700:400,transition:"all 0.2s"}}>
+            {name}: {scores[i]}
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center",marginBottom:10}}>
+        {words.map((word,i)=>{
+          const fw=foundWords.find(f=>f.wordIndex===i);
+          return <div key={i} style={{padding:"3px 12px",borderRadius:20,background:fw?COLORS[fw.player]+"33":"#0e1f30",border:fw?`1.5px solid ${COLORS[fw.player]}`:"1.5px solid #1e3048",fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:"0.8rem",color:fw?COLORS[fw.player]:"#3a5570",letterSpacing:"0.15em",transition:"all 0.3s cubic-bezier(.4,2,.6,1)",transform:fw?"scale(1.06)":"scale(1)"}}>{word}</div>;
+        })}
+      </div>
+      <div style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:6}}>
+        {flash&&<span style={{fontFamily:"'Fraunces',serif",fontWeight:700,fontSize:"1rem",color:flash==="good"?"#00F5C4":flash==="goodYellow"?"#FFB703":"#FF5E5B"}}>
+          {flash==="good"?`✓ ${playerNames[currentPlayer]} found a word!`:"✗ Next player's turn"}
+        </span>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"clamp(3px,1.2vw,8px)",padding:"clamp(4px,2vw,12px)",background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048"}}>
+        {tiles.map(tile=>(
+          <Tile key={tile.id} tile={tile} isFlipped={flipped.includes(tile.id)} isFound={foundTileIdsMulti.has(tile.id)} isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)} isError={error.includes(tile.id)} onClick={()=>handleTileClick(tile)} orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined} />
+        ))}
+      </div>
+      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>
+        {playerNames[currentPlayer]}'s turn · Turn {turns+1}
+      </p>
+    </div>
+  );
+}
+
+// ─── Online placeholder ───────────────────────────────────────────────────────
+function OnlineScreen({ onBack }) {
+  return (
+    <div style={{textAlign:"center",maxWidth:360,margin:"0 auto",padding:20}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <div style={{fontSize:"2.5rem",marginBottom:12}}>🌐</div>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 12px"}}>Online Play</h2>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",lineHeight:1.6,marginBottom:20}}>
+        Online multiplayer requires a real-time backend. Coming soon!
+      </p>
+      <div style={{background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048",padding:16,textAlign:"left"}}>
+        <p style={{color:"#FFB703",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8rem",fontWeight:700,margin:"0 0 8px"}}>Planned:</p>
+        {["Create/join room with code","2–4 players on separate devices","60s turn timer","Live score sync"].map(f=>(
+          <p key={f} style={{color:"#2a4060",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.75rem",margin:"4px 0"}}>· {f}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Solo Setup ───────────────────────────────────────────────────────────────
+function SoloSetup({ onBack, onStart }) {
+  const [large,setLarge] = useState(false);
+  return (
+    <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"0 0 24px"}}>Solo Play</h2>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.8rem",marginBottom:10,letterSpacing:"0.08em"}}>GRID SIZE</p>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:24}}>
+        {[{label:"Small",sub:"4 words · 4×4",val:false},{label:"Large",sub:"9 words · 6×6",val:true}].map(opt=>(
+          <button key={opt.label} onClick={()=>setLarge(opt.val)} style={{background:large===opt.val?"#0e2a3a":"#0a1520",border:`2px solid ${large===opt.val?"#00F5C4":"#1e3048"}`,borderRadius:12,padding:"14px 12px",cursor:"pointer",textAlign:"left",transition:"all 0.15s",boxShadow:large===opt.val?"0 0 14px #00F5C422":"none"}}>
+            <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:large===opt.val?"#00F5C4":"#F5EDD6",fontSize:"1.05rem"}}>{opt.label}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>{opt.sub}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{background:"#0a1520",border:"1px solid #1e3048",borderRadius:12,padding:"14px 16px",marginBottom:24}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.75rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORING</p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",margin:0,lineHeight:1.9}}>
+          🟩 Flip in order → <strong style={{color:"#00F5C4"}}>+300 pts</strong><br/>
+          🟨 Any order → <strong style={{color:"#FFB703"}}>+100 pts</strong><br/>
+          ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec<br/>
+          🎯 Accuracy → <strong style={{color:"#00BBF9"}}>1200 pts</strong>, −100/miss
+        </p>
+      </div>
+      <button onClick={()=>onStart(large)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),width:"100%",padding:"14px",fontSize:"1rem",borderRadius:12,fontWeight:800}}>
+        Play →
+      </button>
+    </div>
+  );
+}
+
+// ─── Multi Setup ──────────────────────────────────────────────────────────────
+function MultiSetup({ onBack, onLocal, onOnline }) {
+  return (
+    <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"0 0 24px"}}>Multiplayer</h2>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <button onClick={onLocal} style={{background:"#0a1520",border:"2px solid #00F5C444",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
+          <span style={{fontSize:"2rem",lineHeight:1}}>👥</span>
+          <div>
+            <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#F5EDD6",fontSize:"1.05rem"}}>Local Play</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Pass the device · 2–4 players · 6×6 grid</div>
+          </div>
+        </button>
+        <button onClick={onOnline} style={{background:"#0a1520",border:"2px solid #9B5DE533",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left",opacity:0.7}}>
+          <span style={{fontSize:"2rem",lineHeight:1}}>🌐</span>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#F5EDD6",fontSize:"1.05rem"}}>Online Play</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,background:"#9B5DE533",color:"#9B5DE5",borderRadius:6,padding:"2px 7px",letterSpacing:"0.1em"}}>SOON</span>
+            </div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Play on separate devices · 60s turns</div>
+          </div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Daily Already Done Screen ────────────────────────────────────────────────
+function DailyAlreadyDone({ onMenu, streak }) {
+  const done = getDailyDone();
+  const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
+  const score = done ? scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses) : 0;
+  const [copied,setCopied] = useState(false);
+  function handleShare() {
+    const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
+    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr);
+    const shareData = { title:"WordFlip Daily", text };
+    const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      navigator.share(shareData).catch(tryClipboard);
+    } else { tryClipboard(); }
+  }
+  return (
+    <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
+      <div style={{fontSize:"3rem",marginBottom:12}}>✅</div>
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.8rem",margin:"0 0 8px"}}>Already Played!</h2>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",marginBottom:16}}>
+        Come back tomorrow for a new challenge.
+      </p>
+      {streak>0&&(
+        <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:20,padding:"6px 16px",marginBottom:16}}>
+          <span style={{fontSize:"1.2rem"}}>🔥</span>
+          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{streak} day streak</span>
+        </div>
+      )}
+      {done&&(
+        <ScoreReceipt
+          wordResults={wordResultsArr2}
+          elapsed={done.elapsed}
+          wrongGuesses={done.wrongGuesses||0}
+          turns={done.turns}
+          score={score}
+        />
+      )}
+      <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"#1e3048",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
+          {copied?"✓ Copied!":"📤 Share"}
+        </button>
+        <button onClick={onMenu} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+function WordFlip() {
+  const [screen,setScreen] = useState("menu");
+  const [soloLarge,setSoloLarge] = useState(false);
+  const [winResult,setWinResult] = useState(null);
+  const [winMode,setWinMode] = useState("");
+  const [winStreak,setWinStreak] = useState(0);
+  const [soloWords,setSoloWords] = useState(null);
+  const [fireworks,setFireworks] = useState(false);
+
+  const dailyBest = getDailyBest();
+  const streak = getStreak();
+
+  function startSolo(large) {
+    setSoloLarge(large);
+    setSoloWords(shuffle([...pickRandom(large?ALL_WORDS_9:ALL_WORDS_4)]));
+    setScreen("solo");
+  }
+
+  function handleWin(result,mode) {
+    setWinResult(result); setWinMode(mode);
+    setFireworks(true); setTimeout(()=>setFireworks(false),4000);
+    const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || "yellow");
+    const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses);
+    if (mode==="daily") {
+      saveDailyBest(score);
+      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0});
+      const s = updateStreak();
+      setWinStreak(s.count);
+      // Leaderboard is daily-challenge only
+      saveScore({mode,turns:result.turns,elapsed:result.elapsed,score,date:new Date().toLocaleDateString()});
+    }
+    setScreen("win");
+  }
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0D1B2A 0%,#091422 100%)",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,700;0,900;1,700&family=JetBrains+Mono:wght@400;700;800&display=swap');
+        @keyframes fadeInOut{0%{opacity:0;transform:translateY(-4px)}20%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0}}
+        @keyframes menuIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes tileVanish{0%{transform:rotateY(180deg) scale(1);opacity:1}40%{transform:rotateY(180deg) scale(1.18);opacity:1}100%{transform:rotateY(180deg) scale(0);opacity:0}}
+        @keyframes receiptIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+        @keyframes receiptTotal{from{opacity:0;transform:scale(0.85)}to{opacity:1;transform:scale(1)}}
+        *{box-sizing:border-box;} button:hover{opacity:0.85;}
+        @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+      `}</style>
+      <Fireworks active={fireworks} />
+
+      <div style={{marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
+        <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:"linear-gradient(90deg,#00F5C4,#FFB703)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
+        {screen==="menu"&&<p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:"4px 0 0"}}>flip · match · win</p>}
+      </div>
+
+      {screen==="menu"&&(
+        <div style={{width:"100%",maxWidth:360,animation:"menuIn 0.5s ease"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <button onClick={()=>{ if(getDailyDone()){setScreen("daily-done");}else{setScreen("daily");}}} style={{...btnStyle("linear-gradient(90deg,#FFB703,#ff9f1c)","#0D1B2A"),padding:"14px 24px",fontSize:"1rem",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>⚡ Daily Challenge</span>
+              <span style={{fontSize:"0.75rem",opacity:0.7}}>
+                {getDailyDone()?"✓ Done today":dailyBest?`Best: ${dailyBest.toLocaleString()}`:"Play today!"}
+              </span>
+            </button>
+            <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #1e3048",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"#7a9cc0"}}>→</span>
+            </button>
+            <button onClick={()=>setScreen("multi-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #00F5C444",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"#00F5C4"}}>→</span>
+            </button>
+            <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 24px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+              🏆 Leaderboard {streak.count>0&&`· 🔥${streak.count}`}
+            </button>
+          </div>
+          <div style={{marginTop:24,padding:14,background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048"}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
+              <strong style={{color:"#7a9cc0"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {screen==="solo-setup"&&<SoloSetup onBack={()=>setScreen("menu")} onStart={(l)=>startSolo(l)} />}
+      {screen==="multi-setup"&&<MultiSetup onBack={()=>setScreen("menu")} onLocal={()=>setScreen("multi-local")} onOnline={()=>setScreen("multi-online")} />}
+
+      {screen==="solo"&&soloWords&&(
+        <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
+          <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:14,fontSize:"0.8rem"}}>← Back</button>
+          <GameBoard words={soloWords} onWin={r=>handleWin(r,"solo")} timeLimit={null} />
+        </div>
+      )}
+
+      {screen==="daily"&&(
+        <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <button onClick={()=>setScreen("menu")} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.8rem"}}>← Menu</button>
+            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
+          </div>
+          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} />
+        </div>
+      )}
+
+      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} streak={streak.count} />}
+
+      {screen==="win"&&winResult&&(
+        <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} />
+        </div>
+      )}
+
+      {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} /></div>}
+      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} /></div>}
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<WordFlip />);
+  </script>
+
+  <script>
+    // Register service worker for offline support
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js")
+          .then(reg => console.log("WordFlip SW registered:", reg.scope))
+          .catch(err => console.log("SW registration failed:", err));
+      });
+    }
+  </script>
+</body>
+</html>
