@@ -1039,12 +1039,42 @@ function WordFlip() {
   </script>
 
   <script>
-    // Register service worker for offline support
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js")
-          .then(reg => console.log("WordFlip SW registered:", reg.scope))
-          .catch(err => console.log("SW registration failed:", err));
+        navigator.serviceWorker.register("/sw.js").then(reg => {
+          console.log("WordFlip SW registered:", reg.scope);
+
+          // When a new SW is found, prompt the user to update
+          reg.addEventListener("updatefound", () => {
+            const newWorker = reg.installing;
+            newWorker.addEventListener("statechange", () => {
+              if (newWorker.state === "activated") {
+                // Show a subtle update banner
+                const banner = document.createElement("div");
+                banner.innerHTML = `
+                  <div style="
+                    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+                    background:#00F5C4; color:#0a2e24; padding:10px 20px; border-radius:20px;
+                    font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.85rem;
+                    box-shadow:0 4px 16px #00000055; z-index:9999; white-space:nowrap;
+                    cursor:pointer; animation:menuIn 0.3s ease;
+                  " onclick="window.location.reload()">
+                    ✨ New version available — tap to update
+                  </div>`;
+                document.body.appendChild(banner);
+                // Auto-dismiss after 10 seconds
+                setTimeout(() => banner.remove(), 10000);
+              }
+            });
+          });
+        }).catch(err => console.log("SW registration failed:", err));
+
+        // Listen for SW_UPDATED message from the service worker
+        navigator.serviceWorker.addEventListener("message", (event) => {
+          if (event.data && event.data.type === "SW_UPDATED") {
+            window.location.reload();
+          }
+        });
       });
     }
   </script>
