@@ -29,6 +29,9 @@
     html, body, #root { height: 100%; min-height: 100%; }
     body { background: #0D1B2A; overflow-x: hidden; }
   </style>
+  <!-- Analytics: replace 'wordflipgame.netlify.app' with your domain if it changes -->
+  <script defer data-domain="wordflipgame.netlify.app" src="https://plausible.io/js/script.js"></script>
+
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -118,8 +121,9 @@ function formatTime(ms) {
 function scoreCalc(ms, wordResults, wrongGuesses) {
   const greenPts = wordResults.filter(r=>r==="green").length * 300;
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
+  // "missed" words score 0 — no bonus for unfound words
   const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
-  const guessBonus = Math.max(0, 1200 - (wrongGuesses||0) * 100); // 1200 pts, -100/wrong guess
+  const guessBonus = Math.max(0, 800 - (wrongGuesses||0) * 50); // 800 pts, -50 per wrong guess
   return greenPts + yellowPts + timeBonus + guessBonus;
 }
 
@@ -166,10 +170,16 @@ function updateStreak() {
 }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
-function buildShareText(turns, ms, score, wordResults) {
+function buildShareText(turns, ms, score, wordResults, totalWords) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const blocks = wordResults.map(r => r === "green" ? "\u{1F7E9}" : "\u{1F7E8}").join("");
+  // wordResults array may be shorter than totalWords if player ran out of turns
+  const blocks = Array.from({length: totalWords || wordResults.length}, (_,i) => {
+    const r = wordResults[i];
+    if (r === "green") return "\u{1F7E9}";
+    if (r === "yellow") return "\u{1F7E8}";
+    return "\u{1F7E5}"; // 🟥 not found
+  }).join("");
   return "WordFlip Daily \u00B7 " + date + "\n"
     + blocks + "\n"
     + turns + " guess" + (turns !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + score.toLocaleString() + " pts\n"
@@ -222,15 +232,21 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
   const yellows = results.filter(r=>r==="yellow").length;
   const secs = Math.floor(elapsed/1000);
   const timeBonus = Math.max(0, 600 - secs);
-  const guessBonus = Math.max(0, 1200 - (wrongGuesses||0)*100);
+  const guessBonus = Math.max(0, 800 - (wrongGuesses||0)*50);
   const current = greens*300 + yellows*100 + timeBonus + guessBonus;
   return (
     <span style={{ position:"relative", display:"inline-flex", alignItems:"center", marginLeft:4 }}>
       <button onClick={e=>{ e.stopPropagation(); setOpen(o=>!o); }}
-        style={{ background:"#1e3048", border:"1.5px solid #2a4060", borderRadius:"50%", width:16, height:16, cursor:"pointer", padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", color:"#7a9cc0", fontSize:"0.6rem", fontWeight:900, lineHeight:1, flexShrink:0 }}
+        style={{
+          background:"#1e3048", border:"1.5px solid #2a4060", borderRadius:"50%",
+          width:22, height:22, cursor:"pointer", padding:0,
+          display:"inline-flex", alignItems:"center", justifyContent:"center",
+          color:"#7a9cc0", fontSize:"0.65rem", fontWeight:900, lineHeight:1, flexShrink:0,
+          minWidth:44, minHeight:44, margin:"-11px -11px",
+        }}
         onMouseEnter={e=>{e.currentTarget.style.background="#2a4060";e.currentTarget.style.color="#F5EDD6";}}
         onMouseLeave={e=>{e.currentTarget.style.background="#1e3048";e.currentTarget.style.color="#7a9cc0";}}
-        aria-label="Score info">i</button>
+        aria-label="How scoring works" aria-expanded={open}>i</button>
       {open && (<>
         <span onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:99}} />
         <div style={{ position:"absolute", top:"calc(100% + 8px)", left:"50%", transform:"translateX(-50%)", background:"#0e1f30", border:"1.5px solid #2a4060", borderRadius:10, padding:"12px 14px", zIndex:100, width:230, boxShadow:"0 8px 32px #000a", animation:"menuIn 0.15s ease" }}>
@@ -261,8 +277,28 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
 
 // ─── Tile ─────────────────────────────────────────────────────────────────────
 function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum }) {
+  const label = isFound
+    ? `${tile.letter} — word found`
+    : isFlipped
+    ? `${tile.letter} — selected, position ${(orderNum??0)+1}`
+    : "Hidden tile — tap to flip";
   return (
-    <div onClick={isFound?undefined:onClick} style={{width:"100%",aspectRatio:"1",perspective:"600px",cursor:isFound?"default":"pointer"}}>
+    <button
+      onClick={isFound?undefined:onClick}
+      disabled={isFound}
+      aria-label={label}
+      aria-pressed={isFlipped && !isFound}
+      style={{
+        width:"100%",aspectRatio:"1",perspective:"600px",
+        cursor:isFound?"default":"pointer",
+        background:"none",border:"none",padding:0,
+        borderRadius:10,
+        outline:"none",
+        transition:"box-shadow 0.15s",
+      }}
+      onFocus={e => { if(!isFound) e.currentTarget.style.boxShadow="0 0 0 3px #00F5C4"; }}
+      onBlur={e => { e.currentTarget.style.boxShadow="none"; }}
+    >
       <div style={{
         position:"relative",width:"100%",height:"100%",transformStyle:"preserve-3d",
         animation: isFound?"tileVanish 0.5s cubic-bezier(.4,0,.2,1) 0.15s both":"none",
@@ -299,19 +335,22 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
 // ─── Found Word Banner ────────────────────────────────────────────────────────
 function FoundWordBanner({ words, wordResults }) {
   return (
-    <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginBottom:12}}>
+    <div role="status" aria-label="Words to find" style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginBottom:12}}>
       {words.map((word,i)=>{
         const result = wordResults?.[i];
         const isFound = !!result;
         return (
-          <div key={i} style={{
+          <div
+            key={i}
+            aria-label={isFound ? `${word} — ${result==="green"?"found in order":"found"}` : `${word} — not yet found`}
+            style={{
             padding:"4px 14px",borderRadius:20,
             background: result==="green"?"linear-gradient(90deg,#00c49f,#00F5C4)":result==="yellow"?"linear-gradient(90deg,#c9a800,#FFB703)":"#0e1f30",
             border: isFound?"none":"1.5px solid #1e3048",
@@ -329,7 +368,7 @@ function FoundWordBanner({ words, wordResults }) {
 }
 
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   const cols = words.length===4?4:6;
   const [tiles] = useState(()=>buildTiles(words));
   const [flipped, setFlipped] = useState([]);
@@ -344,6 +383,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
   const [elapsed, setElapsed] = useState(0);
   const [started, setStarted] = useState(false);
   const [flash, setFlash] = useState(null);
+  const [outOfTurns, setOutOfTurns] = useState(false);
   const timerRef = useRef(null);
   const startRef = useRef(null);
 
@@ -365,11 +405,19 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
     }
   },[found]);
 
+  useEffect(()=>{
+    if (maxTurns && turns >= maxTurns && found.length < words.length) {
+      clearInterval(timerRef.current);
+      setOutOfTurns(true);
+      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses,outOfTurns:true}),800);
+    }
+  },[turns]);
+
   const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
 
   function handleTileClick(tile) {
     if (!started) setStarted(true);
-    if (foundTileIds.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
+    if (outOfTurns||foundTileIds.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
     const newFlipped=[...flipped,tile.id];
     setFlipped(newFlipped);
     if (newFlipped.length===4) {
@@ -398,20 +446,41 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
 
   return (
     <div style={{width:"100%",maxWidth:480,margin:"0 auto"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",display:"flex",alignItems:"center",gap:4}}>
-          Guesses: <strong style={{color:"#FFB703"}}>{turns}</strong>
-          <ScoreInfoTip words={words} wordResults={Object.values(wordResults)} elapsed={elapsed} wrongGuesses={wrongGuesses} />
-        </span>
-        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",color:timeLeft!==null&&timeLeft<15?"#FF5E5B":"#7a9cc0"}}>
-          {timeLeft!==null?`⏱ ${timeLeft}s`:`⏱ ${formatTime(elapsed)}`}
-        </span>
-        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem"}}>
-          Found: <strong style={{color:"#00F5C4"}}>{found.length}/{words.length}</strong>
-        </span>
-      </div>
+      {(() => {
+        const turnsLeft = maxTurns ? maxTurns - turns : null;
+        const turnsDanger = turnsLeft !== null && turnsLeft <= 3;
+        const turnsColor = turnsDanger ? "#FF5E5B" : turnsLeft !== null && turnsLeft <= 6 ? "#FFB703" : "#FFB703";
+        return (
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem"}}>
+              {maxTurns ? (
+                <>Turns left: <strong
+                  aria-live={turnsDanger?"assertive":"off"}
+                  style={{color:turnsLeft<=3?"#FF5E5B":"#FFB703",transition:"color 0.3s"}}
+                >{turnsLeft}</strong></>
+              ) : (
+                <>Guesses: <strong style={{color:"#FFB703"}}>{turns}</strong></>
+              )}
+            </span>
+            <span
+              aria-live={timeLeft!==null&&timeLeft<15?"assertive":"off"}
+              aria-label={timeLeft!==null?`${timeLeft} seconds remaining`:`elapsed time ${formatTime(elapsed)}`}
+              style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",color:timeLeft!==null&&timeLeft<15?"#FF5E5B":"#7a9cc0"}}
+            >
+              {timeLeft!==null?`⏱ ${timeLeft}s`:`⏱ ${formatTime(elapsed)}`}
+            </span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem"}}>
+              Found: <strong style={{color:"#00F5C4"}}>{found.length}/{words.length}</strong>
+            </span>
+          </div>
+        );
+      })()}
       <FoundWordBanner words={words} wordResults={wordResults} />
-      <div style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:4}}>
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:4}}
+      >
         {flash&&(
           <span style={{fontFamily:"'Fraunces',serif",fontSize:"0.95rem",fontWeight:700,animation:"fadeInOut 0.5s ease",
             color:flash==="good"?"#00F5C4":flash==="goodYellow"?"#FFB703":"#FF5E5B"}}>
@@ -421,12 +490,15 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
           </span>
         )}
       </div>
-      <div style={{
-        display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,
-        gap:"clamp(4px,1.5vw,10px)",padding:"clamp(4px,2vw,12px)",
-        background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
-        boxShadow:"0 4px 32px #00000055",
-      }}>
+      <div
+        role="grid"
+        aria-label="WordFlip game board"
+        style={{
+          display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,
+          gap:"clamp(4px,1.5vw,10px)",padding:"clamp(4px,2vw,12px)",
+          background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
+          boxShadow:"0 4px 32px #00000055",
+        }}>
         {tiles.map(tile=>(
           <Tile key={tile.id} tile={tile}
             isFlipped={flipped.includes(tile.id)}
@@ -439,7 +511,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp }) {
           />
         ))}
       </div>
-      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>🟩 +300 · 🟨 +100 · bonus pts for speed & accuracy</p>
+      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} turns max · `:""}🟩 +300 · 🟨 +100 · bonus pts for speed & accuracy</p>
     </div>
   );
 }
@@ -498,12 +570,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score }) {
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
 function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak }) {
-  const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || "yellow");
+  const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses);
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
-    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr);
+    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length);
     const shareData = { title:"WordFlip Daily", text };
     const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
     if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
@@ -512,10 +584,10 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak }) {
   }
 
   return (
-    <div style={{textAlign:"center",maxWidth:400,margin:"0 auto",padding:20}}>
-      <div style={{fontSize:"3rem",marginBottom:8}}>🎉</div>
+    <div role="main" aria-label="Game results" style={{textAlign:"center",maxWidth:400,margin:"0 auto",padding:20}}>
+      <div aria-hidden="true" style={{fontSize:"3rem",marginBottom:8}}>{result.outOfTurns?"😬":"🎉"}</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
-        {mode==="daily"?"Daily Complete!":"You Win!"}
+        {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
       </h2>
       <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
         {result.words.join(" · ")}
@@ -801,12 +873,12 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
 // ─── Daily Already Done Screen ────────────────────────────────────────────────
 function DailyAlreadyDone({ onMenu, streak }) {
   const done = getDailyDone();
-  const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
+  const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   const score = done ? scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
-    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr);
+    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length);
     const shareData = { title:"WordFlip Daily", text };
     const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
     if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
@@ -867,11 +939,11 @@ function WordFlip() {
   function handleWin(result,mode) {
     setWinResult(result); setWinMode(mode);
     setFireworks(true); setTimeout(()=>setFireworks(false),4000);
-    const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || "yellow");
+    const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses);
     if (mode==="daily") {
       saveDailyBest(score);
-      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0});
+      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false});
       const s = updateStreak();
       setWinStreak(s.count);
       // Leaderboard is daily-challenge only
@@ -889,7 +961,7 @@ function WordFlip() {
         @keyframes tileVanish{0%{transform:rotateY(180deg) scale(1);opacity:1}40%{transform:rotateY(180deg) scale(1.18);opacity:1}100%{transform:rotateY(180deg) scale(0);opacity:0}}
         @keyframes receiptIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
         @keyframes receiptTotal{from{opacity:0;transform:scale(0.85)}to{opacity:1;transform:scale(1)}}
-        *{box-sizing:border-box;} button:hover{opacity:0.85;}
+        *{box-sizing:border-box;} button:hover{opacity:0.85;} button:focus-visible{outline:3px solid #00F5C4;outline-offset:3px;} a:focus-visible{outline:3px solid #00F5C4;}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
@@ -942,7 +1014,7 @@ function WordFlip() {
             <button onClick={()=>setScreen("menu")} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.8rem"}}>← Menu</button>
             <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
           </div>
-          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} />
+          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={16} />
         </div>
       )}
 
