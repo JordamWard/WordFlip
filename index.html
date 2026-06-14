@@ -415,13 +415,18 @@ const soundManager = (() => {
       osc.stop(c.currentTime + delay + dur + 0.05);
     } catch(e) {}
   }
+  // Haptic feedback via Web Vibration API (Android/Chrome; silent fallback on iOS)
+  function vibe(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e) {}
+  }
   return {
-    flip()       { tone(520, 0.05, "triangle", 0.12); tone(280, 0.08, "triangle", 0.07, 0.03); },
-    select()     { tone(880, 0.04, "sine", 0.1); },
-    wordGreen()  { [523,659,784,1047].forEach((f,i) => tone(f, 0.22, "sine", 0.22, i*0.08)); },
-    wordYellow() { [523,659,784].forEach((f,i) => tone(f, 0.18, "sine", 0.14, i*0.09)); },
-    wrong()      { tone(180, 0.12, "sawtooth", 0.18); tone(140, 0.18, "triangle", 0.1, 0.06); },
-    complete()   { [523,659,784,1047,1319,784,1047].forEach((f,i) => tone(f, 0.28, "sine", 0.2, i*0.07)); },
+    flip()       { tone(520,0.05,"triangle",0.12); tone(280,0.08,"triangle",0.07,0.03); vibe(8); },
+    select()     { tone(880,0.04,"sine",0.1); vibe(5); },
+    wordGreen()  { [523,659,784,1047].forEach((f,i)=>tone(f,0.22,"sine",0.22,i*0.08)); vibe([30,15,60]); },
+    wordYellow() { [523,659,784].forEach((f,i)=>tone(f,0.18,"sine",0.14,i*0.09)); vibe([20,10,30]); },
+    wrong()      { tone(180,0.12,"sawtooth",0.18); tone(140,0.18,"triangle",0.1,0.06); vibe([15,20,15]); },
+    complete()   { [523,659,784,1047,1319,784,1047].forEach((f,i)=>tone(f,0.28,"sine",0.2,i*0.07)); vibe([40,20,40,20,80]); },
+    bonus()      { [659,784,1047].forEach((f,i)=>tone(f,0.18,"sine",0.18,i*0.07)); vibe([10,10,40]); },
   };
 })();
 
@@ -586,12 +591,18 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   },[found]);
 
   useEffect(()=>{
+    // Guard: don't trigger if all words are already found (handled by found effect)
     if (maxTurns && turns >= maxTurns && found.length < words.length) {
       clearInterval(timerRef.current);
+      // Clear any stuck tiles immediately before transitioning
+      setFlipped([]);
+      setError([]);
+      setFlash(null);
       setOutOfTurns(true);
-      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses,outOfTurns:true}),800);
+      // Give React one frame to clear tiles, then transition
+      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses,bonusPts,outOfTurns:true}),600);
     }
-  },[turns]);
+  },[turns, found]);  // include found to avoid stale closure
 
   const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
 
@@ -613,14 +624,14 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
           !words.includes(w) && [...w].sort().join("") === sorted
         );
         if (bonusWord && !foundBonusWords.includes(bonusWord)) {
-          soundManager.wordYellow();
+          soundManager.bonus();
           const bfid = ++floatIdRef.current;
           setFloatingScores(prev=>[...prev,{id:bfid,pts:50,color:"#9B5DE5"}]);
           setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==bfid)),1150);
           setFoundBonusWords(b=>[...b,bonusWord]);
           setBonusPts(p=>p+50);
           setFlash("bonus");
-          setTimeout(()=>{setFlipped([]);setFlash(null);},900);
+          setTimeout(()=>{setFlipped([]);setFlash(null);},700);
           return;
         }
         setError(newFlipped); setFlash("bad"); setHadError(true); setWrongGuesses(g=>g+1);
@@ -628,7 +639,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
         const wfid = ++floatIdRef.current;
         setFloatingScores(prev=>[...prev,{id:wfid,pts:-50,color:"#FF5E5B"}]);
         setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==wfid)),1000);
-        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);},900); return;
+        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);},700); return;
       }
 
       const inOrder = letters.join("") === words[matchIdx];
