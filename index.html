@@ -236,13 +236,20 @@ function scoreCalc(ms, wordResults, wrongGuesses) {
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
-function getLeaderboard() {
-  try { return JSON.parse(localStorage.getItem("wf_leaderboard")||"[]"); } catch { return []; }
+// ─── Personal history (sorted by date, newest first) ─────────────────────────
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem("wf_history")||"[]"); } catch { return []; }
 }
-function saveScore(entry) {
-  const lb = getLeaderboard();
-  lb.push(entry); lb.sort((a,b)=>b.score-a.score);
-  localStorage.setItem("wf_leaderboard", JSON.stringify(lb.slice(0,20)));
+function saveToHistory(entry) {
+  const history = getHistory();
+  // One entry per day — replace if already played today
+  const filtered = history.filter(e => e.dayKey !== entry.dayKey);
+  filtered.unshift(entry); // newest first
+  localStorage.setItem("wf_history", JSON.stringify(filtered.slice(0, 365)));
+}
+function getPersonalBest() {
+  const h = getHistory();
+  return h.length ? Math.max(...h.map(e => e.score)) : 0;
 }
 function getDailyBest() {
   try { return JSON.parse(localStorage.getItem(dateKey()+"_best")||"null"); } catch { return null; }
@@ -250,6 +257,10 @@ function getDailyBest() {
 function saveDailyBest(score) {
   const best = getDailyBest();
   if (!best || score > best) localStorage.setItem(dateKey()+"_best", JSON.stringify(score));
+}
+// Keep old leaderboard getter for any legacy data migration
+function getLeaderboard() {
+  try { return JSON.parse(localStorage.getItem("wf_leaderboard")||"[]"); } catch { return []; }
 }
 function getDailyDone() {
   try { return JSON.parse(localStorage.getItem(dateKey()+"_done")||"null"); } catch { return null; }
@@ -764,9 +775,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score }) {
 }
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBest }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses);
+  const prevBest = getPersonalBest();
+  const computedNewBest = isDaily && score > prevBest;
+  const showNewBest = isNewBest || computedNewBest;
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
@@ -787,16 +801,20 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak }) {
       <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
         {result.words.join(" · ")}
       </p>
-      {isDaily&&streak&&(
-        <div style={{
-          display:"inline-flex",alignItems:"center",gap:8,
-          background:"#1a1200",border:"1.5px solid #FFB703",
-          borderRadius:20,padding:"6px 16px",marginBottom:16,
-        }}>
-          <span style={{fontSize:"1.2rem"}}>🔥</span>
-          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>
-            {streak} day streak
-          </span>
+      {isDaily&&(
+        <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:16}}>
+          {streak>0&&(
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:20,padding:"5px 14px"}}>
+              <span>🔥</span>
+              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700,fontSize:"0.9rem"}}>{streak} day streak</span>
+            </div>
+          )}
+          {showNewBest&&(
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#0a2e24",border:"1.5px solid #00F5C4",borderRadius:20,padding:"5px 14px"}}>
+              <span>🏆</span>
+              <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontWeight:700,fontSize:"0.9rem"}}>New personal best!</span>
+            </div>
+          )}
         </div>
       )}
       <ScoreReceipt
@@ -831,35 +849,117 @@ function btnStyle(bg,color) {
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
 function LeaderboardView({ onBack }) {
-  const lb = getLeaderboard().filter(e => e.mode === "daily");
+  const [tab, setTab] = useState("personal");
+  const history = getHistory();
+  const personalBest = getPersonalBest();
   const streak = getStreak();
+
   return (
-    <div style={{maxWidth:420,margin:"0 auto"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:0}}>Daily Leaderboard</h2>
-        <div style={{display:"flex",alignItems:"center",gap:6,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:16,padding:"4px 12px"}}>
-          <span>🔥</span>
-          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700,fontSize:"0.9rem"}}>{streak.count} day streak</span>
-        </div>
+    <div style={{maxWidth:440,margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+
+      {/* Tab row */}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <button onClick={()=>setTab("personal")} style={{
+          flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+          background: tab==="personal" ? "#00F5C4" : "#0a1520",
+          color: tab==="personal" ? "#0a2e24" : "#3a5570",
+          transition:"all 0.15s",
+        }}>🏅 My Scores</button>
+        <button onClick={()=>setTab("global")} style={{
+          flex:1, padding:"8px 0", borderRadius:10, border:"1.5px solid #1e3048", cursor:"default",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+          background:"#0a1520", color:"#2a4060", opacity:0.5,
+        }}>🌍 Global <span style={{fontSize:"0.65rem",marginLeft:4,background:"#1e3048",borderRadius:4,padding:"1px 5px"}}>soon</span></button>
       </div>
-      {lb.length===0?(
-        <p style={{color:"#2a4060",fontFamily:"'JetBrains Mono',monospace"}}>No scores yet. Complete a Daily Challenge to get on the board!</p>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {lb.map((entry,i)=>(
-            <div key={i} style={{
-              display:"flex",justifyContent:"space-between",alignItems:"center",
-              background:"#0a1520",borderRadius:10,padding:"10px 16px",
-              border:i===0?"1.5px solid #FFB703":"1.5px solid #1e3048",
-            }}>
-              <span style={{fontFamily:"'Fraunces',serif",color:i===0?"#FFB703":i===1?"#aaa":i===2?"#cd7f32":"#2a4060",fontWeight:700,fontSize:"1.1rem",minWidth:28}}>{i+1}</span>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",flex:1,marginLeft:8}}>
-                {entry.date} · {entry.turns} guesses · {formatTime(entry.elapsed)}
-              </span>
-              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{entry.score.toLocaleString()}</span>
+
+      {tab === "personal" && (<>
+        {/* Personal best hero card */}
+        {personalBest > 0 && (
+          <div style={{
+            background:"linear-gradient(135deg,#0e2a3a,#0a1520)",
+            border:"1.5px solid #FFB703", borderRadius:14,
+            padding:"14px 18px", marginBottom:14,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginBottom:4,letterSpacing:"0.08em"}}>PERSONAL BEST</div>
+              <div style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:900,fontSize:"1.8rem"}}>{personalBest.toLocaleString()}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginTop:2}}>pts</div>
             </div>
-          ))}
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:"2rem"}}>🏆</div>
+              {streak.count > 0 && (
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.75rem",marginTop:4}}>🔥 {streak.count} day streak</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* History list */}
+        {history.length === 0 ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"2.5rem",marginBottom:12}}>📅</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.85rem",lineHeight:1.6}}>
+              No scores yet.<br/>Complete a Daily Challenge<br/>to start your history!
+            </p>
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {history.map((entry,i) => {
+              const isBest = entry.score === personalBest;
+              return (
+                <div key={i} style={{
+                  background:"#0a1520", borderRadius:12,
+                  border:`1.5px solid ${isBest?"#FFB703":"#1e3048"}`,
+                  padding:"10px 14px",
+                  display:"grid",
+                  gridTemplateColumns:"auto 1fr auto",
+                  gap:"0 10px", alignItems:"center",
+                }}>
+                  {/* Date + trophy */}
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    {isBest && <span style={{fontSize:"0.8rem"}}>🏆</span>}
+                    <span style={{fontFamily:"'JetBrains Mono',monospace",color:isBest?"#FFB703":"#7a9cc0",fontSize:"0.75rem",fontWeight:isBest?700:400}}>
+                      {entry.shortDate || entry.date}
+                    </span>
+                  </div>
+                  {/* Blocks + stats */}
+                  <div>
+                    <div style={{fontSize:"0.85rem",letterSpacing:"0.05em",marginBottom:2}}>{entry.blocks||"🟨🟨🟨🟨"}</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>
+                      {entry.turns} guess{entry.turns!==1?"es":""} · {formatTime(entry.elapsed)}
+                      {entry.outOfTurns ? " · ran out" : ""}
+                    </div>
+                  </div>
+                  {/* Score */}
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:"'Fraunces',serif",color:isBest?"#FFB703":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
+                      {entry.score.toLocaleString()}
+                    </div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.6rem"}}>pts</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>)}
+
+      {tab === "global" && (
+        <div style={{textAlign:"center",padding:"32px 20px"}}>
+          <div style={{fontSize:"2.5rem",marginBottom:12}}>🌍</div>
+          <h3 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 12px"}}>Global Leaderboard</h3>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.82rem",lineHeight:1.7,marginBottom:20}}>
+            See how you rank against players worldwide. Create an account to appear on the global board.
+          </p>
+          <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:12,padding:"14px",textAlign:"left"}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.75rem",fontWeight:700,margin:"0 0 8px",letterSpacing:"0.08em"}}>COMING SOON</p>
+            {["Daily top 50 rankings","Create account to save your name","Track your global rank over time","Compete with friends by sharing your code"].map(f=>(
+              <p key={f} style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.72rem",margin:"4px 0"}}>· {f}</p>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -1119,6 +1219,7 @@ function WordFlip() {
   const [winResult,setWinResult] = useState(null);
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
+  const [winIsNewBest,setWinIsNewBest] = useState(false);
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
 
@@ -1141,8 +1242,26 @@ function WordFlip() {
       setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false});
       const s = updateStreak();
       setWinStreak(s.count);
+      setWinIsNewBest(score > getPersonalBest());
       // Leaderboard is daily-challenge only
-      saveScore({mode,turns:result.turns,elapsed:result.elapsed,score,date:new Date().toLocaleDateString()});
+      // Save to personal history
+      const d = new Date();
+      const blocks = result.words.map((_,i) => {
+        const r = result.wordResults?.[i];
+        return r==="green" ? "🟩" : r==="yellow" ? "🟨" : "🟥";
+      }).join("");
+      saveToHistory({
+        dayKey: dateKey(),
+        date: d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+        shortDate: d.toLocaleDateString("en-US",{month:"short",day:"numeric"}),
+        isoDate: d.toISOString(),
+        score,
+        turns: result.turns,
+        elapsed: result.elapsed,
+        blocks,
+        wrongGuesses: result.wrongGuesses||0,
+        outOfTurns: result.outOfTurns||false,
+      });
     }
     setScreen("win");
   }
@@ -1184,7 +1303,7 @@ function WordFlip() {
               <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"#00F5C4"}}>→</span>
             </button>
             <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 24px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-              🏆 Leaderboard {streak.count>0&&`· 🔥${streak.count}`}
+              🏆 Scores {getPersonalBest()>0?`· Best: ${getPersonalBest().toLocaleString()}`:""}
             </button>
           </div>
           <div style={{marginTop:24,padding:14,background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048"}}>
@@ -1219,7 +1338,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} isNewBest={winIsNewBest} />
         </div>
       )}
 
