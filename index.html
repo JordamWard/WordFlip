@@ -570,6 +570,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   const timerRef = useRef(null);
   const startRef = useRef(null);
   const floatIdRef = useRef(0);
+  const hasEndedRef = useRef(false); // prevents double onWin calls
+  const stateRef = useRef({});       // always holds latest state values
 
   useEffect(()=>{
     if (!started) return;
@@ -582,28 +584,39 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
     return ()=>clearInterval(timerRef.current);
   },[started]);
 
+  // safeOnWin: can only fire once per game, always uses fresh state from stateRef
+  function safeOnWin(extraProps={}) {
+    if (hasEndedRef.current) return;
+    hasEndedRef.current = true;
+    clearInterval(timerRef.current);
+    setFlipped([]);
+    setError([]);
+    setFlash(null);
+    const s = stateRef.current;
+    setTimeout(()=>onWin({
+      turns:s.turns, elapsed:s.elapsed, words:s.words,
+      wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
+      bonusPts:s.bonusPts, ...extraProps
+    }), 600);
+  }
+
   useEffect(()=>{
     if (found.length===words.length) {
-      clearInterval(timerRef.current);
       soundManager.complete();
-      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses,bonusPts}),600);
+      safeOnWin();
     }
   },[found]);
 
   useEffect(()=>{
-    // Guard: don't trigger if all words are already found (handled by found effect)
-    if (maxTurns && turns >= maxTurns && found.length < words.length) {
-      clearInterval(timerRef.current);
-      // Clear any stuck tiles immediately before transitioning
-      setFlipped([]);
-      setError([]);
-      setFlash(null);
+    // Only trigger if words remain unfound (found effect handles the win case)
+    if (maxTurns && turns >= maxTurns && stateRef.current.found.length < words.length) {
       setOutOfTurns(true);
-      // Give React one frame to clear tiles, then transition
-      setTimeout(()=>onWin({turns,elapsed,words,wordResults,wrongGuesses,bonusPts,outOfTurns:true}),600);
+      safeOnWin({outOfTurns:true});
     }
-  },[turns, found]);  // include found to avoid stale closure
+  },[turns]);
 
+  // Keep stateRef fresh so effects never read stale closure values
+  stateRef.current = {turns,elapsed,words,wordResults,wrongGuesses,bonusPts,found};
   const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
 
   function handleTileClick(tile) {
@@ -1172,7 +1185,7 @@ function SoloSetup({ onBack, onStart }) {
           🟩 Flip in order → <strong style={{color:"#00F5C4"}}>+300 pts</strong><br/>
           🟨 Any order → <strong style={{color:"#FFB703"}}>+100 pts</strong><br/>
           ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec<br/>
-          🎯 Accuracy → <strong style={{color:"#00BBF9"}}>1200 pts</strong>, −100/miss
+          🎯 Accuracy → <strong style={{color:"#00BBF9"}}>800 pts</strong>, −50/miss
         </p>
       </div>
       <button onClick={()=>onStart(large)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),width:"100%",padding:"14px",fontSize:"1rem",borderRadius:12,fontWeight:800}}>
