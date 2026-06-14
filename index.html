@@ -572,6 +572,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   const floatIdRef = useRef(0);
   const hasEndedRef = useRef(false); // prevents double onWin calls
   const stateRef = useRef({});       // always holds latest state values
+  const processingRef = useRef(false); // hard lock during 4-tile processing
+  const flippedRef = useRef([]);       // always-current mirror of flipped state
+  const foundTileIdsRef = useRef(new Set()); // always-current mirror
 
   useEffect(()=>{
     if (!started) return;
@@ -615,26 +618,50 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
     }
   },[turns]);
 
-  // Keep stateRef fresh so effects never read stale closure values
+  // Keep refs fresh — these are used in handleTileClick guards (never stale)
   stateRef.current = {turns,elapsed,words,wordResults,wrongGuesses,bonusPts,found};
+  foundTileIdsRef.current = foundTileIds;
   const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
 
+  function unlock() {
+    processingRef.current = false;
+    flippedRef.current = [];
+    setFlipped([]);
+    setError([]);
+    setFlash(null);
+  }
+
   function handleTileClick(tile) {
+    // Ref-based guards — always current, never stale, immune to React batching
+    if (processingRef.current) return;
+    if (hasEndedRef.current) return;
+    if (foundTileIdsRef.current.has(tile.id)) return;
+    if (flippedRef.current.length >= 4) return;
+    if (flippedRef.current.includes(tile.id)) return;
+
     if (!started) setStarted(true);
-    if (outOfTurns||foundTileIds.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
+
+    // Update ref immediately (sync) then state (async for render)
+    flippedRef.current = [...flippedRef.current, tile.id];
+    const newFlipped = flippedRef.current;
+    setFlipped([...newFlipped]);
     soundManager.flip();
-    const newFlipped=[...flipped,tile.id];
-    setFlipped(newFlipped);
-    if (newFlipped.length===4) {
+
+    if (newFlipped.length === 4) {
+      // Lock immediately — prevents ANY further input until we unlock
+      processingRef.current = true;
       setTurns(t=>t+1);
+
       const ft = newFlipped.map(id=>tiles.find(t=>t.id===id));
       const letters = ft.map(t=>t.letter);
       const sorted = [...letters].sort().join("");
-      const matchIdx = words.findIndex((w,i)=>!found.includes(i)&&[...w].sort().join("")===sorted);
+      const s = stateRef.current;
+      const matchIdx = words.findIndex((w,i)=>!s.found.includes(i)&&[...w].sort().join("")===sorted);
+
       if (matchIdx===-1) {
-        // Check if letters spell a bonus word from the full bank (excluding current targets)
-        const bonusWord = ALL_WORDS_4.flat().find(w =>
-          !words.includes(w) && [...w].sort().join("") === sorted
+        // Check for bonus word
+        const bonusWord = ALL_WORDS_4.flat().find(w=>
+          !words.includes(w) && [...w].sort().join("")===sorted
         );
         if (bonusWord && !foundBonusWords.includes(bonusWord)) {
           soundManager.bonus();
@@ -644,35 +671,39 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
           setFoundBonusWords(b=>[...b,bonusWord]);
           setBonusPts(p=>p+50);
           setFlash("bonus");
-          setTimeout(()=>{setFlipped([]);setFlash(null);},700);
+          setTimeout(()=>unlock(), 700);
           return;
         }
+        // Bad guess
         setError(newFlipped); setFlash("bad"); setHadError(true); setWrongGuesses(g=>g+1);
         soundManager.wrong();
         const wfid = ++floatIdRef.current;
         setFloatingScores(prev=>[...prev,{id:wfid,pts:-50,color:"#FF5E5B"}]);
         setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==wfid)),1000);
-        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);},700); return;
+        setTimeout(()=>unlock(), 700);
+        return;
       }
 
+      // Valid word found!
       const inOrder = letters.join("") === words[matchIdx];
       const pts = inOrder ? 300 : 100;
       const floatColor = inOrder ? "#00F5C4" : "#FFB703";
       inOrder ? soundManager.wordGreen() : soundManager.wordYellow();
-      // Spawn floating score label
       const fid = ++floatIdRef.current;
-      setFloatingScores(prev=>[...prev,{id:fid, pts, color:floatColor}]);
-      setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==fid)), 1150);
+      setFloatingScores(prev=>[...prev,{id:fid,pts,color:floatColor}]);
+      setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==fid)),1150);
       setFlash(inOrder ? "good" : "goodYellow");
       setTimeout(()=>{
         setFound(f=>[...f,matchIdx]);
-        setWordResults(prev=>({...prev,[matchIdx]: inOrder?"green":"yellow"}));
+        setWordResults(prev=>({...prev,[matchIdx]:inOrder?"green":"yellow"}));
         if (inOrder) setFoundInOrderSet(prev=>new Set([...prev,...newFlipped]));
-        setFoundTileIds(prev=>new Set([...prev,...newFlipped]));
+        // Add to found tile ids ref so future guards block them immediately
+        const newFoundIds = new Set([...foundTileIdsRef.current,...newFlipped]);
+        foundTileIdsRef.current = newFoundIds;
+        setFoundTileIds(newFoundIds);
         setHadError(false);
-        setFlipped([]); setFlash(null);
-        // Pop the score display
-        setScorePop(true); setTimeout(()=>setScorePop(false), 400);
+        setScorePop(true); setTimeout(()=>setScorePop(false),400);
+        unlock(); // clears flipped, error, flash, releases lock
       },420);
     }
   }
@@ -1025,6 +1056,8 @@ function LocalMultiScreen({ onBack }) {
   const [flash,setFlash] = useState(null);
   const [turns,setTurns] = useState(0);
   const [foundTileIdsMulti,setFoundTileIdsMulti] = useState(new Set());
+  const multiProcessingRef = React.useRef(false);
+  const multiFlippedRef = React.useRef([]);
   const COLORS=["#00F5C4","#FFB703","#FF5E5B","#9B5DE5"];
   const playerNames=Array.from({length:playerCount},(_,i)=>`Player ${i+1}`);
 
@@ -1074,9 +1107,10 @@ function LocalMultiScreen({ onBack }) {
   const foundWordSet=new Set(foundWords.map(f=>f.wordIndex));
 
   function handleTileClick(tile) {
-    if (foundTileIdsMulti.has(tile.id)||flipped.length>=4||error.length>0||flipped.includes(tile.id)) return;
-    const newFlipped=[...flipped,tile.id];
-    setFlipped(newFlipped);
+    if (multiProcessingRef.current||foundTileIdsMulti.has(tile.id)||multiFlippedRef.current.length>=4||multiFlippedRef.current.includes(tile.id)) return;
+    multiFlippedRef.current=[...multiFlippedRef.current,tile.id];
+    const newFlipped=multiFlippedRef.current;
+    setFlipped([...newFlipped]);
     if (newFlipped.length===4) {
       setTurns(t=>t+1);
       const ft=newFlipped.map(id=>tiles.find(t=>t.id===id));
@@ -1084,11 +1118,13 @@ function LocalMultiScreen({ onBack }) {
       const sorted=[...letters].sort().join("");
       const matchIdx=words.findIndex((w,i)=>!foundWordSet.has(i)&&[...w].sort().join("")===sorted);
       if (matchIdx===-1) {
+        multiProcessingRef.current=true;
         setError(newFlipped); setFlash("bad");
-        setTimeout(()=>{setFlipped([]);setError([]);setFlash(null);setCurrentPlayer(p=>(p+1)%playerCount);},700); return;
+        setTimeout(()=>{multiFlippedRef.current=[];multiProcessingRef.current=false;setFlipped([]);setError([]);setFlash(null);setCurrentPlayer(p=>(p+1)%playerCount);},700); return;
       }
       const multiInOrder = letters.join("") === words[matchIdx];
       const multiPts = multiInOrder ? 300 : 100;
+      multiProcessingRef.current=true;
       soundManager.wordGreen();
       setFlash(multiInOrder ? "goodOrder" : "good");
       setTimeout(()=>{
@@ -1097,6 +1133,7 @@ function LocalMultiScreen({ onBack }) {
         setInOrderMap(prev=>({...prev,[matchIdx]:multiInOrder}));
         setFoundTileIdsMulti(prev=>new Set([...prev,...newFlipped]));
         const ns=[...scores]; ns[currentPlayer]+=multiPts; setScores(ns);
+        multiFlippedRef.current=[];multiProcessingRef.current=false;
         setFlipped([]); setFlash(null);
         if (newFW.length===words.length) { soundManager.complete(); setGameOver(true); }
       },400);
