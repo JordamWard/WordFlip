@@ -561,6 +561,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   const [wrongGuesses, setWrongGuesses] = useState(0);
   const [wordResults, setWordResults] = useState({});
   const [foundInOrderSet, setFoundInOrderSet] = useState(new Set());
+  const [foundBonusWords, setFoundBonusWords] = useState([]);
+  const [bonusPts, setBonusPts] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [started, setStarted] = useState(false);
   const [flash, setFlash] = useState(null);
