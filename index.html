@@ -42,7 +42,7 @@
     const { useState, useEffect, useRef } = React;
 
 // ─── Word Bank ────────────────────────────────────────────────────────────────
-// 227 themed 4-word sets — enough for ~7 months of daily challenges without repeats
+// 400+ themed 4-word sets — enough for over a year of daily challenges without repeats
 const ALL_WORDS_4 = [
   // NATURE / WEATHER
   ["GUST","HAIL","SLOP","DRIP"],["MIST","HAZE","SMOG","DULL"],
@@ -173,6 +173,116 @@ const ALL_WORDS_4 = [
   ["FORT","WALL","GATE","KEEP"],["RUIN","TOMB","CAVE","LAIR"],
   ["YURT","HUTS","CAMP","TENT"],["MULE","CART","SLED","PACK"],
   ["FORD","WADE","SWIM","RAFT"],["TOLL","ROAD","GATE","PASS"],
+
+    // BODY
+    ["HAND","KNEE","SHIN","HEEL"],  ["CHIN","BROW","NECK","NAPE"],
+    ["BONE","VEIN","SKIN","PORE"],  ["NAIL","HAIR","LASH","CALF"],
+    ["LUNG","GUTS","BILE","GALL"],  ["LIMB","PALM","SOLE","ARCH"],
+    ["IRIS","LENS","LOBE","DRUM"],
+    // WEATHER
+    ["MILD","WARM","CALM","FAIR"],  ["RIME","HOAR","GREY","SLOP"],
+    ["THAW","DRIP","MELT","SEEP"],
+    // ANIMALS
+    ["BEAR","WOLF","LYNX","BOAR"],  ["CROW","HAWK","KITE","WREN"],
+    ["MOLE","VOLE","HARE","PIKA"],  ["BULL","BOAR","STAG","BUCK"],
+    ["FAWN","CUBS","JOEY","LAMB"],  ["WASP","FLEA","MOTH","MITE"],
+    ["MARE","MULE","FOAL","COLT"],  ["PONY","GOAT","IBEX","YAKS"],
+    ["LYNX","PUMA","LION","MINK"],  ["DUCK","TEAL","COOT","SMEW"],
+    ["BASS","RUDD","DACE","CHUB"],  ["IBIS","GULL","TERN","SKUA"],
+    // KITCHEN
+    ["WOKS","PANS","POTS","TINS"],  ["TEAS","JAVA","CHAI","BREW"],
+    ["RUMP","LOIN","SHIN","RACK"],  ["BUNS","ROLL","PITA","NAAN"],
+    ["NIPS","DRAM","SHOT","TOTS"],  ["ZEST","RIND","PEEL","PULP"],
+    ["WHET","HONE","BUFF","RASP"],  ["CHEW","BITE","GNAW","GUMS"],
+    ["FARE","GRUB","CHOW","NOSH"],  ["MILD","TART","SOUR","RICH"],
+    ["SUET","LARD","DRIP","DREG"],  ["STIR","FOLD","TOSS","BEAT"],
+    ["BEER","WINE","MEAD","CASK"],  ["OATS","BRAN","RUSK","CORN"],
+    ["SEAR","CHAR","BAKE","BOIL"],  ["DICE","CHOP","CUBE","MASH"],
+    // HOME
+    ["COSY","WARM","SNUG","NEAT"],  ["SILL","JAMB","ARCH","SPAN"],
+    ["STEP","RUNG","RAIL","SLAT"],  ["KNOB","BOLT","LOCK","HASP"],
+    ["SHED","COOP","BARN","SILO"],  ["SOAP","SUDS","FOAM","WASH"],
+    ["COIL","DUCT","PIPE","VENT"],  ["OVEN","HOBS","RACK","TRAY"],
+    ["SILK","WOOL","LACE","HEMP"],  ["GILT","GOLD","ZINC","IRON"],
+    // VERBS
+    ["DASH","RUSH","BOLT","ZOOM"],  ["WRAP","BIND","LASH","COIL"],
+    ["PROD","POKE","JABS","STAB"],  ["HAUL","DRAG","PULL","TOTE"],
+    ["SKIM","SCAN","PEEK","PEEP"],  ["SIGH","MOAN","WAIL","KEEN"],
+    ["GRIN","BEAM","WINK","LEER"],  ["STOW","PACK","CRAM","LOAD"],
+    ["DAWN","WAKE","STIR","RISE"],  ["DUSK","FADE","WANE","SINK"],
+    ["SNAP","CLAP","BANG","SLAP"],  ["DRIP","POUR","GUSH","FLOW"],
+    // NATURE
+    ["RILL","BECK","BURN","GILL"],  ["TARN","MERE","POOL","LOCH"],
+    ["VALE","DALE","GLEN","DELL"],  ["FELL","MOOR","HOLM","WOLD"],
+    ["BOLE","BARK","KNOT","RING"],  ["PEAT","LOAM","MARL","SILT"],
+    ["ALGA","KELP","WEED","REED"],  ["BULB","CORM","SEED","ROOT"],
+    ["CONE","BURR","MAST","HULL"],  ["DUNE","BERM","BANK","SPIT"],
+    ["FLOW","EDDY","RACE","RUSH"],  ["GUST","GALE","BLOW","WAFT"],
+    ["FERN","MOSS","LICH","RUST"],
+    // EMOTIONS
+    ["NUMB","DAZE","BLUR","HAZE"],  ["SULK","POUT","MOPE","GLUM"],
+    ["FOND","DEAR","WARM","LOVE"],  ["SNAP","RAGE","FUME","RANT"],
+    ["MEEK","MILD","SOFT","TAME"],  ["BUOY","GLAD","GLEE","BRIM"],
+    ["BORE","JADE","PALL","CLOY"],  ["ARID","DULL","FLAT","GREY"],
+    ["COOL","DOUR","COLD","ALOF"],  ["FIZZ","BUZZ","HYPE","ZEAL"],
+    // CONCEPTS
+    ["HALF","PAIR","TWIN","DUAL"],  ["ZERO","NONE","NULL","VOID"],
+    ["MUCH","LOTS","HEAP","MASS"],  ["TINY","PUNY","SLIM","WIRY"],
+    ["HUGE","VAST","WIDE","TALL"],  ["NEAR","NIGH","NEXT","SOON"],
+    ["LOUD","BRAY","BOOM","ROAR"],  ["SOFT","MUTE","HUSH","LISP"],
+    // MEDIEVAL
+    ["KEEP","MOAT","WALL","BERM"],  ["HELM","MAIL","COAT","CUFF"],
+    ["SERF","LORD","EARL","DUKE"],  ["MYTH","SAGA","EPIC","TALE"],
+    ["IRON","TONG","COAL","KILN"],  ["RUNE","WARD","SEAL","GLYP"],
+    ["BARD","SCOP","LUTE","FIFE"],
+    // SCIENCE
+    ["ATOM","BOND","WAVE","SPIN"],  ["GENE","CELL","GERM","SPOR"],
+    ["BYTE","WORD","PAGE","BITS"],  ["NODE","LINK","MESH","GRID"],
+    ["VOLT","WATT","AMPS","OHMS"],  ["AXIS","POLE","SPIN","TILT"],
+    ["MASS","LOAD","WORK","FLUX"],  ["EMIT","BEAM","RAYS","WAVE"],
+    // MUSIC
+    ["JAZZ","SOUL","FUNK","ROCK"],  ["HARP","LYRE","LUTE","HORN"],
+    ["OBOE","FIFE","HORN","DRUM"],  ["BEAT","BARS","HOOK","RIFF"],
+    ["ARIA","DUET","TRIO","BASS"],  ["FLAT","TUNE","KEYS","CLEF"],
+    // SPORTS
+    ["PUTT","CHIP","IRON","WOOD"],  ["LANE","PINS","SPAR","SETS"],
+    ["KICK","PUNT","RUSH","FAKE"],  ["DIVE","TUCK","PIKE","ARCH"],
+    ["BOUT","JABS","DUCK","HOOK"],  ["GOAL","SAVE","SHOT","PASS"],
+    ["RUNS","BUNT","BALK","WALK"],
+    // GARDEN
+    ["WEED","VINE","TURF","BEDS"],  ["LAWN","PLOT","BEDS","HERB"],
+    ["SEED","SOWN","TILL","WEED"],  ["POND","DAMP","MIRE","REED"],
+    ["SHED","TOOL","RAKE","HOSE"],
+    // GEOGRAPHY
+    ["CAPE","COVE","FORD","WEIR"],  ["MOOR","FELL","WOLD","VALE"],
+    ["LOCH","TARN","MERE","POND"],
+    // SPACE
+    ["BELT","RING","BAND","ZONE"],  ["MASS","SPIN","DARK","VOID"],
+    ["MOON","TIDE","PULL","CORE"],
+    // SIMPLE CLEAN
+    ["BALE","BYRE","COOP","MEWS"],  ["DOTE","FAWN","GUSH","RAVE"],
+    ["HOWL","WAIL","KEEN","MOAN"],  ["IDLE","LAZE","LOLL","REST"],
+    ["JADE","WORN","BEAT","LIMP"],  ["KNIT","PURL","SEAM","DARN"],
+    ["MALT","HOPS","WORT","BARM"],  ["QUIP","JEST","GIBE","BARB"],
+    ["TANG","BITE","EDGE","KICK"],  ["VAIN","SMUG","PRIG","PRIM"],
+    ["BASK","BAKE","GLOW","WARM"],  ["LUSH","RICH","RIPE","DEEP"],
+    ["PRIM","NEAT","TIDY","TRIM"],  ["WORN","AGED","USED","RUST"],
+    ["SORT","RANK","FILE","LIST"],  ["SPAN","ARCH","DOME","CEIL"],
+    ["SOOT","CHAR","COAL","COKE"],  ["LIME","CLAY","GRIT","LOAM"],
+    ["DUSK","NOON","DAWN","EVEN"],  ["LAIR","HOLT","SETT","BURR"],
+    ["PANT","GASP","HUFF","PUFF"],  ["MULL","MUSE","PORE","MOOT"],
+    ["SAGE","WISE","WILY","KEEN"],  ["SLAB","TILE","FLAG","PLAT"],
+    ["CASK","DRUM","BUTT","VATS"],  ["ZING","WHIZ","WHIR","FIZZ"],
+    ["MIRE","SLOP","MUCK","OOZE"],  ["FLAW","CHIP","NICK","DENT"],
+    ["HEMP","JUTE","FLAX","WOOL"],  ["BRIG","HULK","DORY","BARK"],
+    ["RASP","BURR","BUFF","FILE"],  ["TUFT","WISP","LOCK","COIL"],
+    ["FLIT","DART","BUZZ","ZOOM"],  ["RACK","PAIN","ACHE","PANG"],
+    ["GAWK","LEER","OGLE","PEER"],  ["WEAL","BOON","BALE","GAIN"],
+    ["WANE","FADE","DULL","PALE"],  ["RAMP","RISE","LIFT","SOAR"],
+    ["LURK","HIDE","STOW","DUCK"],  ["YELP","YELL","YORE","YAWN"],
+    ["KEEN","WAIL","WEEP","MOAN"],  ["SLAB","TILE","PAVE","FLAG"],
+    ["JIBE","TACK","LUFF","VEER"],  ["BOLD","LOUD","DEEP","RICH"],
+    ["LUSH","DAMP","FERN","MOSS"],  ["BOON","BALE","BODE","BANE"],
 ];
 
 const ALL_WORDS_9 = [
@@ -1311,6 +1421,109 @@ function DailyAlreadyDone({ onMenu, streak }) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+const TUTORIAL_KEY = "wf_seen_tutorial";
+
+function HowToPlay({ onClose }) {
+  const [step, setStep] = useState(0);
+  const steps = [
+    {
+      emoji: "🎯",
+      title: "Find the Words",
+      body: "A grid of face-down tiles each hide a letter. Tap 4 tiles to flip them — if they spell one of the target words, you get it!",
+      visual: (
+        <div style={{display:"flex",gap:6,justifyContent:"center",margin:"12px 0"}}>
+          {["W","O","R","D"].map((l,i)=>(
+            <div key={i} style={{width:44,height:44,borderRadius:8,background:i<2?"linear-gradient(135deg,#00c49f,#00F5C4)":"#F5EDD6",border:i<2?"2px solid #00F5C4":"2px solid #c8bca0",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.1rem",color:i<2?"#0a2e24":"#0D1B2A"}}>{l}</div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      emoji: "🟩",
+      title: "Order Matters",
+      body: "Flip letters in the right order (W→O→R→D) and the word turns GREEN for +300 pts. Any order still counts — YELLOW for +100 pts.",
+      visual: (
+        <div style={{display:"flex",flexDirection:"column",gap:8,margin:"12px 0"}}>
+          {[["🟩","+300 pts","Flip in order","#00F5C4"],["🟨","+100 pts","Any order","#FFB703"]].map(([em,pts,label,col])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:10,background:col+"22",border:`1.5px solid ${col}`,borderRadius:10,padding:"8px 12px"}}>
+              <span style={{fontSize:"1.4rem"}}>{em}</span>
+              <div>
+                <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:col,fontSize:"0.95rem"}}>{pts}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem"}}>{label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      emoji: "⏳",
+      title: "Daily Challenge",
+      body: "Every day there are 4 new words. You have 16 turns to find them all. The turn counter turns red when you're down to your last 3!",
+      visual: (
+        <div style={{display:"flex",justifyContent:"center",gap:16,margin:"12px 0"}}>
+          {[[16,"#00F5C4"],[8,"#FFB703"],[3,"#FF5E5B"]].map(([n,col])=>(
+            <div key={n} style={{textAlign:"center"}}>
+              <div style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"2rem",color:col}}>{n}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>turns left</div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      emoji: "⭐",
+      title: "Bonus Points",
+      body: "Speed bonus: finish fast for +600 pts. Accuracy: starts at 800, drops 50 per wrong guess. Spot a hidden bonus word? That's +50 surprise pts!",
+      visual: (
+        <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
+          {[["⏱","Speed bonus","Up to +600 pts","#9B5DE5"],["🎯","Accuracy bonus","Up to +800 pts","#00BBF9"],["✨","Bonus word","Surprise +50 pts","#FFB703"]].map(([em,label,pts,col])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#0a1520",borderRadius:8,border:`1px solid ${col}44`}}>
+              <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",flex:1}}>{label}</span>
+              <span style={{fontFamily:"'Fraunces',serif",color:col,fontWeight:700,fontSize:"0.8rem"}}>{pts}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
+
+  const s = steps[step];
+  const isLast = step === steps.length - 1;
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"linear-gradient(160deg,#0e1e30,#0a1520)",border:"1.5px solid #1e3048",borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",boxShadow:"0 20px 60px #000a",animation:"menuIn 0.3s ease"}}>
+        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:20}}>
+          {steps.map((_,i)=>(
+            <div key={i} onClick={()=>setStep(i)} style={{width:i===step?20:6,height:6,borderRadius:3,background:i===step?"#00F5C4":"#1e3048",transition:"all 0.3s",cursor:"pointer"}}/>
+          ))}
+        </div>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:"2.5rem",marginBottom:8}}>{s.emoji}</div>
+          <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.4rem",fontWeight:700,margin:"0 0 10px"}}>{s.title}</h2>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem",lineHeight:1.7,margin:0}}>{s.body}</p>
+          {s.visual}
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          {step > 0 && (
+            <button onClick={()=>setStep(s=>s-1)} style={{...btnStyle("#1e3048","#7a9cc0"),flex:1,padding:"10px"}}>← Back</button>
+          )}
+          <button onClick={isLast ? onClose : ()=>setStep(s=>s+1)} style={{...btnStyle(isLast?"#00F5C4":"#1e3048",isLast?"#0a2e24":"#F5EDD6"),flex:2,padding:"10px",fontWeight:700}}>
+            {isLast ? "Let's Play! 🎉" : "Next →"}
+          </button>
+        </div>
+        {!isLast && (
+          <button onClick={onClose} style={{...btnStyle("transparent","#3a5570"),width:"100%",padding:"6px",marginTop:6,fontSize:"0.75rem",textDecoration:"underline",border:"none"}}>
+            Skip tutorial
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function WordFlip() {
   const [screen,setScreen] = useState("menu");
   const [soloLarge,setSoloLarge] = useState(false);
@@ -1318,6 +1531,13 @@ function WordFlip() {
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
   const [winIsNewBest,setWinIsNewBest] = useState(false);
+  const [showTutorial,setShowTutorial] = useState(()=>{
+    try { return !localStorage.getItem(TUTORIAL_KEY); } catch { return true; }
+  });
+  function closeTutorial() {
+    try { localStorage.setItem(TUTORIAL_KEY,"1"); } catch {}
+    setShowTutorial(false);
+  }
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
 
@@ -1379,10 +1599,16 @@ function WordFlip() {
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
+      {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
       <div style={{marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
         <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:"linear-gradient(90deg,#00F5C4,#FFB703)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
-        {screen==="menu"&&<p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:"4px 0 0"}}>flip · match · win</p>}
+        {screen==="menu"&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>flip · match · win</p>
+            <button onClick={()=>setShowTutorial(true)} style={{background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:22,height:22,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.7rem",fontWeight:700,padding:0}} aria-label="How to play">?</button>
+          </div>
+        )}
       </div>
 
       {screen==="menu"&&(
