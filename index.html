@@ -1347,17 +1347,20 @@ function LocalMultiScreen({ onBack }) {
 function OnlineScreen({ onBack }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
-  const [codeInput, setCodeInput] = useState('');
+  const [codeInput, setCodeInput] = useState(() => new URLSearchParams(window.location.search).get('room') || '');
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [gs, setGs] = useState(null);
   const [tiles, setTiles] = useState([]);
   const [flipped, setFlipped] = useState([]);
+  const [remoteFlips, setRemoteFlips] = useState(new Set());
   const [errTiles, setErrTiles] = useState([]);
   const [flash, setFlash] = useState(null);
   const [timeLeft, setTimeLeft] = useState(60);
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const fromInvite = useRef(!!(new URLSearchParams(window.location.search).get('room'))).current;
 
   const myId = useRef(getMyPlayerId()).current;
   const channelRef = useRef(null);
@@ -1382,6 +1385,13 @@ function OnlineScreen({ onBack }) {
     (gs.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
     foundTileIdsRef.current = ids;
   }, [gs]);
+
+  // Auto-copy room code when arriving via invite link
+  useEffect(() => {
+    if (fromInvite && codeInput) {
+      try { navigator.clipboard.writeText(codeInput); } catch(e) {}
+    }
+  }, []);
 
   // Cleanup subscriptions on unmount
   useEffect(() => () => {
@@ -1436,9 +1446,15 @@ function OnlineScreen({ onBack }) {
         (newGs.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
         foundTileIdsRef.current = ids;
         // When turn passes away from me, clear local selection
+        setRemoteFlips(new Set()); // clear remote tile previews on every turn change
         if (newGs.current_player_id !== myId) {
           flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
           processingRef.current = false;
+        }
+      })
+      .on('broadcast', { event: 'tile_flip' }, ({ payload }) => {
+        if (payload?.playerId !== myId) {
+          setRemoteFlips(prev => new Set([...prev, payload.tileId]));
         }
       })
       .subscribe();
@@ -1451,7 +1467,7 @@ function OnlineScreen({ onBack }) {
     localStorage.setItem('wf_online_name', playerName.trim());
     try {
       const db = getSB();
-      const words = shuffle([...pickRandom(ALL_WORDS_4)]);
+      const words = pickRandom(ALL_WORDS_9);
       const seed = Math.floor(Math.random() * 1e8);
       const { data: r, error: re } = await db.from('rooms')
         .insert({ code: genRoomCode(), status: 'waiting', words, shuffle_seed: seed, host_id: myId })
@@ -1530,6 +1546,7 @@ function OnlineScreen({ onBack }) {
     soundManager.flip();
     flippedRef.current = [...flippedRef.current, tile.id];
     setFlipped([...flippedRef.current]);
+    try { channelRef.current?.send({ type: 'broadcast', event: 'tile_flip', payload: { tileId: tile.id, playerId: myId } }); } catch(e) {}
     if (flippedRef.current.length === 4) {
       processingRef.current = true;
       submitGuess([...flippedRef.current]);
@@ -1628,25 +1645,37 @@ function OnlineScreen({ onBack }) {
       <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:20, fontSize:'0.8rem'}}>← Back</button>
       <div style={{fontSize:'2rem', marginBottom:8}}>🌐</div>
       <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 20px'}}>Online Play</h2>
+      {fromInvite && codeInput && (
+        <div style={{background:'#0e2a1a', border:'1.5px solid #00F5C4', borderRadius:10, padding:'10px 14px', marginBottom:16, fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', color:'#00F5C4'}}>
+          🎮 You've been invited to room <strong style={{letterSpacing:'0.12em'}}>{codeInput}</strong> — enter your name then hit Join!
+        </div>
+      )}
       {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
       <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
         style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}}
-        onKeyDown={e => e.key==='Enter' && createRoom()} />
-      <button onClick={createRoom} disabled={busy}
-        style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:12, opacity:busy?0.6:1}}>
-        {busy?'Creating...':'✦ Create Room'}
-      </button>
+        onKeyDown={e => e.key==='Enter' && (fromInvite && codeInput ? joinRoom() : createRoom())} />
+      {!fromInvite && (
+        <button onClick={createRoom} disabled={busy}
+          style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:12, opacity:busy?0.6:1}}>
+          {busy?'Creating...':'✦ Create Room'}
+        </button>
+      )}
       <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:12}}>
         <div style={{flex:1, height:1, background:'#1e3048'}} />
-        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem'}}>or join existing</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem'}}>{fromInvite ? 'join room' : 'or join existing'}</span>
         <div style={{flex:1, height:1, background:'#1e3048'}} />
       </div>
       <div style={{display:'flex', gap:8}}>
         <input value={codeInput} onChange={e => setCodeInput(e.target.value.toUpperCase().slice(0,6))} placeholder="ROOM CODE" maxLength={6}
-          style={{flex:1, padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'1rem', letterSpacing:'0.15em', outline:'none'}}
+          style={{flex:1, padding:'12px 14px', borderRadius:10, border:`1.5px solid ${fromInvite&&codeInput?'#00F5C4':'#2a4060'}`, background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'1rem', letterSpacing:'0.15em', outline:'none'}}
           onKeyDown={e => e.key==='Enter' && joinRoom()} />
-        <button onClick={joinRoom} disabled={busy} style={{...btnStyle('#1e3048','#F5EDD6'), padding:'12px 18px', opacity:busy?0.6:1}}>Join →</button>
+        <button onClick={joinRoom} disabled={busy} style={{...btnStyle(fromInvite&&codeInput?'#00F5C4':'#1e3048', fromInvite&&codeInput?'#0a2e24':'#F5EDD6'), padding:'12px 18px', opacity:busy?0.6:1}}>Join →</button>
       </div>
+      {fromInvite && (
+        <button onClick={() => { setCodeInput(''); }} style={{...btnStyle('transparent','#3a5570'), marginTop:10, fontSize:'0.72rem', border:'none', textDecoration:'underline'}}>
+          Create a new room instead
+        </button>
+      )}
     </div>
   );
 
@@ -1667,7 +1696,14 @@ function OnlineScreen({ onBack }) {
           </span>
         </div>
       ))}
-      <div style={{marginTop:16}}>
+      {/* Invite link */}
+      <button onClick={() => {
+        const link = `https://wordflipgame.netlify.app?room=${room?.code}`;
+        navigator.clipboard.writeText(link).then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2500); }).catch(() => {});
+      }} style={{...btnStyle(linkCopied?'#0e2a1a':'#0a1520', linkCopied?'#00F5C4':'#7a9cc0'), width:'100%', padding:'10px', marginTop:12, border:`1.5px solid ${linkCopied?'#00F5C4':'#1e3048'}`, borderRadius:10, fontSize:'0.82rem', transition:'all 0.2s'}}>
+        {linkCopied ? '✓ Link copied!' : '🔗 Copy invite link'}
+      </button>
+      <div style={{marginTop:12}}>
         {isHost ? (
           <button onClick={startGame} disabled={players.length<2}
             style={{...btnStyle(players.length>=2?'linear-gradient(90deg,#00c49f,#00F5C4)':'#1e3048', players.length>=2?'#0a2e24':'#3a5570'), width:'100%', padding:'13px', opacity:players.length<2?0.5:1}}>
@@ -1757,21 +1793,25 @@ function OnlineScreen({ onBack }) {
           {flash==='bad'&&"✗ Wrong — next player's turn"}
         </span>}
       </div>
-      {/* Board — dimmed and non-interactive when not my turn */}
-      <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'clamp(4px,1.5vw,10px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048', opacity:isMyTurn?1:0.65, transition:'opacity 0.3s', pointerEvents:isMyTurn?'auto':'none'}}>
-        {tiles.map(tile => (
-          <Tile key={tile.id} tile={tile}
-            isFlipped={flipped.includes(tile.id)}
-            isFound={foundTileIdsRef.current.has(tile.id)}
-            foundInOrder={foundWordsList.find(fw => fw.tile_ids?.includes(tile.id))?.inOrder || false}
-            isSelected={flipped.includes(tile.id) && !errTiles.includes(tile.id)}
-            isError={errTiles.includes(tile.id)}
-            onClick={() => handleTileClick(tile)}
-            orderNum={flipped.includes(tile.id) ? flipped.indexOf(tile.id) : undefined}
-          />
-        ))}
+      {/* Board — 6×6 grid; click-locked when not my turn but remote flips still visible */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'clamp(3px,1.2vw,8px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048'}}>
+        {tiles.map(tile => {
+          const isLocalFlipped = flipped.includes(tile.id);
+          const isRemote = !isLocalFlipped && remoteFlips.has(tile.id);
+          return (
+            <Tile key={tile.id} tile={tile}
+              isFlipped={isLocalFlipped || isRemote}
+              isFound={foundTileIdsRef.current.has(tile.id)}
+              foundInOrder={foundWordsList.find(fw => fw.tile_ids?.includes(tile.id))?.inOrder || false}
+              isSelected={isLocalFlipped && !errTiles.includes(tile.id)}
+              isError={errTiles.includes(tile.id)}
+              onClick={() => handleTileClick(tile)}
+              orderNum={isLocalFlipped ? flipped.indexOf(tile.id) : undefined}
+            />
+          );
+        })}
       </div>
-      {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Waiting for {currentPlayerObj?.name || 'other player'}…</p>}
+      {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Watching {currentPlayerObj?.name || 'other player'} choose…</p>}
       <div style={{display:'flex', justifyContent:'flex-end', marginTop:8}}>
         <button onClick={() => { if(window.confirm('Leave this game?')) { try{getSB().removeChannel(channelRef.current);}catch(e){} onBack(); }}}
           style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
