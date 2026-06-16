@@ -82,7 +82,16 @@ function genRoomCode() {
 
 function getMyPlayerId() {
   let id = localStorage.getItem('wf_player_id');
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem('wf_player_id', id); }
+  if (!id) {
+    // crypto.randomUUID() requires iOS 15.4+ — fallback for older devices
+    id = (typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    localStorage.setItem('wf_player_id', id);
+  }
   return id;
 }
 
