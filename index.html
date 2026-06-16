@@ -336,13 +336,13 @@ function formatTime(ms) {
   return `${m}:${String(s%60).padStart(2,"0")}`;
 }
 
-function scoreCalc(ms, wordResults, wrongGuesses) {
+function scoreCalc(ms, wordResults, wrongGuesses, bonusPts = 0) {
   const greenPts = wordResults.filter(r=>r==="green").length * 300;
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
   // "missed" words score 0 — no bonus for unfound words
   const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
   const guessBonus = Math.max(0, 800 - (wrongGuesses||0) * 50); // 800 pts, -50 per wrong guess
-  return greenPts + yellowPts + timeBonus + guessBonus;
+  return greenPts + yellowPts + timeBonus + guessBonus + bonusPts;
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -825,7 +825,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
       {(() => {
         const turnsLeft = maxTurns ? maxTurns - turns : null;
         const turnsDanger = turnsLeft !== null && turnsLeft <= 3;
-        const liveScore = scoreCalc(elapsed, Object.values(wordResults), wrongGuesses);
+        const liveScore = scoreCalc(elapsed, Object.values(wordResults), wrongGuesses, bonusPts);
         return (
           <div style={{marginBottom:8}}>
             {/* Score row — prominent center with floating animation target */}
@@ -909,18 +909,21 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
 }
 
 // ─── Score Receipt ────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0 }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts = greens*300 + yellows*100;
   const timePts = Math.max(0, 600 - Math.floor(elapsed/1000));
-  const guessPts = Math.max(0, 1200 - wrongGuesses*100);
+  const guessPts = Math.max(0, 800 - wrongGuesses*50);
 
   const rows = [
     { icon:"\u{1F524}", label:`Words (${greens}\u{1F7E9} ${yellows}\u{1F7E8})`, pts:wordPts, color:"#00F5C4" },
     { icon:"\u23F1", label:`Time (${formatTime(elapsed)})`, pts:timePts, color:"#9B5DE5" },
     { icon:"\u{1F3AF}", label:`Guesses (${wrongGuesses} missed)`, pts:guessPts, color:"#00BBF9" },
+    ...(bonusPts > 0 ? [{ icon:"\u2728", label:`Bonus words (+${Math.round(bonusPts/50)} found)`, pts:bonusPts, color:"#FFB703" }] : []),
   ];
+
+  const totalDelay = 0.15 * (rows.length + 1);
 
   return (
     <div style={{
@@ -947,7 +950,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score }) {
       <div style={{
         borderTop:"1.5px dashed #1e3048", marginTop:10, paddingTop:10,
         display:"flex", justifyContent:"space-between", alignItems:"baseline",
-        opacity:0, animation:"receiptTotal 0.4s cubic-bezier(.4,2,.6,1) 0.65s forwards",
+        opacity:0, animation:`receiptTotal 0.4s cubic-bezier(.4,2,.6,1) ${totalDelay}s forwards`,
       }}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem", fontWeight:700}}>
           TOTAL
@@ -1009,6 +1012,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
         wrongGuesses={result.wrongGuesses||0}
         turns={result.turns}
         score={score}
+        bonusPts={result.bonusPts||0}
       />
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
         {isDaily&&(
@@ -1408,6 +1412,7 @@ function DailyAlreadyDone({ onMenu, streak }) {
           wrongGuesses={done.wrongGuesses||0}
           turns={done.turns}
           score={score}
+          bonusPts={done.bonusPts||0}
         />
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center"}}>
