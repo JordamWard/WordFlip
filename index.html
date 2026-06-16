@@ -1606,8 +1606,10 @@ function WordFlip() {
         {screen==="menu"&&(
           <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>flip · match · win</p>
-            <button onClick={()=>setShowTutorial(true)} style={{background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:22,height:22,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.7rem",fontWeight:700,padding:0}} aria-label="How to play">?</button>
           </div>
+        )}
+        {screen==="menu"&&(
+          <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
         )}
       </div>
 
