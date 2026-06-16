@@ -35,11 +35,58 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
+
+// ─── Supabase ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://vznuengepsbnmgwfyadr.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bnVlbmdlcHNibm1nd2Z5YWRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2Mzk0NjAsImV4cCI6MjA5NzIxNTQ2MH0.5ym5v66-Kex_geVij8EKef2Ww5G3I36p70KHn8faSOs';
+let _sbClient = null;
+function getSB() {
+  if (typeof supabase === 'undefined') throw new Error('Supabase SDK not loaded');
+  if (!_sbClient) _sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  return _sbClient;
+}
+
+// Seeded PRNG — gives every client the same tile layout for a given room
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function buildTilesSeeded(words, seed) {
+  const tiles = [];
+  words.forEach((word, wi) => word.split('').forEach((letter, li) => {
+    tiles.push({ id: `${wi}-${li}`, letter });
+  }));
+  const rng = mulberry32(seed);
+  const a = [...tiles];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function getMyPlayerId() {
+  let id = localStorage.getItem('wf_player_id');
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem('wf_player_id', id); }
+  return id;
+}
+
+const MP_COLORS = ['#00F5C4', '#FFB703', '#FF5E5B', '#9B5DE5'];
 
 // ─── Word Bank ────────────────────────────────────────────────────────────────
 // 400+ themed 4-word sets — enough for over a year of daily challenges without repeats
@@ -1296,21 +1343,438 @@ function LocalMultiScreen({ onBack }) {
   );
 }
 
-// ─── Online placeholder ───────────────────────────────────────────────────────
+// ─── Online Multiplayer ───────────────────────────────────────────────────────
 function OnlineScreen({ onBack }) {
+  const [phase, setPhase] = useState('join'); // join | lobby | game | done
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
+  const [codeInput, setCodeInput] = useState('');
+  const [room, setRoom] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [gs, setGs] = useState(null);
+  const [tiles, setTiles] = useState([]);
+  const [flipped, setFlipped] = useState([]);
+  const [errTiles, setErrTiles] = useState([]);
+  const [flash, setFlash] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [busy, setBusy] = useState(false);
+  const [errMsg, setErrMsg] = useState('');
+
+  const myId = useRef(getMyPlayerId()).current;
+  const channelRef = useRef(null);
+  const timerRef = useRef(null);
+  const processingRef = useRef(false);
+  const flippedRef = useRef([]);
+  const foundTileIdsRef = useRef(new Set());
+  const phaseRef = useRef('join');
+  const gsRef = useRef(null);
+  const roomRef = useRef(null);
+  const playersRef = useRef([]);
+
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { gsRef.current = gs; }, [gs]);
+  useEffect(() => { roomRef.current = room; }, [room]);
+  useEffect(() => { playersRef.current = players; }, [players]);
+
+  // Rebuild found tile id set whenever game state changes
+  useEffect(() => {
+    if (!gs) return;
+    const ids = new Set();
+    (gs.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
+    foundTileIdsRef.current = ids;
+  }, [gs]);
+
+  // Cleanup subscriptions on unmount
+  useEffect(() => () => {
+    if (channelRef.current) try { getSB().removeChannel(channelRef.current); } catch(e) {}
+    clearInterval(timerRef.current);
+  }, []);
+
+  // 60-second countdown; auto-pass when it hits 0 on my turn
+  useEffect(() => {
+    if (phase !== 'game' || !gs?.turn_expires_at) return;
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      const left = Math.max(0, Math.round((new Date(gs.turn_expires_at) - Date.now()) / 1000));
+      setTimeLeft(left);
+      if (left <= 0 && gsRef.current?.current_player_id === myId && !processingRef.current) {
+        clearInterval(timerRef.current);
+        autoPassTurn();
+      }
+    }, 500);
+    return () => clearInterval(timerRef.current);
+  }, [gs?.turn_expires_at, phase]);
+
+  function getNextPlayer(list, currentId) {
+    const sorted = [...list].sort((a, b) => a.turn_order - b.turn_order);
+    const idx = sorted.findIndex(p => p.id === currentId);
+    return sorted[(idx + 1) % sorted.length];
+  }
+
+  function subscribeToRoom(roomId) {
+    const channel = getSB()
+      .channel(`room-${roomId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, payload => {
+        const r = payload.new;
+        setRoom(r); roomRef.current = r;
+        if (r.status === 'playing' && phaseRef.current !== 'game' && phaseRef.current !== 'done') {
+          setTiles(buildTilesSeeded(r.words, r.shuffle_seed));
+          setPhase('game'); phaseRef.current = 'game';
+        }
+        if (r.status === 'done' && phaseRef.current !== 'done') {
+          setPhase('done'); phaseRef.current = 'done';
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}` }, async () => {
+        const { data } = await getSB().from('players').select('*').eq('room_id', roomId).order('turn_order');
+        if (data) { setPlayers(data); playersRef.current = data; }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_state', filter: `room_id=eq.${roomId}` }, payload => {
+        const newGs = payload.new;
+        if (!newGs) return;
+        setGs(newGs); gsRef.current = newGs;
+        const ids = new Set();
+        (newGs.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
+        foundTileIdsRef.current = ids;
+        // When turn passes away from me, clear local selection
+        if (newGs.current_player_id !== myId) {
+          flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
+          processingRef.current = false;
+        }
+      })
+      .subscribe();
+    channelRef.current = channel;
+  }
+
+  async function createRoom() {
+    if (!playerName.trim()) { setErrMsg('Enter your name first'); return; }
+    setBusy(true); setErrMsg('');
+    localStorage.setItem('wf_online_name', playerName.trim());
+    try {
+      const db = getSB();
+      const words = shuffle([...pickRandom(ALL_WORDS_4)]);
+      const seed = Math.floor(Math.random() * 1e8);
+      const { data: r, error: re } = await db.from('rooms')
+        .insert({ code: genRoomCode(), status: 'waiting', words, shuffle_seed: seed, host_id: myId })
+        .select().single();
+      if (re) throw re;
+      const { error: pe } = await db.from('players')
+        .insert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 });
+      if (pe) throw pe;
+      setRoom(r); roomRef.current = r;
+      setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
+      playersRef.current = [{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }];
+      subscribeToRoom(r.id);
+      setPhase('lobby'); phaseRef.current = 'lobby';
+    } catch(e) {
+      setErrMsg('Could not create room — check console for details.');
+      console.error('createRoom:', e);
+    }
+    setBusy(false);
+  }
+
+  async function joinRoom() {
+    if (!playerName.trim()) { setErrMsg('Enter your name first'); return; }
+    const code = codeInput.trim().toUpperCase();
+    if (code.length < 2) { setErrMsg('Enter a room code'); return; }
+    setBusy(true); setErrMsg('');
+    localStorage.setItem('wf_online_name', playerName.trim());
+    try {
+      const db = getSB();
+      const { data: r, error: re } = await db.from('rooms').select('*').eq('code', code).eq('status', 'waiting').single();
+      if (re || !r) { setErrMsg('Room not found or already started.'); setBusy(false); return; }
+      const { data: existing } = await db.from('players').select('*').eq('room_id', r.id).order('turn_order');
+      if (existing && existing.length >= 4) { setErrMsg('Room is full (4 players max).'); setBusy(false); return; }
+      const alreadyIn = existing?.find(p => p.id === myId);
+      if (!alreadyIn) {
+        const { error: pe } = await db.from('players')
+          .insert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: existing?.length || 0, score: 0 });
+        if (pe) throw pe;
+      }
+      const allPlayers = alreadyIn ? (existing || []) : [...(existing || []),
+        { id: myId, room_id: r.id, name: playerName.trim(), turn_order: existing?.length || 0, score: 0 }];
+      setRoom(r); roomRef.current = r;
+      setPlayers(allPlayers); playersRef.current = allPlayers;
+      subscribeToRoom(r.id);
+      setPhase('lobby'); phaseRef.current = 'lobby';
+    } catch(e) {
+      setErrMsg('Could not join room — check console for details.');
+      console.error('joinRoom:', e);
+    }
+    setBusy(false);
+  }
+
+  async function startGame() {
+    try {
+      const db = getSB();
+      const now = new Date();
+      const expires = new Date(now.getTime() + 60000);
+      const firstPlayer = [...playersRef.current].sort((a, b) => a.turn_order - b.turn_order)[0];
+      await db.from('rooms').update({ status: 'playing', started_at: now.toISOString() }).eq('id', roomRef.current.id);
+      await db.from('game_state').insert({
+        room_id: roomRef.current.id, found_words: [], turn_number: 0,
+        current_player_id: firstPlayer?.id || myId,
+        turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
+      });
+      // Host transitions locally (Realtime covers guests)
+      setTiles(buildTilesSeeded(roomRef.current.words, roomRef.current.shuffle_seed));
+      setPhase('game'); phaseRef.current = 'game';
+    } catch(e) { console.error('startGame:', e); }
+  }
+
+  function handleTileClick(tile) {
+    if (gsRef.current?.current_player_id !== myId) return;
+    if (processingRef.current) return;
+    if (foundTileIdsRef.current.has(tile.id)) return;
+    if (flippedRef.current.length >= 4) return;
+    if (flippedRef.current.includes(tile.id)) return;
+    soundManager.flip();
+    flippedRef.current = [...flippedRef.current, tile.id];
+    setFlipped([...flippedRef.current]);
+    if (flippedRef.current.length === 4) {
+      processingRef.current = true;
+      submitGuess([...flippedRef.current]);
+    }
+  }
+
+  async function submitGuess(tileIds) {
+    const db = getSB();
+    const currentGs = gsRef.current;
+    const currentRoom = roomRef.current;
+    const currentPlayers = playersRef.current;
+    if (!currentGs || !currentRoom) { processingRef.current = false; return; }
+    const ft = tileIds.map(id => tiles.find(t => t.id === id)).filter(Boolean);
+    const letters = ft.map(t => t.letter);
+    const sorted = [...letters].sort().join('');
+    const words = currentRoom.words;
+    const foundWordsList = currentGs.found_words || [];
+    const foundIndices = new Set(foundWordsList.map(fw => fw.wordIndex));
+    const matchIdx = words.findIndex((w, i) => !foundIndices.has(i) && [...w].sort().join('') === sorted);
+    const now = new Date();
+    const expires = new Date(now.getTime() + 60000);
+    const myPlayerData = currentPlayers.find(p => p.id === myId);
+
+    if (matchIdx === -1) {
+      setErrTiles(tileIds); setFlash('bad');
+      soundManager.wrong();
+      const nextP = getNextPlayer(currentPlayers, myId);
+      setTimeout(async () => {
+        try {
+          await db.from('game_state').update({
+            turn_number: (currentGs.turn_number || 0) + 1,
+            current_player_id: nextP.id,
+            turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
+          }).eq('room_id', currentRoom.id);
+        } catch(e) { console.error('submitGuess wrong:', e); }
+        flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
+        processingRef.current = false;
+      }, 800);
+      return;
+    }
+
+    const inOrder = letters.join('') === words[matchIdx];
+    const pts = inOrder ? 300 : 100;
+    inOrder ? soundManager.wordGreen() : soundManager.wordYellow();
+    setFlash(inOrder ? 'good' : 'goodYellow');
+    const newFoundWords = [...foundWordsList, {
+      wordIndex: matchIdx, playerId: myId,
+      playerName: myPlayerData?.name || '?', inOrder, tile_ids: tileIds,
+    }];
+    setTimeout(async () => {
+      try {
+        const gameOver = newFoundWords.length >= words.length;
+        await db.from('players').update({ score: (myPlayerData?.score || 0) + pts }).eq('id', myId);
+        await db.from('game_state').update({
+          found_words: newFoundWords, turn_number: (currentGs.turn_number || 0) + 1,
+          current_player_id: myId,
+          turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
+        }).eq('room_id', currentRoom.id);
+        if (gameOver) await db.from('rooms').update({ status: 'done' }).eq('id', currentRoom.id);
+      } catch(e) { console.error('submitGuess hit:', e); }
+      flippedRef.current = []; setFlipped([]); setFlash(null);
+      processingRef.current = false;
+    }, 500);
+  }
+
+  async function autoPassTurn() {
+    processingRef.current = true;
+    const currentGs = gsRef.current; const currentRoom = roomRef.current;
+    if (!currentGs || !currentRoom) { processingRef.current = false; return; }
+    const now = new Date();
+    const expires = new Date(now.getTime() + 60000);
+    const nextP = getNextPlayer(playersRef.current, myId);
+    flippedRef.current = []; setFlipped([]);
+    try {
+      await getSB().from('game_state').update({
+        turn_number: (currentGs.turn_number || 0) + 1,
+        current_player_id: nextP.id,
+        turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
+      }).eq('room_id', currentRoom.id).eq('current_player_id', myId); // idempotent guard
+    } catch(e) { console.error('autoPassTurn:', e); }
+    processingRef.current = false;
+  }
+
+  // ─── Derived view state ───────────────────────────────────────────────────────
+  const isMyTurn = gs?.current_player_id === myId;
+  const isHost = room?.host_id === myId;
+  const sortedPlayers = [...players].sort((a, b) => a.turn_order - b.turn_order);
+  const foundWordsList = gs?.found_words || [];
+  const words = room?.words || [];
+  const currentPlayerObj = sortedPlayers.find(p => p.id === gs?.current_player_id);
+  const timeDanger = timeLeft <= 10;
+
+  // ─── JOIN ─────────────────────────────────────────────────────────────────────
+  if (phase === 'join') return (
+    <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
+      <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:20, fontSize:'0.8rem'}}>← Back</button>
+      <div style={{fontSize:'2rem', marginBottom:8}}>🌐</div>
+      <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 20px'}}>Online Play</h2>
+      {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
+      <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
+        style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}}
+        onKeyDown={e => e.key==='Enter' && createRoom()} />
+      <button onClick={createRoom} disabled={busy}
+        style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:12, opacity:busy?0.6:1}}>
+        {busy?'Creating...':'✦ Create Room'}
+      </button>
+      <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:12}}>
+        <div style={{flex:1, height:1, background:'#1e3048'}} />
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem'}}>or join existing</span>
+        <div style={{flex:1, height:1, background:'#1e3048'}} />
+      </div>
+      <div style={{display:'flex', gap:8}}>
+        <input value={codeInput} onChange={e => setCodeInput(e.target.value.toUpperCase().slice(0,6))} placeholder="ROOM CODE" maxLength={6}
+          style={{flex:1, padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'1rem', letterSpacing:'0.15em', outline:'none'}}
+          onKeyDown={e => e.key==='Enter' && joinRoom()} />
+        <button onClick={joinRoom} disabled={busy} style={{...btnStyle('#1e3048','#F5EDD6'), padding:'12px 18px', opacity:busy?0.6:1}}>Join →</button>
+      </div>
+    </div>
+  );
+
+  // ─── LOBBY ────────────────────────────────────────────────────────────────────
+  if (phase === 'lobby') return (
+    <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
+      <div style={{background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:14, padding:'16px 20px', marginBottom:16}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'0 0 6px', letterSpacing:'0.08em'}}>ROOM CODE</p>
+        <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontSize:'2.4rem', fontWeight:900, letterSpacing:'0.22em'}}>{room?.code}</div>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'6px 0 0'}}>Share with friends to join</p>
+      </div>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', margin:'0 0 8px'}}>Players ({players.length}/4)</p>
+      {sortedPlayers.map((p, i) => (
+        <div key={p.id} style={{display:'flex', alignItems:'center', gap:10, background:'#0a1520', borderRadius:10, padding:'10px 14px', marginBottom:6, border:`1.5px solid ${p.id===myId?MP_COLORS[i]+'66':'#1e3048'}`}}>
+          <div style={{width:8, height:8, borderRadius:'50%', background:MP_COLORS[i], flexShrink:0}} />
+          <span style={{fontFamily:"'JetBrains Mono',monospace", color:p.id===myId?'#F5EDD6':'#7a9cc0', fontSize:'0.85rem', flex:1, textAlign:'left'}}>
+            {p.name}{p.id===myId?' (you)':''}{p.turn_order===0?' 👑':''}
+          </span>
+        </div>
+      ))}
+      <div style={{marginTop:16}}>
+        {isHost ? (
+          <button onClick={startGame} disabled={players.length<2}
+            style={{...btnStyle(players.length>=2?'linear-gradient(90deg,#00c49f,#00F5C4)':'#1e3048', players.length>=2?'#0a2e24':'#3a5570'), width:'100%', padding:'13px', opacity:players.length<2?0.5:1}}>
+            {players.length<2?'Waiting for players...':'Start Game →'}
+          </button>
+        ) : (
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.8rem', padding:'12px', background:'#0a1520', borderRadius:10, border:'1.5px solid #1e3048'}}>
+            ⏳ Waiting for host to start...
+          </div>
+        )}
+      </div>
+      <button onClick={() => { try{getSB().removeChannel(channelRef.current);}catch(e){} setPhase('join'); phaseRef.current='join'; setRoom(null); setPlayers([]); }}
+        style={{...btnStyle('transparent','#3a5570'), marginTop:12, fontSize:'0.75rem', border:'none', textDecoration:'underline'}}>
+        Leave room
+      </button>
+    </div>
+  );
+
+  // ─── DONE ─────────────────────────────────────────────────────────────────────
+  if (phase === 'done') {
+    const byScore = [...players].sort((a, b) => b.score - a.score);
+    const maxScore = byScore[0]?.score || 0;
+    return (
+      <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
+        <div style={{fontSize:'3rem', marginBottom:8}}>🏆</div>
+        <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 20px'}}>
+          {byScore[0]?.id===myId ? 'You Win!' : `${byScore[0]?.name} Wins!`}
+        </h2>
+        <div style={{display:'flex', flexDirection:'column', gap:8, marginBottom:24}}>
+          {byScore.map((p, i) => {
+            const colorIdx = sortedPlayers.findIndex(x => x.id === p.id);
+            return (
+              <div key={p.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0a1520', borderRadius:10, padding:'10px 16px', border:`1.5px solid ${p.score===maxScore?MP_COLORS[colorIdx>=0?colorIdx:0]:'#1e3048'}`}}>
+                <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', marginRight:8, fontSize:'0.8rem'}}>#{i+1}</span>
+                <span style={{fontFamily:"'JetBrains Mono',monospace", color:p.id===myId?'#F5EDD6':'#7a9cc0', flex:1, textAlign:'left'}}>{p.name}{p.id===myId?' (you)':''}</span>
+                <span style={{fontFamily:"'Fraunces',serif", color:'#FFB703', fontWeight:700}}>{p.score.toLocaleString()} pts</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:'flex', gap:10, justifyContent:'center'}}>
+          <button onClick={() => { try{getSB().removeChannel(channelRef.current);}catch(e){} setPhase('join'); phaseRef.current='join'; setRoom(null); setPlayers([]); setGs(null); setTiles([]); setFlipped([]); }} style={btnStyle('#00F5C4','#0a2e24')}>New Game</button>
+          <button onClick={onBack} style={btnStyle('#1e3048','#F5EDD6')}>Menu</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── GAME ─────────────────────────────────────────────────────────────────────
   return (
-    <div style={{textAlign:"center",maxWidth:360,margin:"0 auto",padding:20}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
-      <div style={{fontSize:"2.5rem",marginBottom:12}}>🌐</div>
-      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 12px"}}>Online Play</h2>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",lineHeight:1.6,marginBottom:20}}>
-        Online multiplayer requires a real-time backend. Coming soon!
-      </p>
-      <div style={{background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048",padding:16,textAlign:"left"}}>
-        <p style={{color:"#FFB703",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8rem",fontWeight:700,margin:"0 0 8px"}}>Planned:</p>
-        {["Create/join room with code","2–4 players on separate devices","60s turn timer","Live score sync"].map(f=>(
-          <p key={f} style={{color:"#2a4060",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.75rem",margin:"4px 0"}}>· {f}</p>
+    <div style={{width:'100%', maxWidth:480, margin:'0 auto'}}>
+      {/* Player score chips */}
+      <div style={{display:'flex', gap:6, justifyContent:'center', marginBottom:10, flexWrap:'wrap'}}>
+        {sortedPlayers.map((p, i) => (
+          <div key={p.id} style={{padding:'4px 12px', borderRadius:20, background:p.id===gs?.current_player_id?MP_COLORS[i]+'22':'#0a1520', border:`1.5px solid ${p.id===gs?.current_player_id?MP_COLORS[i]:'#1e3048'}`, fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', color:p.id===gs?.current_player_id?MP_COLORS[i]:'#2a4060', fontWeight:p.id===gs?.current_player_id?700:400, transition:'all 0.2s'}}>
+            {p.name}{p.id===myId?' ✦':''}: {p.score.toLocaleString()}
+          </div>
         ))}
+      </div>
+      {/* Turn indicator + timer */}
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.78rem'}}>
+          {isMyTurn ? '👉 Your turn' : `⏳ ${currentPlayerObj?.name || '?'}'s turn`}
+        </span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.85rem', fontWeight:700, color:timeDanger?'#FF5E5B':'#7a9cc0', transition:'color 0.3s'}}>
+          ⏱ {timeLeft}s
+        </span>
+      </div>
+      {/* Word banners */}
+      <div style={{display:'flex', gap:6, flexWrap:'wrap', justifyContent:'center', marginBottom:10}}>
+        {words.map((word, i) => {
+          const fw = foundWordsList.find(f => f.wordIndex === i);
+          const pIdx = fw ? sortedPlayers.findIndex(p => p.id === fw.playerId) : -1;
+          const col = pIdx >= 0 ? MP_COLORS[pIdx] : '#00F5C4';
+          return (
+            <div key={i} style={{padding:'3px 12px', borderRadius:20, background:fw?col+'22':'#0e1f30', border:`1.5px solid ${fw?col:'#1e3048'}`, fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:'0.82rem', color:fw?col:'#3a5570', letterSpacing:'0.15em', transition:'all 0.3s', boxShadow:fw?.inOrder?`0 0 10px ${col}55`:fw?`0 0 6px ${col}33`:'none'}}>
+              {fw?.inOrder?'⭐ ':''}{word}
+            </div>
+          );
+        })}
+      </div>
+      {/* Flash feedback */}
+      <div style={{height:28, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:6}}>
+        {flash && <span style={{fontFamily:"'Fraunces',serif", fontSize:'0.95rem', fontWeight:700, animation:'fadeInOut 0.5s ease', color:flash==='good'?'#00F5C4':flash==='goodYellow'?'#FFB703':'#FF5E5B'}}>
+          {flash==='good'&&'🟩 Nice — bonus points!'}
+          {flash==='goodYellow'&&'🟨 Found! Try in order for more pts'}
+          {flash==='bad'&&"✗ Wrong — next player's turn"}
+        </span>}
+      </div>
+      {/* Board — dimmed and non-interactive when not my turn */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'clamp(4px,1.5vw,10px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048', opacity:isMyTurn?1:0.65, transition:'opacity 0.3s', pointerEvents:isMyTurn?'auto':'none'}}>
+        {tiles.map(tile => (
+          <Tile key={tile.id} tile={tile}
+            isFlipped={flipped.includes(tile.id)}
+            isFound={foundTileIdsRef.current.has(tile.id)}
+            foundInOrder={foundWordsList.find(fw => fw.tile_ids?.includes(tile.id))?.inOrder || false}
+            isSelected={flipped.includes(tile.id) && !errTiles.includes(tile.id)}
+            isError={errTiles.includes(tile.id)}
+            onClick={() => handleTileClick(tile)}
+            orderNum={flipped.includes(tile.id) ? flipped.indexOf(tile.id) : undefined}
+          />
+        ))}
+      </div>
+      {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Waiting for {currentPlayerObj?.name || 'other player'}…</p>}
+      <div style={{display:'flex', justifyContent:'flex-end', marginTop:8}}>
+        <button onClick={() => { if(window.confirm('Leave this game?')) { try{getSB().removeChannel(channelRef.current);}catch(e){} onBack(); }}}
+          style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
       </div>
     </div>
   );
@@ -1362,12 +1826,12 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
             <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Pass the device · 2–4 players · 6×6 grid</div>
           </div>
         </button>
-        <button onClick={onOnline} style={{background:"#0a1520",border:"2px solid #9B5DE533",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left",opacity:0.7}}>
+        <button onClick={onOnline} style={{background:"#0a1520",border:"2px solid #9B5DE566",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
           <span style={{fontSize:"2rem",lineHeight:1}}>🌐</span>
           <div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#F5EDD6",fontSize:"1.05rem"}}>Online Play</span>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,background:"#9B5DE533",color:"#9B5DE5",borderRadius:6,padding:"2px 7px",letterSpacing:"0.1em"}}>SOON</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,background:"#9B5DE533",color:"#9B5DE5",borderRadius:6,padding:"2px 7px",letterSpacing:"0.1em"}}>NEW</span>
             </div>
             <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Play on separate devices · 60s turns</div>
           </div>
