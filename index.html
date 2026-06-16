@@ -1447,18 +1447,30 @@ function OnlineScreen({ onBack }) {
         const { data } = await getSB().from('players').select('*').eq('room_id', roomId).order('turn_order');
         if (data) { setPlayers(data); playersRef.current = data; }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_state', filter: `room_id=eq.${roomId}` }, payload => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_state', filter: `room_id=eq.${roomId}` }, async payload => {
         const newGs = payload.new;
         if (!newGs) return;
         setGs(newGs); gsRef.current = newGs;
         const ids = new Set();
         (newGs.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
         foundTileIdsRef.current = ids;
-        // When turn passes away from me, clear local selection
-        setRemoteFlips(new Set()); // clear remote tile previews on every turn change
+        setRemoteFlips(new Set());
         if (newGs.current_player_id !== myId) {
           flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
           processingRef.current = false;
+        }
+        // Fallback game-start: if game_state arrives while still in lobby,
+        // transition to game (covers the case where rooms UPDATE was missed)
+        if (phaseRef.current === 'lobby') {
+          let r = roomRef.current;
+          if (!r?.words) {
+            const { data } = await getSB().from('rooms').select('*').eq('id', roomId).single();
+            if (data) { r = data; setRoom(data); roomRef.current = data; }
+          }
+          if (r?.words) {
+            setTiles(buildTilesSeeded(r.words, r.shuffle_seed));
+            setPhase('game'); phaseRef.current = 'game';
+          }
         }
       })
       .on('broadcast', { event: 'tile_flip' }, ({ payload }) => {
@@ -1822,7 +1834,15 @@ function OnlineScreen({ onBack }) {
         })}
       </div>
       {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Watching {currentPlayerObj?.name || 'other player'} choose…</p>}
-      <div style={{display:'flex', justifyContent:'flex-end', marginTop:8}}>
+      {/* Footer: room code for rejoining + leave button */}
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8}}>
+        <span
+          onClick={() => { const link=`https://wordflipgame.netlify.app?room=${room?.code}`; navigator.clipboard.writeText(link).catch(()=>{}); }}
+          title="Tap to copy invite link"
+          style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', cursor:'pointer', userSelect:'none'}}
+        >
+          Room <strong style={{color:'#3a5570', letterSpacing:'0.1em'}}>{room?.code}</strong> 🔗
+        </span>
         <button onClick={() => { if(window.confirm('Leave this game?')) { try{getSB().removeChannel(channelRef.current);}catch(e){} onBack(); }}}
           style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
       </div>
