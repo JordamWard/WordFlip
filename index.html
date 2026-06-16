@@ -1473,8 +1473,9 @@ function OnlineScreen({ onBack }) {
         .insert({ code: genRoomCode(), status: 'waiting', words, shuffle_seed: seed, host_id: myId })
         .select().single();
       if (re) throw re;
+      // upsert so re-creating after an abandoned room doesn't 409
       const { error: pe } = await db.from('players')
-        .insert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 });
+        .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 });
       if (pe) throw pe;
       setRoom(r); roomRef.current = r;
       setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
