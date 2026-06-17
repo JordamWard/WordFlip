@@ -84,7 +84,8 @@ async function authGetSession() {
 
 async function authGetProfile(userId) {
   const { data, error } = await getSB().from('profiles').select('*').eq('id', userId).single();
-  if (error) throw error;
+  if (error) { console.error("Profile fetch error:", error); throw error; }
+  console.log("Profile fetched:", data);
   return data;
 }
 
