@@ -2303,8 +2303,10 @@ function AuthScreen({ onBack, onAuth }) {
         if (username.length < 3) { setError("Username must be at least 3 characters"); setLoading(false); return; }
         if (password.length < 6) { setError("Password must be at least 6 characters"); setLoading(false); return; }
         if (usernameOk === false) { setError("Username is already taken"); setLoading(false); return; }
-        await authSignUp(email, password, username);
-        await authSignIn(email, password);
+        const signUpData = await authSignUp(email, password, username);
+        if (!signUpData.session) {
+          await authSignIn(email, password);
+        }
       } else {
         await authSignIn(email, password);
       }
