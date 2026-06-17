@@ -1,7 +1,7 @@
 // WordFlip Service Worker
 // !! Bump this version number every time you deploy a new version !!
 // This is what forces home screen installs to update automatically.
-const VERSION = "wordflip-v2";
+const VERSION = "wordflip-v3";
 const CACHE_NAME = VERSION;
 
 // Everything needed to run offline
@@ -63,6 +63,10 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
+
+  // Never intercept Supabase API calls
+  if (url.hostname.includes("supabase.co")) return;
+
   const isLocal = url.origin === self.location.origin;
   const isCDN =
     url.hostname === "unpkg.com" ||
