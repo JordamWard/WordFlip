@@ -32,10 +32,10 @@
   <!-- Analytics: replace 'wordflipgame.netlify.app' with your domain if it changes -->
   <script defer data-domain="wordflipgame.netlify.app" src="https://plausible.io/js/script.js"></script>
 
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="/react.min.js"></script>
+  <script src="/react-dom.min.js"></script>
+  <script src="/babel.min.js"></script>
+  <script src="/supabase.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
@@ -543,7 +543,7 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"#00F5C4"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"#FFB703"},
             {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"#3a5570"},
-            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
+            {label:`🎯 Accuracy (${wrongGuesses||0} missed)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>{row.label}</span>
@@ -884,7 +884,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
       {(() => {
         const turnsLeft = maxTurns ? maxTurns - turns : null;
         const turnsDanger = turnsLeft !== null && turnsLeft <= 3;
-        const liveScore = scoreCalc(elapsed, Object.values(wordResults), wrongGuesses, bonusPts);
+        const wr = Object.values(wordResults);
+        const liveScore = wr.filter(r=>r==="green").length*300 + wr.filter(r=>r==="yellow").length*100 + bonusPts;
         return (
           <div style={{marginBottom:8}}>
             {/* Score row — prominent center with floating animation target */}
@@ -962,66 +963,171 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
           />
         ))}
       </div>
-      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} turns max · `:""}🟩 +300 · 🟨 +100 · bonus pts for speed & accuracy</p>
+      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} turns max · `:""}🟩 +300 · 🟨 +100 · time & accuracy bonus revealed at end</p>
     </div>
   );
 }
 
-// ─── Score Receipt ────────────────────────────────────────────────────────────
+// ─── Count-up number animation ──────────────────────────────────────────────────────
+function CountUp({ to, active, color, large }) {
+  const [val, setVal] = useState(0);
+  const [big, setBig] = useState(false);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!active || started.current) return;
+    started.current = true;
+    if (to === 0) { setVal(0); return; }
+    const DURATION = large ? 800 : 620;
+    const FRAMES  = large ? 32 : 26;
+    let frame = 0;
+    const id = setInterval(() => {
+      frame++;
+      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
+      setVal(frame >= FRAMES ? to : Math.round(p * to));
+      if (frame >= FRAMES) {
+        clearInterval(id);
+        setBig(true);
+        setTimeout(() => setBig(false), large ? 400 : 300);
+      }
+    }, Math.round(DURATION / FRAMES));
+    return () => clearInterval(id);
+  }, [active]);
+  const popScale = large ? 1.45 : 1.38;
+  return (
+    <span style={{
+      fontFamily: large ? "'Fraunces',serif" : "'JetBrains Mono',monospace",
+      fontWeight: 900, color,
+      fontSize: large ? "1.6rem" : "0.88rem",
+      display: "inline-block",
+      transform: big ? `scale(${popScale})` : "scale(1)",
+      transition: "transform 0.22s cubic-bezier(.4,2,.6,1)",
+    }}>
+      +{val.toLocaleString()}{large && <span style={{fontSize:"0.85rem",fontWeight:700}}> pts</span>}
+    </span>
+  );
+}
+
+// ─── Firework burst helper ────────────────────────────────────────────────────
+function Firework({ color, trigger, large }) {
+  const [particles, setParticles] = useState([]);
+  const fired = useRef(false);
+  useEffect(() => {
+    if (!trigger || fired.current) return;
+    fired.current = true;
+    const count = large ? 22 : 12;
+    setParticles(Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * 2 * Math.PI;
+      const dist = (large ? 58 : 32) + Math.random() * (large ? 28 : 14);
+      return { id: i, tx: Math.cos(angle) * dist, ty: Math.sin(angle) * dist };
+    }));
+    const t = setTimeout(() => setParticles([]), 900);
+    return () => clearTimeout(t);
+  }, [trigger]);
+  const sz = large ? 9 : 5;
+  return particles.map(p => (
+    <div key={p.id} style={{
+      position:"absolute", width:sz, height:sz, borderRadius:"50%",
+      background:color, boxShadow:`0 0 ${sz+2}px ${color}`,
+      top:"50%", right:0, marginTop:-(sz/2),
+      "--fw-tx":p.tx+"px", "--fw-ty":p.ty+"px",
+      animation:"fwParticle 0.72s ease-out forwards", pointerEvents:"none", zIndex:20,
+    }} />
+  ));
+}
+
+// ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
 function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0 }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
-  const wordPts = greens*300 + yellows*100;
-  const timePts = Math.max(0, 600 - Math.floor(elapsed/1000));
+  const wordPts  = greens*300 + yellows*100;
+  const timePts  = Math.max(0, 600 - Math.floor(elapsed/1000));
   const guessPts = Math.max(0, 800 - wrongGuesses*50);
+
+  const timeFormula  = timePts > 0 ? `${timePts}s to spare` : "just in time!";
   const accuracyCredits = Math.round(guessPts / 50);
+  const guessFormula = wrongGuesses === 0
+    ? `16 × 50 pts — perfect accuracy!`
+    : `${accuracyCredits} × 50 pts (${wrongGuesses} wrong)`;
 
   const rows = [
-    { icon:"\u{1F524}", label:`Words (${greens}\u{1F7E9} ${yellows}\u{1F7E8})`, pts:wordPts, color:"#00F5C4" },
-    { icon:"\u23F1", label:`Time (${formatTime(elapsed)})`, pts:timePts, color:"#9B5DE5" },
-    { icon:"\u{1F3AF}", label:`Accuracy (${accuracyCredits} \u00D7 50 pts)`, pts:guessPts, color:"#00BBF9" },
-    ...(bonusPts > 0 ? [{ icon:"\u2728", label:`Bonus words (+${Math.round(bonusPts/50)} found)`, pts:bonusPts, color:"#FFB703" }] : []),
+    { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
+      formula: yellows > 0 ? `${greens}×300 + ${yellows}×100` : `${greens}×300`,
+      pts:wordPts,  color:"#00F5C4" },
+    ...(bonusPts > 0 ? [
+      { icon:"✨", label:"Bonus words",
+        formula:`${Math.round(bonusPts/50)}×50`,
+        pts:bonusPts, color:"#FFB703" },
+    ] : []),
+    { icon:"⏱", label:"Time bonus",
+      formula:timeFormula,
+      pts:timePts,  color:"#9B5DE5" },
+    { icon:"🎯", label:"Accuracy bonus",
+      formula:guessFormula,
+      pts:guessPts, color:"#00BBF9" },
   ];
 
-  const totalDelay = 0.15 * (rows.length + 1);
+  const ROW_MS   = 1200;
+  const FW_AFTER = 700;
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [firedSet,     setFiredSet]     = useState(new Set());
+
+  useEffect(() => {
+    const timers = [];
+    const fire = key => setFiredSet(s => { const n = new Set(s); n.add(key); return n; });
+    rows.forEach((_, i) => {
+      timers.push(setTimeout(() => setVisibleCount(v => Math.max(v, i+1)), 300 + i*ROW_MS));
+      timers.push(setTimeout(() => fire(i),                                300 + i*ROW_MS + FW_AFTER));
+    });
+    const totalShow = 300 + rows.length * ROW_MS;
+    timers.push(setTimeout(() => setVisibleCount(rows.length + 1), totalShow));
+    timers.push(setTimeout(() => fire("total"),                    totalShow + 900));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const totalVisible = visibleCount > rows.length;
 
   return (
-    <div style={{
-      background:"#0a1520", border:"1.5px solid #1e3048", borderRadius:14,
-      padding:"16px 18px", marginBottom:20, textAlign:"left",
-    }}>
-      {rows.map((row,i)=>(
-        <div key={row.label} style={{
-          display:"flex", justifyContent:"space-between", alignItems:"baseline",
-          marginBottom:8, opacity:0,
-          animation:`receiptIn 0.3s ease ${0.15*(i+1)}s forwards`,
-        }}>
-          <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem"}}>
-            {row.icon} {row.label}
-          </span>
-          <span style={{
-            fontFamily:"'JetBrains Mono',monospace", fontWeight:800,
-            color:row.color, fontSize:"0.88rem", flexShrink:0, marginLeft:12,
+    <div style={{background:"#0a1520", border:"1.5px solid #1e3048", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
+      {rows.map((row, i) => {
+        const visible = visibleCount > i;
+        return (
+          <div key={row.label} style={{
+            marginBottom:10, opacity:visible?1:0,
+            transform:visible?"translateX(0)":"translateX(-10px)",
+            transition:"opacity 0.35s ease, transform 0.35s ease",
           }}>
-            +{row.pts.toLocaleString()}
-          </span>
-        </div>
-      ))}
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem"}}>
+                {row.icon} {row.label}
+              </span>
+              <div style={{position:"relative", display:"flex", alignItems:"center", flexShrink:0, marginLeft:12}}>
+                <Firework color={row.color} trigger={firedSet.has(i)} />
+                <CountUp to={row.pts} active={visible} color={row.color} />
+              </div>
+            </div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace", color:"#3a5570", fontSize:"0.68rem", marginTop:3, paddingLeft:"1.4em"}}>
+              {row.formula}
+            </div>
+          </div>
+        );
+      })}
       <div style={{
         borderTop:"1.5px dashed #1e3048", marginTop:10, paddingTop:10,
-        display:"flex", justifyContent:"space-between", alignItems:"baseline",
-        opacity:0, animation:`receiptTotal 0.4s cubic-bezier(.4,2,.6,1) ${totalDelay}s forwards`,
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        opacity:totalVisible?1:0,
+        transform:totalVisible?"scale(1)":"scale(0.88)",
+        transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
       }}>
-        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem", fontWeight:700}}>
-          TOTAL
-        </span>
-        <span style={{fontFamily:"'Fraunces',serif", fontWeight:900, color:"#FFB703", fontSize:"1.6rem"}}>
-          {score.toLocaleString()} <span style={{fontSize:"0.85rem", fontWeight:700}}>pts</span>
-        </span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem", fontWeight:700}}>TOTAL</span>
+        <div style={{position:"relative", display:"flex", alignItems:"center"}}>
+          <Firework color="#FFB703" trigger={firedSet.has("total")} large />
+          <CountUp to={score} active={totalVisible} color="#FFB703" large />
+        </div>
       </div>
     </div>
   );
 }
+
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
 function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBest }) {
@@ -1600,7 +1706,7 @@ function OnlineScreen({ onBack }) {
       flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
       processingRef.current = false;
     }
-    // Safety valve: always release lock within 5s even if DB hangs
+    // Safety valve: always release the lock within 5s even if a DB call hangs
     const safetyTimer = setTimeout(unlock, 5000);
 
     if (matchIdx === -1) {
@@ -1827,8 +1933,8 @@ function OnlineScreen({ onBack }) {
       {/* Board — 6×6 grid; click-locked when not my turn but remote flips still visible */}
       <div style={{display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'clamp(3px,1.2vw,8px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048'}}>
         {(() => {
-          const currentPlayerIdx = players.findIndex(p => p.id === gs?.current_player_id);
-          const currentPlayerColor = currentPlayerIdx >= 0 ? MP_COLORS[currentPlayerIdx] : '#FFB703';
+          const cpIdx = players.findIndex(p => p.id === gs?.current_player_id);
+          const currentPlayerColor = cpIdx >= 0 ? MP_COLORS[cpIdx] : '#FFB703';
           return tiles.map(tile => {
             const isLocalFlipped = flipped.includes(tile.id);
             const isRemote = !isLocalFlipped && remoteFlips.has(tile.id);
@@ -2148,6 +2254,7 @@ function WordFlip() {
         @keyframes receiptTotal{from{opacity:0;transform:scale(0.85)}to{opacity:1;transform:scale(1)}}
         @keyframes floatUp{0%{opacity:1;transform:translateX(-50%) translateY(0) scale(1.3)}60%{opacity:1;transform:translateX(-50%) translateY(-52px) scale(1)}100%{opacity:0;transform:translateX(-50%) translateY(-80px) scale(0.85)}}
         @keyframes scorePop{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+        @keyframes fwParticle{0%{transform:translate(0,0) scale(1);opacity:1}100%{transform:translate(var(--fw-tx),var(--fw-ty)) scale(0);opacity:0}}
         *{box-sizing:border-box;} button:hover{opacity:0.85;} button:focus-visible{outline:3px solid #00F5C4;outline-offset:3px;} a:focus-visible{outline:3px solid #00F5C4;}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
