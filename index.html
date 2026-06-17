@@ -93,6 +93,28 @@ async function authCheckUsername(username) {
   return !data;
 }
 
+// ─── Leaderboard helpers ──────────────────────────────────────────────────────
+async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGuesses, blocks) {
+  const { error } = await getSB().from('daily_scores').upsert({
+    user_id: userId, score, day_key: dayKey, turns, elapsed, wrong_guesses: wrongGuesses, blocks,
+  }, { onConflict: 'user_id,day_key' });
+  if (error) console.error("Score submit error:", error);
+}
+
+async function fetchLeaderboard(mode, dayKey) {
+  let query = getSB()
+    .from('daily_scores')
+    .select('score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, profiles(username)')
+    .order('score', { ascending: false })
+    .limit(50);
+  if (mode === 'daily') {
+    query = query.eq('day_key', dayKey);
+  }
+  const { data, error } = await query;
+  if (error) { console.error("Leaderboard fetch error:", error); return []; }
+  return data;
+}
+
 function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -1292,11 +1314,25 @@ function btnStyle(bg,color) {
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
-function LeaderboardView({ onBack }) {
+function LeaderboardView({ onBack, session }) {
   const [tab, setTab] = useState("personal");
+  const [globalTab, setGlobalTab] = useState("daily");
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [lbLoading, setLbLoading] = useState(false);
   const history = getHistory();
   const personalBest = getPersonalBest();
   const streak = getStreak();
+
+  useEffect(() => {
+    if (tab !== "global") return;
+    setLbLoading(true);
+    const today = new Date();
+    const dk = `${today.getFullYear()}-${today.getMonth()+1}-${today.getDate()}`;
+    fetchLeaderboard(globalTab, dk).then(data => {
+      setLeaderboard(data || []);
+      setLbLoading(false);
+    });
+  }, [tab, globalTab]);
 
   return (
     <div style={{maxWidth:440,margin:"0 auto"}}>
@@ -1312,10 +1348,12 @@ function LeaderboardView({ onBack }) {
           transition:"all 0.15s",
         }}>🏅 My Scores</button>
         <button onClick={()=>setTab("global")} style={{
-          flex:1, padding:"8px 0", borderRadius:10, border:"1.5px solid #1e3048", cursor:"default",
+          flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
           fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-          background:"#0a1520", color:"#2a4060", opacity:0.5,
-        }}>🌍 Global <span style={{fontSize:"0.65rem",marginLeft:4,background:"#1e3048",borderRadius:4,padding:"1px 5px"}}>soon</span></button>
+          background: tab==="global" ? "#9B5DE5" : "#0a1520",
+          color: tab==="global" ? "#fff" : "#3a5570",
+          transition:"all 0.15s",
+        }}>🌍 Global</button>
       </div>
 
       {tab === "personal" && (<>
@@ -1391,21 +1429,84 @@ function LeaderboardView({ onBack }) {
         )}
       </>)}
 
-      {tab === "global" && (
-        <div style={{textAlign:"center",padding:"32px 20px"}}>
-          <div style={{fontSize:"2.5rem",marginBottom:12}}>🌍</div>
-          <h3 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 12px"}}>Global Leaderboard</h3>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.82rem",lineHeight:1.7,marginBottom:20}}>
-            See how you rank against players worldwide. Create an account to appear on the global board.
-          </p>
-          <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:12,padding:"14px",textAlign:"left"}}>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.75rem",fontWeight:700,margin:"0 0 8px",letterSpacing:"0.08em"}}>COMING SOON</p>
-            {["Daily top 50 rankings","Create account to save your name","Track your global rank over time","Compete with friends by sharing your code"].map(f=>(
-              <p key={f} style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.72rem",margin:"4px 0"}}>· {f}</p>
-            ))}
-          </div>
+      {tab === "global" && (<>
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          <button onClick={()=>setGlobalTab("daily")} style={{
+            flex:1, padding:"6px 0", borderRadius:8, border:"none", cursor:"pointer",
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.7rem",
+            background: globalTab==="daily" ? "#9B5DE5" : "#0a1520",
+            color: globalTab==="daily" ? "#fff" : "#3a5570",
+          }}>Today</button>
+          <button onClick={()=>setGlobalTab("alltime")} style={{
+            flex:1, padding:"6px 0", borderRadius:8, border:"none", cursor:"pointer",
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.7rem",
+            background: globalTab==="alltime" ? "#9B5DE5" : "#0a1520",
+            color: globalTab==="alltime" ? "#fff" : "#3a5570",
+          }}>All Time</button>
         </div>
-      )}
+
+        {!session && (
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.72rem",textAlign:"center",margin:"0 0 12px",padding:"8px 12px",background:"#FFB70315",borderRadius:8}}>
+            Sign in to submit your scores to the global board!
+          </p>
+        )}
+
+        {lbLoading ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading scores...</p>
+          </div>
+        ) : leaderboard.length === 0 ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"2rem",marginBottom:8}}>🏜️</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.82rem",lineHeight:1.6}}>
+              {globalTab==="daily" ? "No scores yet today." : "No scores yet."}<br/>Be the first!
+            </p>
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {leaderboard.map((entry,i) => {
+              const isMe = session?.user?.id && entry.user_id === session.user.id;
+              const medal = i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : null;
+              const username = entry.profiles?.username || "Anonymous";
+              return (
+                <div key={i} style={{
+                  background: isMe ? "#9B5DE515" : "#0a1520",
+                  borderRadius:10,
+                  border:`1.5px solid ${isMe ? "#9B5DE5" : medal ? "#FFB70344" : "#1e3048"}`,
+                  padding:"8px 12px",
+                  display:"grid",
+                  gridTemplateColumns:"28px 1fr auto",
+                  gap:"0 8px", alignItems:"center",
+                }}>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:medal?"#FFB703":"#3a5570",fontSize:medal?"1rem":"0.75rem",fontWeight:700,textAlign:"center"}}>
+                    {medal || (i+1)}
+                  </div>
+                  <div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:isMe?"#9B5DE5":"#F5EDD6",fontSize:"0.82rem",fontWeight:isMe?700:400}}>
+                      {username}{isMe ? " (you)" : ""}
+                    </div>
+                    {entry.blocks && (
+                      <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
+                    )}
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.6rem"}}>
+                      {entry.turns != null ? `${entry.turns} guess${entry.turns!==1?"es":""}` : ""}
+                      {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
+                      {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:"'Fraunces',serif",color:medal?"#FFB703":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
+                      {entry.score.toLocaleString()}
+                    </div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.55rem"}}>pts</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>)}
     </div>
   );
 }
@@ -2478,13 +2579,14 @@ function WordFlip() {
       const s = updateStreak();
       setWinStreak(s.count);
       setWinIsNewBest(score > getPersonalBest());
-      // Leaderboard is daily-challenge only
-      // Save to personal history
       const d = new Date();
       const blocks = result.words.map((_,i) => {
         const r = result.wordResults?.[i];
         return r==="green" ? "🟩" : r==="yellow" ? "🟨" : "🟥";
       }).join("");
+      if (session?.user) {
+        submitDailyScore(session.user.id, score, dateKey(), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
+      }
       saveToHistory({
         dayKey: dateKey(),
         date: d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
@@ -2591,7 +2693,7 @@ function WordFlip() {
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} /></div>}
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} /></div>}
-      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} /></div>}
+      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} /></div>}
       {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={()=>{refreshProfile();setScreen("menu");}} />}
       {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} />}
     </div>
