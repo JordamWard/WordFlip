@@ -2593,6 +2593,12 @@ function WordFlip() {
   const [fireworks,setFireworks] = useState(false);
   const { session, profile, loading: authLoading, refreshProfile } = useAuth();
 
+  useEffect(() => {
+    if (session?.user && getDailyDone()) {
+      retroSubmitTodayScore(session.user.id);
+    }
+  }, [session]);
+
   const dailyBest = getDailyBest();
   const streak = getStreak();
 
