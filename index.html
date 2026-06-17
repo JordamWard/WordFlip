@@ -84,8 +84,7 @@ async function authGetSession() {
 
 async function authGetProfile(userId) {
   const { data, error } = await getSB().from('profiles').select('*').eq('id', userId).single();
-  if (error) { console.error("Profile fetch error:", error); throw error; }
-  console.log("Profile fetched:", data);
+  if (error) throw error;
   return data;
 }
 
@@ -132,43 +131,49 @@ function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const sessionRef = useRef(null);
+
+  async function loadProfile(userId, mounted) {
+    try {
+      const p = await authGetProfile(userId);
+      if (!mounted || (mounted.current === false)) return;
+      setProfile(p);
+    } catch (err) {
+      console.error("Profile load failed:", err);
+    }
+  }
 
   useEffect(() => {
-    let mounted = true;
+    const m = { current: true };
     authGetSession().then(async (s) => {
-      if (!mounted) return;
+      if (!m.current) return;
+      sessionRef.current = s;
       setSession(s);
-      if (s?.user) {
-        try {
-          const p = await authGetProfile(s.user.id);
-          if (mounted) setProfile(p);
-        } catch {}
-      }
-      if (mounted) setLoading(false);
-    }).catch(() => { if (mounted) setLoading(false); });
+      if (s?.user) await loadProfile(s.user.id, m);
+      if (m.current) setLoading(false);
+    }).catch((err) => { console.error("Session load failed:", err); if (m.current) setLoading(false); });
 
     const { data: { subscription } } = getSB().auth.onAuthStateChange(async (_event, s) => {
-      if (!mounted) return;
+      if (!m.current) return;
+      sessionRef.current = s;
       setSession(s);
       if (s?.user) {
-        try {
-          const p = await authGetProfile(s.user.id);
-          if (mounted) setProfile(p);
-        } catch {}
+        await loadProfile(s.user.id, m);
       } else {
         setProfile(null);
       }
     });
 
-    return () => { mounted = false; subscription.unsubscribe(); };
+    return () => { m.current = false; subscription.unsubscribe(); };
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (session?.user) {
+    const s = sessionRef.current || await authGetSession();
+    if (s?.user) {
       try {
-        const p = await authGetProfile(session.user.id);
+        const p = await authGetProfile(s.user.id);
         setProfile(p);
-      } catch {}
+      } catch (err) { console.error("refreshProfile failed:", err); }
     }
   }, [session]);
 
@@ -2534,10 +2539,10 @@ function ProfileScreen({ onBack, profile, onSignOut }) {
     setSigningOut(true);
     try {
       await authSignOut();
-      onSignOut();
-    } catch {
-      setSigningOut(false);
+    } catch (err) {
+      console.error("Sign out error:", err);
     }
+    onSignOut();
   }
 
   return (
