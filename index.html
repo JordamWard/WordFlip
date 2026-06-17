@@ -2310,7 +2310,9 @@ function AuthScreen({ onBack, onAuth }) {
       }
       onAuth();
     } catch (err) {
-      setError(err.message || "Something went wrong");
+      console.error("Auth error:", err);
+      const msg = err?.message || err?.error_description || (typeof err === "string" ? err : JSON.stringify(err));
+      setError(msg || "Something went wrong");
     }
     setLoading(false);
   }
