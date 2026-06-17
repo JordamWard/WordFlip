@@ -54,13 +54,17 @@ function getSB() {
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 async function authSignUp(email, password, username) {
-  const { data, error } = await getSB().auth.signUp({
+  const res = await getSB().auth.signUp({
     email,
     password,
     options: { data: { username, display_name: username } }
   });
-  if (error) throw error;
-  return data;
+  console.log("signUp full response:", JSON.stringify(res, null, 2));
+  if (res.error) throw res.error;
+  if (res.data?.user?.identities?.length === 0) {
+    throw new Error("An account with this email already exists");
+  }
+  return res.data;
 }
 
 async function authSignIn(email, password) {
