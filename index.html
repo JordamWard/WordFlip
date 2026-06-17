@@ -40,7 +40,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://vznuengepsbnmgwfyadr.supabase.co';
@@ -50,6 +50,91 @@ function getSB() {
   if (typeof supabase === 'undefined') throw new Error('Supabase SDK not loaded');
   if (!_sbClient) _sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   return _sbClient;
+}
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+async function authSignUp(email, password, username) {
+  const { data, error } = await getSB().auth.signUp({
+    email,
+    password,
+    options: { data: { username, display_name: username } }
+  });
+  if (error) throw error;
+  return data;
+}
+
+async function authSignIn(email, password) {
+  const { data, error } = await getSB().auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+async function authSignOut() {
+  const { error } = await getSB().auth.signOut();
+  if (error) throw error;
+}
+
+async function authGetSession() {
+  const { data: { session } } = await getSB().auth.getSession();
+  return session;
+}
+
+async function authGetProfile(userId) {
+  const { data, error } = await getSB().from('profiles').select('*').eq('id', userId).single();
+  if (error) throw error;
+  return data;
+}
+
+async function authCheckUsername(username) {
+  const { data } = await getSB().from('profiles').select('id').eq('username', username).maybeSingle();
+  return !data;
+}
+
+function useAuth() {
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    authGetSession().then(async (s) => {
+      if (!mounted) return;
+      setSession(s);
+      if (s?.user) {
+        try {
+          const p = await authGetProfile(s.user.id);
+          if (mounted) setProfile(p);
+        } catch {}
+      }
+      if (mounted) setLoading(false);
+    }).catch(() => { if (mounted) setLoading(false); });
+
+    const { data: { subscription } } = getSB().auth.onAuthStateChange(async (_event, s) => {
+      if (!mounted) return;
+      setSession(s);
+      if (s?.user) {
+        try {
+          const p = await authGetProfile(s.user.id);
+          if (mounted) setProfile(p);
+        } catch {}
+      } else {
+        setProfile(null);
+      }
+    });
+
+    return () => { mounted = false; subscription.unsubscribe(); };
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (session?.user) {
+      try {
+        const p = await authGetProfile(session.user.id);
+        setProfile(p);
+      } catch {}
+    }
+  }, [session]);
+
+  return { session, profile, loading, refreshProfile };
 }
 
 // Seeded PRNG — gives every client the same tile layout for a given room
@@ -543,7 +628,7 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"#00F5C4"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"#FFB703"},
             {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"#3a5570"},
-            {label:`🎯 Accuracy (${wrongGuesses||0} missed)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
+            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>{row.label}</span>
@@ -2035,7 +2120,10 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
 function DailyAlreadyDone({ onMenu, streak }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
-  const score = done ? scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses, done.bonusPts||0) : 0;
+  // Infer bonusPts from saved total for old entries that predate the bonusPts field
+  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses, 0) : 0;
+  const bonusPts = done ? (done.bonusPts != null ? done.bonusPts : Math.max(0, (done.score||0) - basePts)) : 0;
+  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses, bonusPts)) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
@@ -2066,7 +2154,7 @@ function DailyAlreadyDone({ onMenu, streak }) {
           wrongGuesses={done.wrongGuesses||0}
           turns={done.turns}
           score={score}
-          bonusPts={done.bonusPts||0}
+          bonusPts={bonusPts}
         />
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center"}}>
@@ -2183,6 +2271,168 @@ function HowToPlay({ onClose }) {
   );
 }
 
+// ─── Auth Screens ─────────────────────────────────────────────────────────────
+function AuthScreen({ onBack, onAuth }) {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [usernameOk, setUsernameOk] = useState(null);
+  const checkTimer = useRef(null);
+
+  function onUsernameChange(val) {
+    const clean = val.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
+    setUsername(clean);
+    setUsernameOk(null);
+    if (checkTimer.current) clearTimeout(checkTimer.current);
+    if (clean.length >= 3) {
+      checkTimer.current = setTimeout(async () => {
+        const avail = await authCheckUsername(clean);
+        setUsernameOk(avail);
+      }, 400);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      if (mode === "signup") {
+        if (username.length < 3) { setError("Username must be at least 3 characters"); setLoading(false); return; }
+        if (password.length < 6) { setError("Password must be at least 6 characters"); setLoading(false); return; }
+        if (usernameOk === false) { setError("Username is already taken"); setLoading(false); return; }
+        await authSignUp(email, password, username);
+        await authSignIn(email, password);
+      } else {
+        await authSignIn(email, password);
+      }
+      onAuth();
+    } catch (err) {
+      setError(err.message || "Something went wrong");
+    }
+    setLoading(false);
+  }
+
+  const inputStyle = {
+    width:"100%", padding:"12px 14px", borderRadius:10, border:"1.5px solid #1e3048",
+    background:"#0a1520", color:"#F5EDD6", fontFamily:"'JetBrains Mono',monospace",
+    fontSize:"0.9rem", outline:"none", boxSizing:"border-box",
+  };
+
+  return (
+    <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+
+      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px"}}>
+        <div style={{display:"flex",gap:8,marginBottom:20}}>
+          <button onClick={()=>{setMode("signin");setError("");}} style={{
+            flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+            background: mode==="signin" ? "#00F5C4" : "#0a1520",
+            color: mode==="signin" ? "#0a2e24" : "#3a5570",
+          }}>Sign In</button>
+          <button onClick={()=>{setMode("signup");setError("");}} style={{
+            flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+            background: mode==="signup" ? "#FFB703" : "#0a1520",
+            color: mode==="signup" ? "#0D1B2A" : "#3a5570",
+          }}>Create Account</button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{display:"flex",flexDirection:"column",gap:12}}>
+          {mode==="signup" && (
+            <div>
+              <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>USERNAME</label>
+              <div style={{position:"relative"}}>
+                <input value={username} onChange={e=>onUsernameChange(e.target.value)} placeholder="cool_player_42" maxLength={20} style={inputStyle} autoComplete="username" />
+                {username.length >= 3 && usernameOk !== null && (
+                  <span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",fontSize:"0.9rem"}}>
+                    {usernameOk ? "✓" : "✗"}
+                  </span>
+                )}
+              </div>
+              {username.length > 0 && username.length < 3 && (
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FF5E5B",fontSize:"0.65rem",margin:"4px 0 0"}}>At least 3 characters</p>
+              )}
+            </div>
+          )}
+          <div>
+            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>EMAIL</label>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" required style={inputStyle} autoComplete="email" />
+          </div>
+          <div>
+            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>PASSWORD</label>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder={mode==="signup"?"6+ characters":"••••••••"} required minLength={6} style={inputStyle} autoComplete={mode==="signup"?"new-password":"current-password"} />
+          </div>
+
+          {error && (
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FF5E5B",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#FF5E5B15",borderRadius:8}}>{error}</p>
+          )}
+
+          <button type="submit" disabled={loading} style={{
+            ...btnStyle(mode==="signup"?"linear-gradient(90deg,#FFB703,#ff9f1c)":"linear-gradient(90deg,#00F5C4,#00c49f)", mode==="signup"?"#0D1B2A":"#0a2e24"),
+            padding:"13px", borderRadius:12, fontSize:"0.95rem", fontWeight:700, marginTop:4,
+            opacity: loading ? 0.6 : 1,
+          }}>
+            {loading ? "..." : mode==="signup" ? "Create Account" : "Sign In"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ProfileScreen({ onBack, profile, onSignOut }) {
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await authSignOut();
+      onSignOut();
+    } catch {
+      setSigningOut(false);
+    }
+  }
+
+  return (
+    <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
+      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+
+      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px",textAlign:"center"}}>
+        <div style={{width:64,height:64,borderRadius:"50%",background:"linear-gradient(135deg,#00F5C4,#FFB703)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:"1.8rem",marginBottom:12}}>
+          {(profile?.username || "?")[0].toUpperCase()}
+        </div>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 4px",fontSize:"1.4rem"}}>{profile?.username || "Player"}</h2>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",margin:"0 0 20px"}}>
+          Member since {profile?.created_at ? new Date(profile.created_at).toLocaleDateString("en-US",{month:"short",year:"numeric"}) : "—"}
+        </p>
+
+        <div style={{background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048",padding:"14px",marginBottom:16,textAlign:"left"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>USERNAME</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.85rem"}}>{profile?.username}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>BEST SCORE</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"1rem",fontWeight:700}}>{getPersonalBest() > 0 ? getPersonalBest().toLocaleString() : "—"}</span>
+          </div>
+        </div>
+
+        <button onClick={handleSignOut} disabled={signingOut} style={{
+          ...btnStyle("#1e3048","#FF5E5B"), padding:"10px 24px", borderRadius:10,
+          fontSize:"0.8rem", border:"1.5px solid #FF5E5B33", width:"100%",
+          opacity: signingOut ? 0.6 : 1,
+        }}>
+          {signingOut ? "Signing out..." : "Sign Out"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function WordFlip() {
   const [screen,setScreen] = useState("menu");
   const [soloLarge,setSoloLarge] = useState(false);
@@ -2199,6 +2449,7 @@ function WordFlip() {
   }
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
+  const { session, profile, loading: authLoading, refreshProfile } = useAuth();
 
   const dailyBest = getDailyBest();
   const streak = getStreak();
@@ -2261,9 +2512,12 @@ function WordFlip() {
       <Fireworks active={fireworks} />
       {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
-      {screen==="menu"&&(
+      {screen==="menu"&&(<>
+        <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:16,left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"#1e3048",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"#7a9cc0",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
+          {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
+        </button>
         <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
-      )}
+      </>)}
       <div style={{marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
         <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:"linear-gradient(90deg,#00F5C4,#FFB703)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
         {screen==="menu"&&(
@@ -2331,6 +2585,8 @@ function WordFlip() {
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} /></div>}
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} /></div>}
+      {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={()=>{refreshProfile();setScreen("menu");}} />}
+      {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} />}
     </div>
   );
 }
