@@ -59,7 +59,6 @@ async function authSignUp(email, password, username) {
     password,
     options: { data: { username, display_name: username } }
   });
-  console.log("signUp full response:", JSON.stringify(res, null, 2));
   if (res.error) throw res.error;
   if (res.data?.user?.identities?.length === 0) {
     throw new Error("An account with this email already exists");
