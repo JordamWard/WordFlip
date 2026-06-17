@@ -543,7 +543,7 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"#00F5C4"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"#FFB703"},
             {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"#3a5570"},
-            {label:`🎯 Accuracy (${wrongGuesses||0} missed)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
+            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>{row.label}</span>
@@ -623,7 +623,7 @@ function FloatingScore({ items }) {
 }
 
 // ─── Tile ─────────────────────────────────────────────────────────────────────
-function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum }) {
+function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor }) {
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -666,10 +666,10 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
           transform:"rotateY(180deg)",borderRadius:10,
-          background: isError?"#FF5E5B":isSelected?"linear-gradient(135deg,#FFB703,#ffcf40)":isFound&&foundInOrder?"linear-gradient(135deg,#00c49f,#00F5C4)":isFound?"linear-gradient(135deg,#c9a800,#FFB703)":"#F5EDD6",
-          border: isSelected?"2.5px solid #FFB703":isFound&&foundInOrder?"2.5px solid #00F5C4":isFound?"2.5px solid #FFB703":"2px solid #c8bca0",
+          background: isError?"#FF5E5B":remoteColor&&isFlipped&&!isFound?remoteColor+"28":isSelected?"linear-gradient(135deg,#FFB703,#ffcf40)":isFound&&foundInOrder?"linear-gradient(135deg,#00c49f,#00F5C4)":isFound?"linear-gradient(135deg,#c9a800,#FFB703)":"#F5EDD6",
+          border: remoteColor&&isFlipped&&!isFound?`2.5px solid ${remoteColor}`:isSelected?"2.5px solid #FFB703":isFound&&foundInOrder?"2.5px solid #00F5C4":isFound?"2.5px solid #FFB703":"2px solid #c8bca0",
           display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          boxShadow:isSelected?"0 0 16px #FFB70388":"0 2px 8px #00000044",
+          boxShadow:remoteColor&&isFlipped&&!isFound?`0 0 14px ${remoteColor}55`:isSelected?"0 0 16px #FFB70388":"0 2px 8px #00000044",
           transition:"background 0.2s,box-shadow 0.2s,border 0.2s",
         }}>
           <span style={{
@@ -689,27 +689,30 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
 // ─── Found Word Banner ────────────────────────────────────────────────────────
 function FoundWordBanner({ words, wordResults }) {
   return (
-    <div role="status" aria-label="Words to find" style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginBottom:12}}>
-      {words.map((word,i)=>{
-        const result = wordResults?.[i];
-        const isFound = !!result;
-        return (
-          <div
-            key={i}
-            aria-label={isFound ? `${word} — ${result==="green"?"found in order":"found"}` : `${word} — not yet found`}
-            style={{
-            padding:"4px 14px",borderRadius:20,
-            background: result==="green"?"linear-gradient(90deg,#00c49f,#00F5C4)":result==="yellow"?"linear-gradient(90deg,#c9a800,#FFB703)":"#0e1f30",
-            border: isFound?"none":"1.5px solid #1e3048",
-            fontFamily:"'JetBrains Mono',monospace",fontWeight:800,letterSpacing:"0.18em",
-            fontSize:"clamp(0.7rem,2.5vw,1rem)",
-            color: result==="green"?"#0a2e24":result==="yellow"?"#3d2800":"#3a5570",
-            transition:"all 0.4s cubic-bezier(.4,2,.6,1)",
-            transform:isFound?"scale(1.08)":"scale(1)",
-            boxShadow: result==="green"?"0 0 16px #00F5C466":result==="yellow"?"0 0 14px #FFB70355":"none",
-          }}>{word}</div>
-        );
-      })}
+    <div role="status" aria-label="Words to find" style={{marginBottom:14}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.62rem",textAlign:"center",letterSpacing:"0.12em",fontWeight:700,margin:"0 0 8px"}}>FIND THESE WORDS</p>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center"}}>
+        {words.map((word,i)=>{
+          const result = wordResults?.[i];
+          const isFound = !!result;
+          return (
+            <div
+              key={i}
+              aria-label={isFound ? `${word} — ${result==="green"?"found in order":"found"}` : `${word} — not yet found`}
+              style={{
+              padding:"7px 18px",borderRadius:22,
+              background: result==="green"?"linear-gradient(90deg,#00c49f,#00F5C4)":result==="yellow"?"linear-gradient(90deg,#c9a800,#FFB703)":"#0e1f30",
+              border: isFound?"none":"1.5px solid #2a4060",
+              fontFamily:"'JetBrains Mono',monospace",fontWeight:800,letterSpacing:"0.2em",
+              fontSize:"clamp(0.85rem,3vw,1.1rem)",
+              color: result==="green"?"#0a2e24":result==="yellow"?"#3d2800":"#7a9cc0",
+              transition:"all 0.4s cubic-bezier(.4,2,.6,1)",
+              transform:isFound?"scale(1.1)":"scale(1)",
+              boxShadow: result==="green"?"0 0 18px #00F5C466":result==="yellow"?"0 0 16px #FFB70355":"inset 0 0 0 1px #1e3048",
+            }}>{word}</div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -971,11 +974,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const wordPts = greens*300 + yellows*100;
   const timePts = Math.max(0, 600 - Math.floor(elapsed/1000));
   const guessPts = Math.max(0, 800 - wrongGuesses*50);
+  const accuracyCredits = Math.round(guessPts / 50);
 
   const rows = [
     { icon:"\u{1F524}", label:`Words (${greens}\u{1F7E9} ${yellows}\u{1F7E8})`, pts:wordPts, color:"#00F5C4" },
     { icon:"\u23F1", label:`Time (${formatTime(elapsed)})`, pts:timePts, color:"#9B5DE5" },
-    { icon:"\u{1F3AF}", label:`Guesses (${wrongGuesses} missed)`, pts:guessPts, color:"#00BBF9" },
+    { icon:"\u{1F3AF}", label:`Accuracy (${accuracyCredits} \u00D7 50 pts)`, pts:guessPts, color:"#00BBF9" },
     ...(bonusPts > 0 ? [{ icon:"\u2728", label:`Bonus words (+${Math.round(bonusPts/50)} found)`, pts:bonusPts, color:"#FFB703" }] : []),
   ];
 
@@ -1592,6 +1596,13 @@ function OnlineScreen({ onBack }) {
     const expires = new Date(now.getTime() + 60000);
     const myPlayerData = currentPlayers.find(p => p.id === myId);
 
+    function unlock() {
+      flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
+      processingRef.current = false;
+    }
+    // Safety valve: always release lock within 5s even if DB hangs
+    const safetyTimer = setTimeout(unlock, 5000);
+
     if (matchIdx === -1) {
       setErrTiles(tileIds); setFlash('bad');
       soundManager.wrong();
@@ -1604,8 +1615,7 @@ function OnlineScreen({ onBack }) {
             turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
           }).eq('room_id', currentRoom.id);
         } catch(e) { console.error('submitGuess wrong:', e); }
-        flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
-        processingRef.current = false;
+        clearTimeout(safetyTimer); unlock();
       }, 800);
       return;
     }
@@ -1629,8 +1639,7 @@ function OnlineScreen({ onBack }) {
         }).eq('room_id', currentRoom.id);
         if (gameOver) await db.from('rooms').update({ status: 'done' }).eq('id', currentRoom.id);
       } catch(e) { console.error('submitGuess hit:', e); }
-      flippedRef.current = []; setFlipped([]); setFlash(null);
-      processingRef.current = false;
+      clearTimeout(safetyTimer); unlock();
     }, 500);
   }
 
@@ -1817,21 +1826,26 @@ function OnlineScreen({ onBack }) {
       </div>
       {/* Board — 6×6 grid; click-locked when not my turn but remote flips still visible */}
       <div style={{display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'clamp(3px,1.2vw,8px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048'}}>
-        {tiles.map(tile => {
-          const isLocalFlipped = flipped.includes(tile.id);
-          const isRemote = !isLocalFlipped && remoteFlips.has(tile.id);
-          return (
-            <Tile key={tile.id} tile={tile}
-              isFlipped={isLocalFlipped || isRemote}
-              isFound={foundTileIdsRef.current.has(tile.id)}
-              foundInOrder={foundWordsList.find(fw => fw.tile_ids?.includes(tile.id))?.inOrder || false}
-              isSelected={isLocalFlipped && !errTiles.includes(tile.id)}
-              isError={errTiles.includes(tile.id)}
-              onClick={() => handleTileClick(tile)}
-              orderNum={isLocalFlipped ? flipped.indexOf(tile.id) : undefined}
-            />
-          );
-        })}
+        {(() => {
+          const currentPlayerIdx = players.findIndex(p => p.id === gs?.current_player_id);
+          const currentPlayerColor = currentPlayerIdx >= 0 ? MP_COLORS[currentPlayerIdx] : '#FFB703';
+          return tiles.map(tile => {
+            const isLocalFlipped = flipped.includes(tile.id);
+            const isRemote = !isLocalFlipped && remoteFlips.has(tile.id);
+            return (
+              <Tile key={tile.id} tile={tile}
+                isFlipped={isLocalFlipped || isRemote}
+                isFound={foundTileIdsRef.current.has(tile.id)}
+                foundInOrder={foundWordsList.find(fw => fw.tile_ids?.includes(tile.id))?.inOrder || false}
+                isSelected={isLocalFlipped && !errTiles.includes(tile.id)}
+                isError={errTiles.includes(tile.id)}
+                remoteColor={isRemote ? currentPlayerColor : undefined}
+                onClick={() => handleTileClick(tile)}
+                orderNum={isLocalFlipped ? flipped.indexOf(tile.id) : undefined}
+              />
+            );
+          });
+        })()}
       </div>
       {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Watching {currentPlayerObj?.name || 'other player'} choose…</p>}
       {/* Footer: room code for rejoining + leave button */}
@@ -2096,7 +2110,7 @@ function WordFlip() {
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
     if (mode==="daily") {
       saveDailyBest(score);
-      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false});
+      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0});
       const s = updateStreak();
       setWinStreak(s.count);
       setWinIsNewBest(score > getPersonalBest());
