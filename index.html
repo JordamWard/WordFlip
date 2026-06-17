@@ -46,9 +46,22 @@
 const SUPABASE_URL = 'https://vznuengepsbnmgwfyadr.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bnVlbmdlcHNibm1nd2Z5YWRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2Mzk0NjAsImV4cCI6MjA5NzIxNTQ2MH0.5ym5v66-Kex_geVij8EKef2Ww5G3I36p70KHn8faSOs';
 let _sbClient = null;
+// Route REST/Auth fetches through a same-origin Netlify proxy so Edge/Safari
+// tracking prevention doesn't treat them as third-party. Realtime uses a
+// WebSocket (not fetch), so it stays on the direct SUPABASE_URL and is untouched.
+function sbProxyFetch(input, init) {
+  let url = typeof input === 'string' ? input : (input && input.url);
+  if (url && url.startsWith(SUPABASE_URL)) {
+    const proxied = '/sb-proxy' + url.slice(SUPABASE_URL.length);
+    input = typeof input === 'string' ? proxied : new Request(proxied, input);
+  }
+  return fetch(input, init);
+}
 function getSB() {
   if (typeof supabase === 'undefined') throw new Error('Supabase SDK not loaded');
-  if (!_sbClient) _sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  if (!_sbClient) _sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    global: { fetch: sbProxyFetch },
+  });
   return _sbClient;
 }
 

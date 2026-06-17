@@ -1,0 +1,5 @@
+[[redirects]]
+  from = "/sb-proxy/*"
+  to = "https://vznuengepsbnmgwfyadr.supabase.co/:splat"
+  status = 200
+  force = true
