@@ -140,6 +140,26 @@ async function fetchLeaderboard(mode, dayKey) {
   return data;
 }
 
+async function fetchMyScores(userId) {
+  const { data, error } = await getSB()
+    .from('daily_scores')
+    .select('score, day_key, turns, elapsed, wrong_guesses, blocks, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) { console.error("My scores fetch error:", error); return []; }
+  return data;
+}
+
+// Convert a stored day_key ("2026-6-17") into display date strings
+function dayKeyToDates(dayKey) {
+  const [y, m, d] = String(dayKey || "").split('-').map(Number);
+  const dt = (y && m && d) ? new Date(y, m - 1, d) : new Date();
+  return {
+    date: dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    shortDate: dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+  };
+}
+
 async function retroSubmitTodayScore(userId) {
   const done = getDailyDone();
   if (!done || !done.score) return;
@@ -1364,8 +1384,8 @@ function LeaderboardView({ onBack, session, onSignIn }) {
   const [globalTab, setGlobalTab] = useState("daily");
   const [leaderboard, setLeaderboard] = useState([]);
   const [lbLoading, setLbLoading] = useState(false);
-  const history = getHistory();
-  const personalBest = getPersonalBest();
+  const [myScores, setMyScores] = useState(null); // null = not yet loaded
+  const [myLoading, setMyLoading] = useState(false);
   const streak = getStreak();
 
   useEffect(() => {
@@ -1378,6 +1398,28 @@ function LeaderboardView({ onBack, session, onSignIn }) {
       setLbLoading(false);
     });
   }, [tab, globalTab]);
+
+  // When signed in, "My Scores" comes from the account (follows you across devices)
+  useEffect(() => {
+    if (tab !== "personal" || !session?.user) return;
+    setMyLoading(true);
+    fetchMyScores(session.user.id).then(rows => {
+      const mapped = (rows || []).map(r => ({
+        ...dayKeyToDates(r.day_key),
+        score: r.score,
+        turns: r.turns,
+        elapsed: r.elapsed,
+        blocks: r.blocks,
+        wrongGuesses: r.wrong_guesses || 0,
+      }));
+      setMyScores(mapped);
+      setMyLoading(false);
+    });
+  }, [tab, session]);
+
+  // Signed in → account scores; signed out → local device history
+  const history = session?.user ? (myScores || []) : getHistory();
+  const personalBest = history.reduce((max, e) => Math.max(max, e.score || 0), 0);
 
   return (
     <div style={{maxWidth:440,margin:"0 auto"}}>
@@ -1425,7 +1467,12 @@ function LeaderboardView({ onBack, session, onSignIn }) {
         )}
 
         {/* History list */}
-        {history.length === 0 ? (
+        {session?.user && (myLoading || myScores === null) ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading your scores...</p>
+          </div>
+        ) : history.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"2.5rem",marginBottom:12}}>📅</div>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.85rem",lineHeight:1.6}}>
