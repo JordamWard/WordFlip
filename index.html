@@ -172,11 +172,39 @@ async function retroSubmitTodayScore(userId) {
   await submitDailyScore(userId, done.score, dk, done.turns, done.elapsed, done.wrongGuesses||0, blocks);
 }
 
+// ─── Token economy ────────────────────────────────────────────────────────────
+// Earning amounts (tweak freely — placeholders until the shop is priced)
+const TOKENS = { SIGNUP: 100, DAILY: 25 };
+
+async function fetchWallet(userId) {
+  const { data, error } = await getSB().from('wallets').select('balance').eq('user_id', userId).maybeSingle();
+  if (error) { console.error("Wallet fetch error:", error); return 0; }
+  return data?.balance || 0;
+}
+
+// Idempotent grant via the secure RPC. Returns the new balance (or null on failure).
+async function grantTokens(amount, reason) {
+  const { data, error } = await getSB().rpc('add_tokens', { p_amount: amount, p_reason: reason });
+  if (error) { console.error("Grant tokens error:", error); return null; }
+  return data;
+}
+
+// Grant all tokens the signed-in user has earned but not yet received.
+// Safe to call repeatedly — each reason is idempotent server-side.
+async function grantEarnedTokens(userId) {
+  await grantTokens(TOKENS.SIGNUP, 'signup-bonus');
+  const done = getDailyDone();
+  if (done && done.score) {
+    await grantTokens(TOKENS.DAILY, 'daily-' + dateKey().replace('wf_', ''));
+  }
+}
+
 function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [recovery, setRecovery] = useState(false);
+  const [balance, setBalance] = useState(0);
   const sessionRef = useRef(null);
 
   async function loadProfile(userId, mounted) {
@@ -187,6 +215,10 @@ function useAuth() {
     } catch (err) {
       console.error("Profile load failed:", err);
     }
+    try {
+      const b = await fetchWallet(userId);
+      if (mounted && mounted.current !== false) setBalance(b);
+    } catch {}
   }
 
   useEffect(() => {
@@ -224,7 +256,14 @@ function useAuth() {
     }
   }, [session]);
 
-  return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false) };
+  const refreshWallet = useCallback(async () => {
+    const s = sessionRef.current || await authGetSession();
+    if (s?.user) {
+      try { setBalance(await fetchWallet(s.user.id)); } catch {}
+    }
+  }, [session]);
+
+  return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false), balance, refreshWallet };
 }
 
 // Seeded PRNG — gives every client the same tile layout for a given room
@@ -2682,7 +2721,7 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
   );
 }
 
-function ProfileScreen({ onBack, profile, onSignOut }) {
+function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
   const [signingOut, setSigningOut] = useState(false);
 
   async function handleSignOut() {
@@ -2713,9 +2752,13 @@ function ProfileScreen({ onBack, profile, onSignOut }) {
             <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>USERNAME</span>
             <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.85rem"}}>{profile?.username}</span>
           </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>BEST SCORE</span>
             <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"1rem",fontWeight:700}}>{getPersonalBest() > 0 ? getPersonalBest().toLocaleString() : "—"}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>TOKENS</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontSize:"1rem",fontWeight:700}}>🪙 {balance.toLocaleString()}</span>
           </div>
         </div>
 
@@ -2747,11 +2790,12 @@ function WordFlip() {
   }
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
-  const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery } = useAuth();
+  const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet } = useAuth();
 
   useEffect(() => {
-    if (session?.user && getDailyDone()) {
-      retroSubmitTodayScore(session.user.id);
+    if (session?.user) {
+      if (getDailyDone()) retroSubmitTodayScore(session.user.id);
+      grantEarnedTokens(session.user.id).then(refreshWallet);
     }
   }, [session]);
 
@@ -2786,6 +2830,7 @@ function WordFlip() {
       }).join("");
       if (session?.user) {
         submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
+        grantTokens(TOKENS.DAILY, 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
       }
       saveToHistory({
         dayKey: dateKey(),
@@ -2825,6 +2870,11 @@ function WordFlip() {
         <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:16,left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"#1e3048",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"#7a9cc0",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
         </button>
+        {session && (
+          <button onClick={()=>setScreen("profile")} style={{position:"fixed",top:16,left:56,background:"#0a1520",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"#00F5C4",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Tokens">
+            🪙 {balance.toLocaleString()}
+          </button>
+        )}
         <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
       </>)}
       <div style={{marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
@@ -2919,7 +2969,7 @@ function WordFlip() {
         await refreshProfile();
         setScreen("menu");
       }} />}
-      {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} />}
+      {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} balance={balance} />}
     </div>
   );
 }
