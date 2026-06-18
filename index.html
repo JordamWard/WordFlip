@@ -108,8 +108,14 @@ async function authGetSession() {
 }
 
 async function authGetProfile(userId) {
-  const { data, error } = await getSB().from('profiles').select('*').eq('id', userId).single();
+  // maybeSingle (not single) so a transient 0-row response doesn't throw; retry once
+  let { data, error } = await getSB().from('profiles').select('*').eq('id', userId).maybeSingle();
   if (error) throw error;
+  if (!data) {
+    await new Promise(r => setTimeout(r, 600));
+    ({ data, error } = await getSB().from('profiles').select('*').eq('id', userId).maybeSingle());
+    if (error) throw error;
+  }
   return data;
 }
 
@@ -174,7 +180,9 @@ async function retroSubmitTodayScore(userId) {
 
 // ─── Token economy ────────────────────────────────────────────────────────────
 // Earning amounts (tweak freely — placeholders until the shop is priced)
-const TOKENS = { SIGNUP: 100, DAILY: 25 };
+const TOKENS = { SIGNUP: 100, SOLO: 50, MP_WIN: 50, MP_LOSS: 25 };
+// Daily challenge pays out 10% of the score earned
+const dailyTokens = (score) => Math.max(0, Math.round((score || 0) * 0.1));
 
 async function fetchWallet(userId) {
   const { data, error } = await getSB().from('wallets').select('balance').eq('user_id', userId).maybeSingle();
@@ -195,7 +203,7 @@ async function grantEarnedTokens(userId) {
   await grantTokens(TOKENS.SIGNUP, 'signup-bonus');
   const done = getDailyDone();
   if (done && done.score) {
-    await grantTokens(TOKENS.DAILY, 'daily-' + dateKey().replace('wf_', ''));
+    await grantTokens(dailyTokens(done.score), 'daily-' + dateKey().replace('wf_', ''));
   }
 }
 
@@ -2830,7 +2838,7 @@ function WordFlip() {
       }).join("");
       if (session?.user) {
         submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
-        grantTokens(TOKENS.DAILY, 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
+        grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
       }
       saveToHistory({
         dayKey: dateKey(),
@@ -2844,6 +2852,11 @@ function WordFlip() {
         wrongGuesses: result.wrongGuesses||0,
         outOfTurns: result.outOfTurns||false,
       });
+    } else if (mode==="solo") {
+      // Repeatable grant — unique reason each game so it always pays out
+      if (session?.user) {
+        grantTokens(TOKENS.SOLO, 'solo-' + Date.now()).then(refreshWallet);
+      }
     }
     setScreen("win");
   }
