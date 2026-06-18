@@ -85,6 +85,18 @@ async function authSignIn(email, password) {
   return data;
 }
 
+async function authResetPassword(email) {
+  const { error } = await getSB().auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+  });
+  if (error) throw error;
+}
+
+async function authUpdatePassword(newPassword) {
+  const { error } = await getSB().auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
+
 async function authSignOut() {
   const { error } = await getSB().auth.signOut();
   if (error) throw error;
@@ -144,6 +156,7 @@ function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(false);
   const sessionRef = useRef(null);
 
   async function loadProfile(userId, mounted) {
@@ -166,8 +179,9 @@ function useAuth() {
       if (m.current) setLoading(false);
     }).catch((err) => { console.error("Session load failed:", err); if (m.current) setLoading(false); });
 
-    const { data: { subscription } } = getSB().auth.onAuthStateChange(async (_event, s) => {
+    const { data: { subscription } } = getSB().auth.onAuthStateChange(async (event, s) => {
       if (!m.current) return;
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
       sessionRef.current = s;
       setSession(s);
       if (s?.user) {
@@ -190,7 +204,7 @@ function useAuth() {
     }
   }, [session]);
 
-  return { session, profile, loading, refreshProfile };
+  return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false) };
 }
 
 // Seeded PRNG — gives every client the same tile layout for a given room
@@ -2429,7 +2443,7 @@ function HowToPlay({ onClose }) {
 }
 
 // ─── Auth Screens ─────────────────────────────────────────────────────────────
-function AuthScreen({ onBack, onAuth }) {
+function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -2437,7 +2451,40 @@ function AuthScreen({ onBack, onAuth }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [usernameOk, setUsernameOk] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [info, setInfo] = useState("");
   const checkTimer = useRef(null);
+
+  async function handleSetNewPassword(e) {
+    e.preventDefault();
+    setError(""); setInfo("");
+    if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    setLoading(true);
+    try {
+      await authUpdatePassword(password);
+      onResetDone && onResetDone();
+    } catch (err) {
+      console.error("Update password error:", err);
+      setError(err?.message || "Could not update password");
+    }
+    setLoading(false);
+  }
+
+  async function handleForgotPassword() {
+    setError(""); setInfo("");
+    if (!email) { setError("Enter your email above first, then tap Forgot password"); return; }
+    setLoading(true);
+    try {
+      await authResetPassword(email);
+      setResetSent(true);
+      setInfo("Check your email for a password reset link.");
+    } catch (err) {
+      console.error("Reset error:", err);
+      setError(err?.message || "Could not send reset email");
+    }
+    setLoading(false);
+  }
 
   function onUsernameChange(val) {
     const clean = val.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
@@ -2482,6 +2529,35 @@ function AuthScreen({ onBack, onAuth }) {
     fontSize:"0.9rem", outline:"none", boxSizing:"border-box",
   };
 
+  if (recoveryMode) {
+    return (
+      <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
+        <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px"}}>
+          <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 6px",fontSize:"1.3rem"}}>Set a new password</h2>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",margin:"0 0 16px"}}>Enter a new password for your account.</p>
+          <form onSubmit={handleSetNewPassword} style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{position:"relative"}}>
+              <input type={showPassword?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="New password (6+ characters)" required minLength={6} style={{...inputStyle,paddingRight:44}} autoComplete="new-password" />
+              <button type="button" onClick={()=>setShowPassword(s=>!s)} aria-label={showPassword?"Hide password":"Show password"} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:"1rem",padding:"4px 6px",lineHeight:1}}>
+                {showPassword?"🙈":"👁️"}
+              </button>
+            </div>
+            {error && (
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FF5E5B",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#FF5E5B15",borderRadius:8}}>{error}</p>
+            )}
+            <button type="submit" disabled={loading} style={{
+              ...btnStyle("linear-gradient(90deg,#00F5C4,#00c49f)","#0a2e24"),
+              padding:"13px", borderRadius:12, fontSize:"0.95rem", fontWeight:700,
+              opacity: loading ? 0.6 : 1,
+            }}>
+              {loading ? "..." : "Update Password"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
       <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
@@ -2525,11 +2601,24 @@ function AuthScreen({ onBack, onAuth }) {
           </div>
           <div>
             <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>PASSWORD</label>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder={mode==="signup"?"6+ characters":"••••••••"} required minLength={6} style={inputStyle} autoComplete={mode==="signup"?"new-password":"current-password"} />
+            <div style={{position:"relative"}}>
+              <input type={showPassword?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder={mode==="signup"?"6+ characters":"••••••••"} required minLength={6} style={{...inputStyle,paddingRight:44}} autoComplete={mode==="signup"?"new-password":"current-password"} />
+              <button type="button" onClick={()=>setShowPassword(s=>!s)} aria-label={showPassword?"Hide password":"Show password"} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:"1rem",padding:"4px 6px",lineHeight:1}}>
+                {showPassword?"🙈":"👁️"}
+              </button>
+            </div>
+            {mode==="signin" && (
+              <button type="button" onClick={handleForgotPassword} style={{background:"none",border:"none",cursor:"pointer",color:"#9B5DE5",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.68rem",padding:"6px 0 0",textAlign:"left"}}>
+                Forgot password?
+              </button>
+            )}
           </div>
 
           {error && (
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FF5E5B",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#FF5E5B15",borderRadius:8}}>{error}</p>
+          )}
+          {info && (
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#00F5C4",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#00F5C415",borderRadius:8}}>{info}</p>
           )}
 
           <button type="submit" disabled={loading} style={{
@@ -2610,13 +2699,17 @@ function WordFlip() {
   }
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
-  const { session, profile, loading: authLoading, refreshProfile } = useAuth();
+  const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery } = useAuth();
 
   useEffect(() => {
     if (session?.user && getDailyDone()) {
       retroSubmitTodayScore(session.user.id);
     }
   }, [session]);
+
+  useEffect(() => {
+    if (recovery) setScreen("reset-password");
+  }, [recovery]);
 
   const dailyBest = getDailyBest();
   const streak = getStreak();
@@ -2771,6 +2864,11 @@ function WordFlip() {
         await refreshProfile();
         const s = await authGetSession();
         if (s?.user) retroSubmitTodayScore(s.user.id);
+        setScreen("menu");
+      }} />}
+      {screen==="reset-password"&&<AuthScreen recoveryMode onResetDone={async ()=>{
+        clearRecovery();
+        await refreshProfile();
         setScreen("menu");
       }} />}
       {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} />}
