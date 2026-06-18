@@ -906,6 +906,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   const [wordResults, setWordResults] = useState({});
   const [foundInOrderSet, setFoundInOrderSet] = useState(new Set());
   const [foundBonusWords, setFoundBonusWords] = useState([]);
+  const [lastBonusWord, setLastBonusWord] = useState("");
   const [bonusPts, setBonusPts] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [started, setStarted] = useState(false);
@@ -945,7 +946,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
     setTimeout(()=>onWin({
       turns:s.turns, elapsed:s.elapsed, words:s.words,
       wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
-      bonusPts:s.bonusPts, ...extraProps
+      bonusPts:s.bonusPts, bonusWords:s.foundBonusWords, ...extraProps
     }), 600);
   }
 
@@ -965,7 +966,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
   },[turns]);
 
   // Keep refs fresh — these are used in handleTileClick guards (never stale)
-  stateRef.current = {turns,elapsed,words,wordResults,wrongGuesses,bonusPts,found};
+  stateRef.current = {turns,elapsed,words,wordResults,wrongGuesses,bonusPts,found,foundBonusWords};
   foundTileIdsRef.current = foundTileIds;
   const timeLeft = timeLimit ? Math.max(0,timeLimit-Math.floor(elapsed/1000)) : null;
 
@@ -1013,11 +1014,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
           soundManager.bonus();
           const bfid = ++floatIdRef.current;
           setFloatingScores(prev=>[...prev,{id:bfid,pts:50,color:"#9B5DE5"}]);
-          setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==bfid)),1150);
+          setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==bfid)),1500);
           setFoundBonusWords(b=>[...b,bonusWord]);
+          setLastBonusWord(bonusWord);
           setBonusPts(p=>p+50);
           setFlash("bonus");
-          setTimeout(()=>unlock(), 700);
+          setTimeout(()=>unlock(), 1200);
           return;
         }
         // Bad guess
@@ -1109,7 +1111,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
             color:flash==="good"?"#00F5C4":flash==="goodYellow"?"#FFB703":flash==="bonus"?"#9B5DE5":"#FF5E5B"}}>
             {flash==="good"&&"🟩 Nice — bonus points!"}
             {flash==="goodYellow"&&"🟨 Found! Try in order for more pts"}
-            {flash==="bonus"&&"✨ Bonus word! +50 pts"}
+            {flash==="bonus"&&`✨ Bonus word: ${lastBonusWord.toUpperCase()}! +50 pts`}
             {flash==="bad"&&"✗ Not a valid word here"}
           </span>
         )}
@@ -1208,7 +1210,7 @@ function Firework({ color, trigger, large }) {
 }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0 }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [] }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -1225,7 +1227,9 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
       pts:wordPts,  color:"#00F5C4" },
     ...(bonusPts > 0 ? [
       { icon:"✨", label:"Bonus words",
-        formula:`${Math.round(bonusPts/50)}×50`,
+        formula: (bonusWords && bonusWords.length)
+          ? `${bonusWords.map(w=>w.toUpperCase()).join(", ")} · ${bonusWords.length}×50`
+          : `${Math.round(bonusPts/50)}×50`,
         pts:bonusPts, color:"#FFB703" },
     ] : []),
     { icon:"⏱", label:"Time bonus",
@@ -1349,6 +1353,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
         turns={result.turns}
         score={score}
         bonusPts={result.bonusPts||0}
+        bonusWords={result.bonusWords||[]}
       />
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
         {isDaily&&(
@@ -2354,6 +2359,7 @@ function DailyAlreadyDone({ onMenu, streak, session, onSignIn }) {
           turns={done.turns}
           score={score}
           bonusPts={bonusPts}
+          bonusWords={done.bonusWords||[]}
         />
       )}
       {!session&&onSignIn&&(
@@ -2769,7 +2775,7 @@ function WordFlip() {
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
     if (mode==="daily") {
       saveDailyBest(score);
-      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0});
+      setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0,bonusWords:result.bonusWords||[]});
       const s = updateStreak();
       setWinStreak(s.count);
       setWinIsNewBest(score > getPersonalBest());
