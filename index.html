@@ -1023,9 +1023,6 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
         // Bad guess
         setError(newFlipped); setFlash("bad"); setHadError(true); setWrongGuesses(g=>g+1);
         soundManager.wrong();
-        const wfid = ++floatIdRef.current;
-        setFloatingScores(prev=>[...prev,{id:wfid,pts:-50,color:"#FF5E5B"}]);
-        setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==wfid)),1000);
         setTimeout(()=>unlock(), 700);
         return;
       }
@@ -1220,9 +1217,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 
   const timeFormula  = timePts > 0 ? `${timePts}s to spare` : "just in time!";
   const accuracyCredits = Math.round(guessPts / 50);
-  const guessFormula = wrongGuesses === 0
-    ? `16 × 50 pts — perfect accuracy!`
-    : `${accuracyCredits} × 50 pts (${wrongGuesses} wrong)`;
+  const guessFormula = `${accuracyCredits} remaining guesses × 50 pts`;
 
   const rows = [
     { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
