@@ -259,25 +259,36 @@ function useAuth() {
 
   useEffect(() => {
     const m = { current: true };
-    authGetSession().then(async (s) => {
-      if (!m.current) return;
-      sessionRef.current = s;
-      setSession(s);
-      if (s?.user) await loadProfile(s.user.id, m);
-      if (m.current) setLoading(false);
-    }).catch((err) => { console.error("Session load failed:", err); if (m.current) setLoading(false); });
 
+    // onAuthStateChange is the single source of truth for auth state.
+    // We register it first so it catches the INITIAL_SESSION event that
+    // Supabase fires synchronously when a session exists in localStorage.
     const { data: { subscription } } = getSB().auth.onAuthStateChange(async (event, s) => {
       if (!m.current) return;
-      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      if (event === "PASSWORD_RECOVERY") { setRecovery(true); return; }
+
       sessionRef.current = s;
       setSession(s);
+
       if (s?.user) {
         await loadProfile(s.user.id, m);
-      } else {
+      } else if (event === "SIGNED_OUT") {
+        // Only clear profile on an intentional sign-out, not on token-refresh
+        // failures or other transient null-session events (which would otherwise
+        // wipe the profile on page refresh when the proxy is slow).
         setProfile(null);
+        setBalance(0);
       }
+
+      if (m.current) setLoading(false);
     });
+
+    // Fallback: if no INITIAL_SESSION fires within a tick (no stored session),
+    // stop the loading spinner so the app doesn't hang on the splash screen.
+    authGetSession().then(s => {
+      if (!m.current) return;
+      if (!s) setLoading(false); // session exists → onAuthStateChange handles it
+    }).catch(() => { if (m.current) setLoading(false); });
 
     return () => { m.current = false; subscription.unsubscribe(); };
   }, []);
