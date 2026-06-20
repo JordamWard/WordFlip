@@ -107,7 +107,9 @@ async function authUpdatePassword(newPassword) {
 }
 
 async function authSignOut() {
-  const { error } = await getSB().auth.signOut();
+  // scope:'local' clears the session from localStorage without a network call.
+  // This avoids Safari stalling on the server-side invalidation request.
+  const { error } = await getSB().auth.signOut({ scope: 'local' });
   if (error) throw error;
 }
 
@@ -296,11 +298,13 @@ function useAuth() {
     }
   }, [session]);
 
-  function signOut() {
-    // Fire-and-forget: let Supabase invalidate the server token in the background.
-    // We clear local state immediately so Safari's stalling network call never
-    // leaves the user stuck on the profile screen.
-    authSignOut().catch(() => {});
+  async function signOut() {
+    try {
+      await authSignOut(); // local-only, completes instantly, no network call
+    } catch (err) {
+      console.error("Sign out error:", err);
+    }
+    // Belt-and-suspenders: clear state even if the above somehow fails
     sessionRef.current = null;
     setSession(null);
     setProfile(null);
