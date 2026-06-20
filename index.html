@@ -296,7 +296,18 @@ function useAuth() {
     }
   }, [session]);
 
-  return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false), balance, refreshWallet };
+  function signOut() {
+    // Fire-and-forget: let Supabase invalidate the server token in the background.
+    // We clear local state immediately so Safari's stalling network call never
+    // leaves the user stuck on the profile screen.
+    authSignOut().catch(() => {});
+    sessionRef.current = null;
+    setSession(null);
+    setProfile(null);
+    setBalance(0);
+  }
+
+  return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false), balance, refreshWallet, signOut };
 }
 
 // Seeded PRNG — gives every client the same tile layout for a given room
@@ -2755,22 +2766,6 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
 }
 
 function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
-  const [signingOut, setSigningOut] = useState(false);
-
-  async function handleSignOut() {
-    setSigningOut(true);
-    try {
-      // 4s timeout — Safari sometimes hangs on the server-side signOut API call.
-      // Supabase clears local storage first, so local session is gone either way.
-      await Promise.race([
-        authSignOut(),
-        new Promise(resolve => setTimeout(resolve, 4000)),
-      ]);
-    } catch (err) {
-      console.error("Sign out error:", err);
-    }
-    onSignOut();
-  }
 
   return (
     <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
@@ -2800,12 +2795,11 @@ function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
           </div>
         </div>
 
-        <button onClick={handleSignOut} disabled={signingOut} style={{
+        <button onClick={onSignOut} style={{
           ...btnStyle("#1e3048","#FF5E5B"), padding:"10px 24px", borderRadius:10,
           fontSize:"0.8rem", border:"1.5px solid #FF5E5B33", width:"100%",
-          opacity: signingOut ? 0.6 : 1,
         }}>
-          {signingOut ? "Signing out..." : "Sign Out"}
+          Sign Out
         </button>
       </div>
     </div>
@@ -2828,7 +2822,7 @@ function WordFlip() {
   }
   const [soloWords,setSoloWords] = useState(null);
   const [fireworks,setFireworks] = useState(false);
-  const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet } = useAuth();
+  const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet, signOut } = useAuth();
 
   useEffect(() => {
     if (session?.user) {
@@ -3012,7 +3006,7 @@ function WordFlip() {
         await refreshProfile();
         setScreen("menu");
       }} />}
-      {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>setScreen("menu")} balance={balance} />}
+      {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={()=>{ signOut(); setScreen("menu"); }} balance={balance} />}
     </div>
   );
 }
