@@ -229,9 +229,10 @@ function useAuth() {
   async function loadProfile(userId, mounted) {
     try {
       let p = await authGetProfile(userId);
-      // If no profile row found (trigger didn't run or signup path skipped it),
-      // create it now from the user's own auth metadata while they're signed in.
-      if (!p) {
+      // Auto-fix if profile row is missing OR exists but has no username.
+      // Happens for users who signed up before the trigger was added, or whose
+      // backfill row was created with a null username from missing metadata.
+      if (!p || !p.username) {
         const { data: { user } } = await getSB().auth.getUser();
         const meta = user?.user_metadata || {};
         const uname = meta.username
