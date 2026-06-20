@@ -76,6 +76,15 @@ async function authSignUp(email, password, username) {
   if (res.data?.user?.identities?.length === 0) {
     throw new Error("An account with this email already exists");
   }
+  // If the user is immediately active (email confirmation disabled in Supabase),
+  // create the profile row now. Otherwise the DB trigger handles it on confirm.
+  if (res.data?.session && res.data?.user) {
+    const { error: pe } = await getSB().from('profiles').upsert(
+      { id: res.data.user.id, username, display_name: username },
+      { onConflict: 'id' }
+    );
+    if (pe) console.warn("Profile create on signup (may be handled by trigger):", pe.message);
+  }
   return res.data;
 }
 
@@ -217,7 +226,23 @@ function useAuth() {
 
   async function loadProfile(userId, mounted) {
     try {
-      const p = await authGetProfile(userId);
+      let p = await authGetProfile(userId);
+      // If no profile row found (trigger didn't run or signup path skipped it),
+      // create it now from the user's own auth metadata while they're signed in.
+      if (!p) {
+        const { data: { user } } = await getSB().auth.getUser();
+        const meta = user?.user_metadata || {};
+        const uname = meta.username
+          || (user?.email || '').split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
+          || 'player';
+        const { data: created, error: ce } = await getSB()
+          .from('profiles')
+          .upsert({ id: userId, username: uname, display_name: uname }, { onConflict: 'id' })
+          .select('*')
+          .maybeSingle();
+        if (ce) console.error("Profile auto-create failed:", ce.message);
+        else p = created;
+      }
       if (!mounted || (mounted.current === false)) return;
       setProfile(p);
     } catch (err) {
