@@ -2760,7 +2760,12 @@ function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
   async function handleSignOut() {
     setSigningOut(true);
     try {
-      await authSignOut();
+      // 4s timeout — Safari sometimes hangs on the server-side signOut API call.
+      // Supabase clears local storage first, so local session is gone either way.
+      await Promise.race([
+        authSignOut(),
+        new Promise(resolve => setTimeout(resolve, 4000)),
+      ]);
     } catch (err) {
       console.error("Sign out error:", err);
     }
