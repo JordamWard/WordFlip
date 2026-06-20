@@ -1,21 +1,22 @@
 // WordFlip Service Worker
 // !! Bump this version number every time you deploy a new version !!
 // This is what forces home screen installs to update automatically.
-const VERSION = "wordflip-v11";
+const VERSION = "wordflip-v12";
 const CACHE_NAME = VERSION;
 
 // Everything needed to run offline
 const PRECACHE = [
   "/",
   "/index.html",
+  "/react.min.js",
+  "/react-dom.min.js",
+  "/babel.min.js",
+  "/supabase.min.js",
   "/wordflip-icon.svg",
   "/icon-192.png",
   "/icon-512.png",
   "/apple-touch-icon.png",
   "/manifest.json",
-  "https://unpkg.com/react@18/umd/react.production.min.js",
-  "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
-  "https://unpkg.com/@babel/standalone/babel.min.js",
   "https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,700;0,900;1,700&family=JetBrains+Mono:wght@400;700;800&display=swap",
 ];
 
@@ -70,7 +71,6 @@ self.addEventListener("fetch", (event) => {
 
   const isLocal = url.origin === self.location.origin;
   const isCDN =
-    url.hostname === "unpkg.com" ||
     url.hostname === "fonts.googleapis.com" ||
     url.hostname === "fonts.gstatic.com";
 
