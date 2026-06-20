@@ -299,12 +299,18 @@ function useAuth() {
   }, [session]);
 
   async function signOut() {
+    // 1. Ask Supabase to clear the local session (no network call)
+    try { await getSB().auth.signOut({ scope: 'local' }); } catch {}
+    // 2. Nuclear fallback: wipe every sb-* key from localStorage directly.
+    //    This ensures the token is gone even if Supabase's own clear fails.
     try {
-      await authSignOut(); // local-only, completes instantly, no network call
-    } catch (err) {
-      console.error("Sign out error:", err);
-    }
-    // Belt-and-suspenders: clear state even if the above somehow fails
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('sb-'))
+        .forEach(k => localStorage.removeItem(k));
+    } catch {}
+    // 3. Reset the client singleton so the next sign-in gets a clean client
+    _sbClient = null;
+    // 4. Clear React state
     sessionRef.current = null;
     setSession(null);
     setProfile(null);
