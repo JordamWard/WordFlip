@@ -1980,21 +1980,43 @@ function OnlineScreen({ onBack }) {
     channelRef.current = channel;
   }
 
+  // Shared cleanup: unsubscribe from any active channel before entering a new room
+  function leaveCurrentChannel() {
+    if (channelRef.current) {
+      try { getSB().removeChannel(channelRef.current); } catch(e) {}
+      channelRef.current = null;
+    }
+  }
+
+  function resetRoomState() {
+    leaveCurrentChannel();
+    setRoom(null); roomRef.current = null;
+    setPlayers([]); playersRef.current = [];
+    setGs(null); gsRef.current = null;
+    setTiles([]); setFlipped([]); flippedRef.current = [];
+    setRemoteFlips(new Set()); setErrTiles([]); setFlash(null);
+    processingRef.current = false;
+    setPhase('join'); phaseRef.current = 'join';
+  }
+
   async function createRoom() {
     if (!playerName.trim()) { setErrMsg('Enter your name first'); return; }
     setBusy(true); setErrMsg('');
     localStorage.setItem('wf_online_name', playerName.trim());
+    leaveCurrentChannel();
     try {
       const db = getSB();
+      // Close any stale waiting rooms this player hosted so they don't linger
+      await db.from('rooms').update({ status: 'done' }).eq('host_id', myId).eq('status', 'waiting');
       const words = pickRandom(ALL_WORDS_9);
       const seed = Math.floor(Math.random() * 1e8);
       const { data: r, error: re } = await db.from('rooms')
         .insert({ code: genRoomCode(), status: 'waiting', words, shuffle_seed: seed, host_id: myId })
         .select().single();
       if (re) throw re;
-      // upsert so re-creating after an abandoned room doesn't 409
       const { error: pe } = await db.from('players')
-        .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 });
+        .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 },
+                 { onConflict: 'id' });
       if (pe) throw pe;
       setRoom(r); roomRef.current = r;
       setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
@@ -2014,6 +2036,7 @@ function OnlineScreen({ onBack }) {
     if (code.length < 2) { setErrMsg('Enter a room code'); return; }
     setBusy(true); setErrMsg('');
     localStorage.setItem('wf_online_name', playerName.trim());
+    leaveCurrentChannel();
     try {
       const db = getSB();
       const { data: r, error: re } = await db.from('rooms').select('*').eq('code', code).eq('status', 'waiting').single();
@@ -2022,8 +2045,10 @@ function OnlineScreen({ onBack }) {
       if (existing && existing.length >= 4) { setErrMsg('Room is full (4 players max).'); setBusy(false); return; }
       const alreadyIn = existing?.find(p => p.id === myId);
       if (!alreadyIn) {
+        // upsert on id so rejoining after a previous room doesn't hit a PK conflict
         const { error: pe } = await db.from('players')
-          .insert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: existing?.length || 0, score: 0 });
+          .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: existing?.length || 0, score: 0 },
+                  { onConflict: 'id' });
         if (pe) throw pe;
       }
       const allPlayers = alreadyIn ? (existing || []) : [...(existing || []),
@@ -2240,7 +2265,7 @@ function OnlineScreen({ onBack }) {
           </div>
         )}
       </div>
-      <button onClick={() => { try{getSB().removeChannel(channelRef.current);}catch(e){} setPhase('join'); phaseRef.current='join'; setRoom(null); setPlayers([]); }}
+      <button onClick={resetRoomState}
         style={{...btnStyle('transparent','#3a5570'), marginTop:12, fontSize:'0.75rem', border:'none', textDecoration:'underline'}}>
         Leave room
       </button>
@@ -2270,7 +2295,7 @@ function OnlineScreen({ onBack }) {
           })}
         </div>
         <div style={{display:'flex', gap:10, justifyContent:'center'}}>
-          <button onClick={() => { try{getSB().removeChannel(channelRef.current);}catch(e){} setPhase('join'); phaseRef.current='join'; setRoom(null); setPlayers([]); setGs(null); setTiles([]); setFlipped([]); }} style={btnStyle('#00F5C4','#0a2e24')}>New Game</button>
+          <button onClick={resetRoomState} style={btnStyle('#00F5C4','#0a2e24')}>New Game</button>
           <button onClick={onBack} style={btnStyle('#1e3048','#F5EDD6')}>Menu</button>
         </div>
       </div>
@@ -2351,7 +2376,7 @@ function OnlineScreen({ onBack }) {
         >
           Room <strong style={{color:'#3a5570', letterSpacing:'0.1em'}}>{room?.code}</strong> 🔗
         </span>
-        <button onClick={() => { if(window.confirm('Leave this game?')) { try{getSB().removeChannel(channelRef.current);}catch(e){} onBack(); }}}
+        <button onClick={() => { if(window.confirm('Leave this game?')) { resetRoomState(); onBack(); }}}
           style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
       </div>
     </div>
