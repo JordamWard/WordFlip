@@ -223,6 +223,7 @@ function useAuth() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [recovery, setRecovery] = useState(false);
+  const explicitSignOut = useRef(false);
   const [balance, setBalance] = useState(0);
   const sessionRef = useRef(null);
 
@@ -261,23 +262,52 @@ function useAuth() {
     const m = { current: true };
 
     // onAuthStateChange is the single source of truth for auth state.
-    // We register it first so it catches the INITIAL_SESSION event that
-    // Supabase fires synchronously when a session exists in localStorage.
     const { data: { subscription } } = getSB().auth.onAuthStateChange(async (event, s) => {
       if (!m.current) return;
       if (event === "PASSWORD_RECOVERY") { setRecovery(true); return; }
 
-      sessionRef.current = s;
-      setSession(s);
-
       if (s?.user) {
+        // Valid session — persist a backup so we can recover from spurious SIGNED_OUTs.
+        // Supabase wipes localStorage before firing SIGNED_OUT, so this is our only
+        // safety net for failed token-refresh events on iOS (visibilitychange → network
+        // briefly unavailable → Supabase fires SIGNED_OUT even though creds are fine).
+        try { localStorage.setItem('wf_sb', JSON.stringify({ at: s.access_token, rt: s.refresh_token })); } catch {}
+        sessionRef.current = s;
+        setSession(s);
         await loadProfile(s.user.id, m);
-      } else if (event === "SIGNED_OUT") {
-        // Only clear profile on an intentional sign-out, not on token-refresh
-        // failures or other transient null-session events (which would otherwise
-        // wipe the profile on page refresh when the proxy is slow).
+        if (m.current) setLoading(false);
+        return;
+      }
+
+      if (event === "SIGNED_OUT") {
+        if (explicitSignOut.current) {
+          // User clicked Sign Out — clear everything including backup.
+          explicitSignOut.current = false;
+          try { localStorage.removeItem('wf_sb'); } catch {}
+        } else {
+          // Possibly spurious (e.g., iOS network hiccup during background token refresh).
+          // Try to restore the session from our backup before giving up.
+          const backup = (() => { try { return JSON.parse(localStorage.getItem('wf_sb') || 'null'); } catch { return null; } })();
+          if (backup?.rt) {
+            const { error } = await getSB().auth.setSession({ access_token: backup.at || '', refresh_token: backup.rt });
+            if (!error) {
+              // Recovery succeeded — onAuthStateChange will fire again with the new session.
+              if (m.current) setLoading(false);
+              return;
+            }
+            // Recovery failed (token truly expired/revoked) — fall through to clear.
+            try { localStorage.removeItem('wf_sb'); } catch {}
+          }
+        }
+        // Clear state — either intentional sign-out or unrecoverable session loss.
+        sessionRef.current = null;
+        setSession(null);
         setProfile(null);
         setBalance(0);
+      } else {
+        // Any other event with no user (edge cases) — just sync session state.
+        sessionRef.current = s;
+        setSession(s);
       }
 
       if (m.current) setLoading(false);
@@ -311,9 +341,8 @@ function useAuth() {
   }, [session]);
 
   function signOut() {
-    // Clear Supabase's session from localStorage (no network call needed).
-    // Then do a full page reload — the cleanest possible sign-out on Safari PWA.
-    // On reload, Supabase finds no token in storage and starts unauthenticated.
+    explicitSignOut.current = true;
+    try { localStorage.removeItem('wf_sb'); } catch {}
     try { getSB().auth.signOut({ scope: 'local' }); } catch {}
     try {
       Object.keys(localStorage)
@@ -3088,12 +3117,9 @@ function WordFlip() {
           });
         }).catch(err => console.log("SW registration failed:", err));
 
-        // Listen for SW_UPDATED message from the service worker
-        navigator.serviceWorker.addEventListener("message", (event) => {
-          if (event.data && event.data.type === "SW_UPDATED") {
-            window.location.reload();
-          }
-        });
+        // SW_UPDATED fires when a new service worker activates.
+        // We no longer auto-reload here — the update banner (above) lets
+        // the user choose when to reload, so an active session isn't lost silently.
       });
     }
   </script>
