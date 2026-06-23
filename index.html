@@ -61,6 +61,11 @@ function getSB() {
   if (typeof supabase === 'undefined') throw new Error('Supabase SDK not loaded');
   if (!_sbClient) _sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     global: { fetch: sbProxyFetch },
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
   });
   return _sbClient;
 }
@@ -226,32 +231,39 @@ function useAuth() {
   const explicitSignOut = useRef(false);
   const [balance, setBalance] = useState(0);
   const sessionRef = useRef(null);
+  const profileRef = useRef(null);
 
   async function loadProfile(userId, mounted) {
-    try {
-      let p = await authGetProfile(userId);
-      // Auto-fix if profile row is missing OR exists but has no username.
-      // Happens for users who signed up before the trigger was added, or whose
-      // backfill row was created with a null username from missing metadata.
-      if (!p || !p.username) {
-        const { data: { user } } = await getSB().auth.getUser();
-        const meta = user?.user_metadata || {};
-        const uname = meta.username
-          || (user?.email || '').split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
-          || 'player';
-        const { data: created, error: ce } = await getSB()
-          .from('profiles')
-          .upsert({ id: userId, username: uname, display_name: uname }, { onConflict: 'id' })
-          .select('*')
-          .maybeSingle();
-        if (ce) console.error("Profile auto-create failed:", ce.message);
-        else p = created;
+    let p = null;
+    // Retry up to 4 times with backoff — on iOS cold-start the network may
+    // not be ready by the time INITIAL_SESSION fires, causing the first fetch
+    // to fail silently and leaving profile null (the "?" avatar bug).
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1000 * attempt));
+        p = await authGetProfile(userId);
+        // Auto-fix if profile row is missing OR exists but has no username.
+        if (!p || !p.username) {
+          const { data: { user } } = await getSB().auth.getUser();
+          const meta = user?.user_metadata || {};
+          const uname = meta.username
+            || (user?.email || '').split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
+            || 'player';
+          const { data: created, error: ce } = await getSB()
+            .from('profiles')
+            .upsert({ id: userId, username: uname, display_name: uname }, { onConflict: 'id' })
+            .select('*')
+            .maybeSingle();
+          if (ce) console.error("Profile auto-create failed:", ce.message);
+          else p = created;
+        }
+        break; // success
+      } catch (err) {
+        console.warn(`loadProfile attempt ${attempt + 1} failed:`, err.message || err);
       }
-      if (!mounted || (mounted.current === false)) return;
-      setProfile(p);
-    } catch (err) {
-      console.error("Profile load failed:", err);
     }
+    if (!mounted || (mounted.current === false)) return;
+    if (p) { profileRef.current = p; setProfile(p); }
     try {
       const b = await fetchWallet(userId);
       if (mounted && mounted.current !== false) setBalance(b);
@@ -301,6 +313,7 @@ function useAuth() {
         }
         // Clear state — either intentional sign-out or unrecoverable session loss.
         sessionRef.current = null;
+        profileRef.current = null;
         setSession(null);
         setProfile(null);
         setBalance(0);
@@ -320,7 +333,23 @@ function useAuth() {
       if (!s) setLoading(false); // session exists → onAuthStateChange handles it
     }).catch(() => { if (m.current) setLoading(false); });
 
-    return () => { m.current = false; subscription.unsubscribe(); };
+    // When the user comes back to the app (PWA foreground), re-attempt profile
+    // load if we have a session but the profile is still null. This catches the
+    // case where the initial INITIAL_SESSION profile fetch failed because iOS
+    // hadn't fully restored network connectivity yet.
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const s = sessionRef.current;
+      if (!s?.user || profileRef.current) return;
+      await loadProfile(s.user.id, m);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      m.current = false;
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -342,6 +371,7 @@ function useAuth() {
 
   function signOut() {
     explicitSignOut.current = true;
+    profileRef.current = null;
     try { localStorage.removeItem('wf_sb'); } catch {}
     try { getSB().auth.signOut({ scope: 'local' }); } catch {}
     try {
