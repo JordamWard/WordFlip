@@ -1066,10 +1066,114 @@ function FoundWordBanner({ words, wordResults }) {
   );
 }
 
+// ─── Reveal Phase (daily challenge intro) ────────────────────────────────────
+function RevealGrid({ words, tiles, onDone }) {
+  const [phase, setPhase] = useState('show'); // show | scramble | flip
+  const scrambleDur = useRef(600 + Math.floor(Math.random() * 600)); // 600–1199 ms, randomised
+
+  // Shuffled position of each tile in the final 4×4 grid
+  const shuffledPos = useMemo(() => {
+    const m = {};
+    tiles.forEach((t, i) => { m[t.id] = { r: Math.floor(i / 4), c: i % 4 }; });
+    return m;
+  }, [tiles]);
+
+  // Reveal → Scramble → hold → Flip → Done
+  useEffect(() => {
+    const t = setTimeout(() => setPhase('scramble'), 1000);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (phase !== 'scramble') return;
+    const t = setTimeout(() => setPhase('flip'), scrambleDur.current + 250);
+    return () => clearTimeout(t);
+  }, [phase]);
+  useEffect(() => {
+    if (phase !== 'flip') return;
+    const t = setTimeout(onDone, 480);
+    return () => clearTimeout(t);
+  }, [phase]);
+
+  // If user switches away (e.g. to screenshot on Android), skip reveal immediately
+  useEffect(() => {
+    const skip = () => { if (document.visibilityState !== 'visible') onDone(); };
+    document.addEventListener('visibilitychange', skip);
+    return () => document.removeEventListener('visibilitychange', skip);
+  }, []);
+
+  const COLORS = ['#00F5C4', '#FFB703', '#9B5DE5', '#4895EF'];
+  const isShow = phase === 'show';
+  const isFlipping = phase === 'flip';
+
+  return (
+    <div style={{
+      position:'relative', width:'100%', paddingBottom:'100%',
+      userSelect:'none', WebkitUserSelect:'none',
+    }}>
+      <div style={{position:'absolute', inset:0}}>
+        {tiles.map(tile => {
+          const [wi, li] = tile.id.split('-').map(Number);
+          const sp = shuffledPos[tile.id];
+          // During 'show': each tile visually appears at its sorted position (row=wi, col=li)
+          // but is actually laid out at its shuffled position (sp.r, sp.c).
+          // We shift it via transform so it looks sorted; removing the transform = scramble.
+          const dC = li - sp.c;
+          const dR = wi - sp.r;
+          const color = COLORS[wi];
+          return (
+            <div key={tile.id} style={{
+              position:'absolute',
+              left:`${sp.c * 25}%`, top:`${sp.r * 25}%`,
+              width:'25%', height:'25%',
+              padding:'clamp(2px,0.8vw,5px)',
+              boxSizing:'border-box',
+              transform: isShow ? `translate(${dC*100}%,${dR*100}%)` : 'translate(0,0)',
+              transition: phase==='scramble'
+                ? `transform ${scrambleDur.current}ms cubic-bezier(.4,0,.6,1)`
+                : 'none',
+            }}>
+              <div style={{width:'100%', height:'100%', perspective:'600px'}}>
+                <div style={{
+                  width:'100%', height:'100%',
+                  transformStyle:'preserve-3d',
+                  transition: isFlipping ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
+                  transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                }}>
+                  {/* Face-up: letter tinted by word colour */}
+                  <div style={{
+                    position:'absolute', inset:0, backfaceVisibility:'hidden',
+                    borderRadius:10, border:`2px solid ${color}99`,
+                    background:`${color}20`,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                  }}>
+                    <span style={{
+                      fontFamily:"'JetBrains Mono',monospace",
+                      fontWeight:800, fontSize:'clamp(0.9rem,4.5vw,1.5rem)',
+                      color:'#F5EDD6',
+                    }}>{tile.letter}</span>
+                  </div>
+                  {/* Face-down: card back */}
+                  <div style={{
+                    position:'absolute', inset:0, backfaceVisibility:'hidden',
+                    transform:'rotateY(180deg)', borderRadius:10,
+                    background:'linear-gradient(135deg,#162030 0%,#0D1B2A 100%)',
+                    border:'2px solid #2a4060',
+                  }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const cols = words.length===4?4:6;
   const [tiles] = useState(()=>buildTiles(words));
+  const [showReveal, setShowReveal] = useState(!!isDaily);
   const [flipped, setFlipped] = useState([]);
   const [found, setFound] = useState([]);
   const [foundTileIds, setFoundTileIds] = useState(new Set());
@@ -1225,6 +1329,10 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns }) {
         unlock(); // clears flipped, error, flash, releases lock
       },420);
     }
+  }
+
+  if (showReveal) {
+    return <RevealGrid words={words} tiles={tiles} onDone={() => setShowReveal(false)} />;
   }
 
   return (
@@ -3114,7 +3222,7 @@ function WordFlip() {
             <button onClick={()=>setScreen("menu")} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.8rem"}}>← Menu</button>
             <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
           </div>
-          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={16} />
+          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={16} isDaily />
         </div>
       )}
 
