@@ -783,6 +783,15 @@ function getDailyDone() {
 function setDailyDone(result) {
   localStorage.setItem(dateKey()+"_done", JSON.stringify(result));
 }
+function getDailyProgress() {
+  try { return JSON.parse(localStorage.getItem(dateKey()+"_progress")||"null"); } catch { return null; }
+}
+function saveDailyProgress(data) {
+  try { localStorage.setItem(dateKey()+"_progress", JSON.stringify(data)); } catch {}
+}
+function clearDailyProgress() {
+  try { localStorage.removeItem(dateKey()+"_progress"); } catch {}
+}
 
 // ─── Streak helpers (no login needed — stored per device) ─────────────────────
 function getStreak() {
@@ -1206,22 +1215,23 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 // ─── Game Board ───────────────────────────────────────────────────────────────
 function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const cols = words.length===4?4:6;
-  const [tiles] = useState(()=>buildTiles(words));
-  const [showReveal, setShowReveal] = useState(!!isDaily);
+  const savedProg = isDaily ? getDailyProgress() : null;
+  const [tiles] = useState(()=> savedProg ? savedProg.tiles : buildTiles(words));
+  const [showReveal, setShowReveal] = useState(!!isDaily && !savedProg);
   const [flipped, setFlipped] = useState([]);
-  const [found, setFound] = useState([]);
-  const [foundTileIds, setFoundTileIds] = useState(new Set());
+  const [found, setFound] = useState(()=> savedProg ? savedProg.found : []);
+  const [foundTileIds, setFoundTileIds] = useState(()=> savedProg ? new Set(savedProg.foundTileIds) : new Set());
   const [error, setError] = useState([]);
-  const [turns, setTurns] = useState(0);
+  const [turns, setTurns] = useState(()=> savedProg ? savedProg.turns : 0);
   const [hadError, setHadError] = useState(false);
-  const [wrongGuesses, setWrongGuesses] = useState(0);
-  const [wordResults, setWordResults] = useState({});
-  const [foundInOrderSet, setFoundInOrderSet] = useState(new Set());
-  const [foundBonusWords, setFoundBonusWords] = useState([]);
+  const [wrongGuesses, setWrongGuesses] = useState(()=> savedProg ? savedProg.wrongGuesses : 0);
+  const [wordResults, setWordResults] = useState(()=> savedProg ? savedProg.wordResults : {});
+  const [foundInOrderSet, setFoundInOrderSet] = useState(()=> savedProg ? new Set(savedProg.foundInOrderSet) : new Set());
+  const [foundBonusWords, setFoundBonusWords] = useState(()=> savedProg ? savedProg.foundBonusWords : []);
   const [lastBonusWord, setLastBonusWord] = useState("");
-  const [bonusPts, setBonusPts] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
-  const [started, setStarted] = useState(false);
+  const [bonusPts, setBonusPts] = useState(()=> savedProg ? savedProg.bonusPts : 0);
+  const [elapsed, setElapsed] = useState(()=> savedProg ? savedProg.elapsed : 0);
+  const [started, setStarted] = useState(()=> savedProg ? savedProg.started : false);
   const [flash, setFlash] = useState(null);
   const [outOfTurns, setOutOfTurns] = useState(false);
   const [floatingScores, setFloatingScores] = useState([]);
@@ -1246,11 +1256,33 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     return ()=>clearInterval(timerRef.current);
   },[started]);
 
+  // Auto-save daily challenge progress so the user can resume if they leave mid-game
+  useEffect(()=>{
+    if (!isDaily || hasEndedRef.current) return;
+    saveDailyProgress({
+      tiles, found, foundTileIds:[...foundTileIds], turns, wrongGuesses,
+      wordResults, foundInOrderSet:[...foundInOrderSet],
+      foundBonusWords, bonusPts, elapsed:stateRef.current.elapsed, started,
+    });
+  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started]);
+
+  // Periodically update saved elapsed so resume time is accurate (within ~5s)
+  useEffect(()=>{
+    if (!isDaily || !started) return;
+    const t = setInterval(()=>{
+      if (hasEndedRef.current) return;
+      const prog = getDailyProgress();
+      if (prog) saveDailyProgress({...prog, elapsed:stateRef.current.elapsed});
+    }, 5000);
+    return ()=>clearInterval(t);
+  },[isDaily, started]);
+
   // safeOnWin: can only fire once per game, always uses fresh state from stateRef
   function safeOnWin(extraProps={}) {
     if (hasEndedRef.current) return;
     hasEndedRef.current = true;
     clearInterval(timerRef.current);
+    if (isDaily) clearDailyProgress();
     setFlipped([]);
     setError([]);
     setFlash(null);
