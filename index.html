@@ -1570,6 +1570,9 @@ function LeaderboardView({ onBack, session, onSignIn }) {
     fetchLeaderboard(globalTab, dk).then(data => {
       setLeaderboard(data || []);
       setLbLoading(false);
+    }).catch(() => {
+      setLeaderboard([]);
+      setLbLoading(false);
     });
   }, [tab, globalTab]);
 
@@ -1587,6 +1590,9 @@ function LeaderboardView({ onBack, session, onSignIn }) {
         wrongGuesses: r.wrong_guesses || 0,
       }));
       setMyScores(mapped);
+      setMyLoading(false);
+    }).catch(() => {
+      setMyScores([]);
       setMyLoading(false);
     });
   }, [tab, session]);
