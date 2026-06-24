@@ -1558,44 +1558,58 @@ function LeaderboardView({ onBack, session, onSignIn }) {
   const [globalTab, setGlobalTab] = useState("daily");
   const [leaderboard, setLeaderboard] = useState([]);
   const [lbLoading, setLbLoading] = useState(false);
+  const [lbError, setLbError] = useState(false);
   const [myScores, setMyScores] = useState(null); // null = not yet loaded
   const [myLoading, setMyLoading] = useState(false);
+  const [myError, setMyError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const streak = getStreak();
 
   useEffect(() => {
     if (tab !== "global") return;
+    let cancelled = false;
     setLbLoading(true);
+    setLbError(false);
     const today = new Date();
     const dk = `${today.getFullYear()}-${today.getMonth()+1}-${today.getDate()}`;
-    fetchLeaderboard(globalTab, dk).then(data => {
-      setLeaderboard(data || []);
-      setLbLoading(false);
+    Promise.race([
+      fetchLeaderboard(globalTab, dk),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+    ]).then(data => {
+      if (!cancelled) { setLeaderboard(data || []); setLbLoading(false); }
     }).catch(() => {
-      setLeaderboard([]);
-      setLbLoading(false);
+      if (!cancelled) { setLeaderboard([]); setLbLoading(false); setLbError(true); }
     });
-  }, [tab, globalTab]);
+    return () => { cancelled = true; };
+  }, [tab, globalTab, retryKey]);
 
   // When signed in, "My Scores" comes from the account (follows you across devices)
   useEffect(() => {
     if (tab !== "personal" || !session?.user) return;
+    let cancelled = false;
     setMyLoading(true);
-    fetchMyScores(session.user.id).then(rows => {
-      const mapped = (rows || []).map(r => ({
-        ...dayKeyToDates(r.day_key),
-        score: r.score,
-        turns: r.turns,
-        elapsed: r.elapsed,
-        blocks: r.blocks,
-        wrongGuesses: r.wrong_guesses || 0,
-      }));
-      setMyScores(mapped);
-      setMyLoading(false);
+    setMyError(false);
+    Promise.race([
+      fetchMyScores(session.user.id),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+    ]).then(rows => {
+      if (!cancelled) {
+        const mapped = (rows || []).map(r => ({
+          ...dayKeyToDates(r.day_key),
+          score: r.score,
+          turns: r.turns,
+          elapsed: r.elapsed,
+          blocks: r.blocks,
+          wrongGuesses: r.wrong_guesses || 0,
+        }));
+        setMyScores(mapped);
+        setMyLoading(false);
+      }
     }).catch(() => {
-      setMyScores([]);
-      setMyLoading(false);
+      if (!cancelled) { setMyScores([]); setMyLoading(false); setMyError(true); }
     });
-  }, [tab, session]);
+    return () => { cancelled = true; };
+  }, [tab, session, retryKey]);
 
   // Signed in → account scores; signed out → local device history
   const history = session?.user ? (myScores || []) : getHistory();
@@ -1651,6 +1665,12 @@ function LeaderboardView({ onBack, session, onSignIn }) {
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading your scores...</p>
+          </div>
+        ) : myError ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
+            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.75rem"}}>Retry</button>
           </div>
         ) : history.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
@@ -1735,6 +1755,12 @@ function LeaderboardView({ onBack, session, onSignIn }) {
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading scores...</p>
+          </div>
+        ) : lbError ? (
+          <div style={{textAlign:"center",padding:"32px 0"}}>
+            <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
+            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.75rem"}}>Retry</button>
           </div>
         ) : leaderboard.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
