@@ -225,24 +225,27 @@ async function grantEarnedTokens(userId) {
 
 function useAuth() {
   const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
+  // Initialize profile and balance from localStorage immediately — no network needed.
+  // This is the primary fix for the "?" avatar on iOS cold start: the cached value
+  // shows instantly while the background refresh confirms/updates it.
+  const [profile, setProfile] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('wf_profile') || 'null'); } catch { return null; }
+  });
   const [loading, setLoading] = useState(true);
   const [recovery, setRecovery] = useState(false);
   const explicitSignOut = useRef(false);
-  const [balance, setBalance] = useState(0);
+  const [balance, setBalance] = useState(() => {
+    try { return parseInt(localStorage.getItem('wf_balance') || '0', 10); } catch { return 0; }
+  });
   const sessionRef = useRef(null);
   const profileRef = useRef(null);
 
   async function loadProfile(userId, mounted) {
     let p = null;
-    // Retry up to 4 times with backoff — on iOS cold-start the network may
-    // not be ready by the time INITIAL_SESSION fires, causing the first fetch
-    // to fail silently and leaving profile null (the "?" avatar bug).
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, 1000 * attempt));
         p = await authGetProfile(userId);
-        // Auto-fix if profile row is missing OR exists but has no username.
         if (!p || !p.username) {
           const { data: { user } } = await getSB().auth.getUser();
           const meta = user?.user_metadata || {};
@@ -257,21 +260,35 @@ function useAuth() {
           if (ce) console.error("Profile auto-create failed:", ce.message);
           else p = created;
         }
-        break; // success
+        break;
       } catch (err) {
         console.warn(`loadProfile attempt ${attempt + 1} failed:`, err.message || err);
       }
     }
     if (!mounted || (mounted.current === false)) return;
-    if (p) { profileRef.current = p; setProfile(p); }
+    if (p) {
+      profileRef.current = p;
+      setProfile(p);
+      try { localStorage.setItem('wf_profile', JSON.stringify(p)); } catch {}
+    }
     try {
       const b = await fetchWallet(userId);
-      if (mounted && mounted.current !== false) setBalance(b);
+      if (mounted && mounted.current !== false) {
+        setBalance(b);
+        try { localStorage.setItem('wf_balance', String(b)); } catch {}
+      }
     } catch {}
   }
 
   useEffect(() => {
     const m = { current: true };
+    // Sync profileRef with the value already loaded from localStorage cache.
+    try {
+      if (!profileRef.current) {
+        const cached = JSON.parse(localStorage.getItem('wf_profile') || 'null');
+        if (cached) profileRef.current = cached;
+      }
+    } catch {}
 
     // onAuthStateChange is the single source of truth for auth state.
     const { data: { subscription } } = getSB().auth.onAuthStateChange(async (event, s) => {
@@ -279,46 +296,44 @@ function useAuth() {
       if (event === "PASSWORD_RECOVERY") { setRecovery(true); return; }
 
       if (s?.user) {
-        // Valid session — persist a backup so we can recover from spurious SIGNED_OUTs.
-        // Supabase wipes localStorage before firing SIGNED_OUT, so this is our only
-        // safety net for failed token-refresh events on iOS (visibilitychange → network
-        // briefly unavailable → Supabase fires SIGNED_OUT even though creds are fine).
         try { localStorage.setItem('wf_sb', JSON.stringify({ at: s.access_token, rt: s.refresh_token })); } catch {}
         sessionRef.current = s;
         setSession(s);
-        await loadProfile(s.user.id, m);
-        if (m.current) setLoading(false);
+        // If we already have cached profile data, stop the spinner immediately and
+        // refresh in the background. Otherwise wait for the first load to finish.
+        if (profileRef.current) {
+          if (m.current) setLoading(false);
+          await loadProfile(s.user.id, m);
+        } else {
+          await loadProfile(s.user.id, m);
+          if (m.current) setLoading(false);
+        }
         return;
       }
 
       if (event === "SIGNED_OUT") {
         if (explicitSignOut.current) {
-          // User clicked Sign Out — clear everything including backup.
           explicitSignOut.current = false;
           try { localStorage.removeItem('wf_sb'); } catch {}
         } else {
-          // Possibly spurious (e.g., iOS network hiccup during background token refresh).
-          // Try to restore the session from our backup before giving up.
           const backup = (() => { try { return JSON.parse(localStorage.getItem('wf_sb') || 'null'); } catch { return null; } })();
           if (backup?.rt) {
             const { error } = await getSB().auth.setSession({ access_token: backup.at || '', refresh_token: backup.rt });
             if (!error) {
-              // Recovery succeeded — onAuthStateChange will fire again with the new session.
               if (m.current) setLoading(false);
               return;
             }
-            // Recovery failed (token truly expired/revoked) — fall through to clear.
             try { localStorage.removeItem('wf_sb'); } catch {}
           }
         }
-        // Clear state — either intentional sign-out or unrecoverable session loss.
+        // Clear all state and caches on sign-out.
         sessionRef.current = null;
         profileRef.current = null;
         setSession(null);
         setProfile(null);
         setBalance(0);
+        try { localStorage.removeItem('wf_profile'); localStorage.removeItem('wf_balance'); } catch {}
       } else {
-        // Any other event with no user (edge cases) — just sync session state.
         sessionRef.current = s;
         setSession(s);
       }
@@ -373,6 +388,7 @@ function useAuth() {
     explicitSignOut.current = true;
     profileRef.current = null;
     try { localStorage.removeItem('wf_sb'); } catch {}
+    try { localStorage.removeItem('wf_profile'); localStorage.removeItem('wf_balance'); } catch {}
     try { getSB().auth.signOut({ scope: 'local' }); } catch {}
     try {
       Object.keys(localStorage)
