@@ -1160,18 +1160,23 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
                       transition: isFlipping ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
                       transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
                     }}>
-                      {/* Face-up: identical to real tile letter face */}
+                      {/* Face-up: gold selected-tile look, same as tapped tiles in game */}
                       <div style={{
                         position:'absolute',inset:0,backfaceVisibility:'hidden',
-                        background:'#F5EDD6',borderRadius:10,border:'2px solid #c8bca0',
-                        display:'flex',alignItems:'center',justifyContent:'center',
-                        boxShadow:'0 2px 8px #00000044',
+                        background:'linear-gradient(135deg,#FFB703,#ffcf40)',
+                        borderRadius:10,border:'2.5px solid #FFB703',
+                        display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+                        boxShadow:'0 0 16px #FFB70388',
                       }}>
                         <span style={{
                           fontFamily:"'JetBrains Mono',monospace",
                           fontSize:'clamp(1.1rem,3.5vw,1.8rem)',fontWeight:800,
-                          color:'#0D1B2A',letterSpacing:'0.05em',
+                          color:'#3d2800',letterSpacing:'0.05em',
                         }}>{tile.letter}</span>
+                        <span style={{
+                          position:'absolute',bottom:4,right:6,
+                          fontSize:'0.55em',fontWeight:700,opacity:0.4,color:'#3d2800',
+                        }}>{li+1}</span>
                       </div>
                       {/* Face-down: identical to real tile card back */}
                       <div style={{
