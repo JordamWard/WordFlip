@@ -1067,7 +1067,7 @@ function FoundWordBanner({ words, wordResults }) {
 }
 
 // ─── Reveal Phase (daily challenge intro) ────────────────────────────────────
-function RevealGrid({ words, tiles, onDone }) {
+function RevealGrid({ words, tiles, maxTurns, onDone }) {
   const [phase, setPhase] = useState('show'); // show | scramble | flip
   const scrambleDur = useRef(600 + Math.floor(Math.random() * 600)); // 600–1199 ms, randomised
 
@@ -1101,69 +1101,98 @@ function RevealGrid({ words, tiles, onDone }) {
     return () => document.removeEventListener('visibilitychange', skip);
   }, []);
 
-  const COLORS = ['#00F5C4', '#FFB703', '#9B5DE5', '#4895EF'];
   const isShow = phase === 'show';
   const isFlipping = phase === 'flip';
 
   return (
-    <div style={{
-      position:'relative', width:'100%', paddingBottom:'100%',
-      userSelect:'none', WebkitUserSelect:'none',
-    }}>
-      <div style={{position:'absolute', inset:0}}>
-        {tiles.map(tile => {
-          const [wi, li] = tile.id.split('-').map(Number);
-          const sp = shuffledPos[tile.id];
-          // During 'show': each tile visually appears at its sorted position (row=wi, col=li)
-          // but is actually laid out at its shuffled position (sp.r, sp.c).
-          // We shift it via transform so it looks sorted; removing the transform = scramble.
-          const dC = li - sp.c;
-          const dR = wi - sp.r;
-          const color = COLORS[wi];
-          return (
-            <div key={tile.id} style={{
-              position:'absolute',
-              left:`${sp.c * 25}%`, top:`${sp.r * 25}%`,
-              width:'25%', height:'25%',
-              padding:'clamp(2px,0.8vw,5px)',
-              boxSizing:'border-box',
-              transform: isShow ? `translate(${dC*100}%,${dR*100}%)` : 'translate(0,0)',
-              transition: phase==='scramble'
-                ? `transform ${scrambleDur.current}ms cubic-bezier(.4,0,.6,1)`
-                : 'none',
-            }}>
-              <div style={{width:'100%', height:'100%', perspective:'600px'}}>
-                <div style={{
-                  width:'100%', height:'100%',
-                  transformStyle:'preserve-3d',
-                  transition: isFlipping ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
-                  transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
+    <div style={{width:"100%",maxWidth:480,margin:"0 auto"}}>
+      {/* Score header — static initial values, matches GameBoard exactly */}
+      <div style={{marginBottom:8}}>
+        <div style={{position:"relative",textAlign:"center",marginBottom:6}}>
+          <span style={{fontFamily:"'Fraunces',serif",fontSize:"clamp(1.4rem,5vw,2rem)",fontWeight:900,color:"#FFB703",display:"inline-block"}}>0</span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginLeft:4}}>pts</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
+            Turns: <strong style={{color:"#FFB703"}}>{maxTurns}</strong> left
+          </span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
+            Found: <strong style={{color:"#00F5C4"}}>0/{words.length}</strong>
+          </span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.78rem",color:"#7a9cc0"}}>⏱ 0:00</span>
+        </div>
+      </div>
+      <FoundWordBanner words={words} wordResults={{}} />
+      {/* Empty flash message area — same height as real board */}
+      <div style={{height:28,marginBottom:4}} />
+      {/* Tile board — same container as real game board */}
+      <div style={{
+        padding:"clamp(4px,2vw,12px)",
+        background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
+        boxShadow:"0 4px 32px #00000055",
+      }}>
+        <div style={{position:'relative',paddingBottom:'100%',userSelect:'none',WebkitUserSelect:'none'}}>
+          <div style={{position:'absolute',inset:0}}>
+            {tiles.map(tile => {
+              const [wi, li] = tile.id.split('-').map(Number);
+              const sp = shuffledPos[tile.id];
+              // During 'show': tile visually appears at sorted pos (row=wi, col=li)
+              // but is laid out at its shuffled pos (sp.r, sp.c).
+              // Offset via transform so it looks sorted; removing it = scramble.
+              const dC = li - sp.c;
+              const dR = wi - sp.r;
+              return (
+                <div key={tile.id} style={{
+                  position:'absolute',
+                  left:`${sp.c * 25}%`, top:`${sp.r * 25}%`,
+                  width:'25%', height:'25%',
+                  padding:'clamp(2px,0.75vw,5px)',
+                  boxSizing:'border-box',
+                  transform: isShow ? `translate(${dC*100}%,${dR*100}%)` : 'translate(0,0)',
+                  transition: phase==='scramble'
+                    ? `transform ${scrambleDur.current}ms cubic-bezier(.4,0,.6,1)`
+                    : 'none',
                 }}>
-                  {/* Face-up: letter tinted by word colour */}
-                  <div style={{
-                    position:'absolute', inset:0, backfaceVisibility:'hidden',
-                    borderRadius:10, border:`2px solid ${color}99`,
-                    background:`${color}20`,
-                    display:'flex', alignItems:'center', justifyContent:'center',
-                  }}>
-                    <span style={{
-                      fontFamily:"'JetBrains Mono',monospace",
-                      fontWeight:800, fontSize:'clamp(0.9rem,4.5vw,1.5rem)',
-                      color:'#F5EDD6',
-                    }}>{tile.letter}</span>
+                  <div style={{width:'100%',height:'100%',perspective:'600px'}}>
+                    <div style={{
+                      width:'100%',height:'100%',
+                      transformStyle:'preserve-3d',
+                      transition: isFlipping ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
+                      transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                    }}>
+                      {/* Face-up: identical to real tile letter face */}
+                      <div style={{
+                        position:'absolute',inset:0,backfaceVisibility:'hidden',
+                        background:'#F5EDD6',borderRadius:10,border:'2px solid #c8bca0',
+                        display:'flex',alignItems:'center',justifyContent:'center',
+                        boxShadow:'0 2px 8px #00000044',
+                      }}>
+                        <span style={{
+                          fontFamily:"'JetBrains Mono',monospace",
+                          fontSize:'clamp(1.1rem,3.5vw,1.8rem)',fontWeight:800,
+                          color:'#0D1B2A',letterSpacing:'0.05em',
+                        }}>{tile.letter}</span>
+                      </div>
+                      {/* Face-down: identical to real tile card back */}
+                      <div style={{
+                        position:'absolute',inset:0,backfaceVisibility:'hidden',
+                        transform:'rotateY(180deg)',borderRadius:10,
+                        background:'linear-gradient(135deg,#162030 0%,#0D1B2A 100%)',
+                        border:'2px solid #2a4060',
+                        display:'flex',alignItems:'center',justifyContent:'center',
+                        boxShadow:'0 2px 8px #00000066',
+                        backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px)`,
+                        backgroundSize:'12px 12px',
+                      }}>
+                        <span style={{color:'#1e3048',fontSize:'1.4em',fontWeight:900}}>✦</span>
+                      </div>
+                    </div>
                   </div>
-                  {/* Face-down: card back */}
-                  <div style={{
-                    position:'absolute', inset:0, backfaceVisibility:'hidden',
-                    transform:'rotateY(180deg)', borderRadius:10,
-                    background:'linear-gradient(135deg,#162030 0%,#0D1B2A 100%)',
-                    border:'2px solid #2a4060',
-                  }} />
                 </div>
-              </div>
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1332,7 +1361,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   }
 
   if (showReveal) {
-    return <RevealGrid words={words} tiles={tiles} onDone={() => setShowReveal(false)} />;
+    return <RevealGrid words={words} tiles={tiles} maxTurns={maxTurns} onDone={() => setShowReveal(false)} />;
   }
 
   return (
