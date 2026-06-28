@@ -123,6 +123,26 @@ async function authGetSession() {
   return session;
 }
 
+// Guarantee a non-expired access token before a critical write.
+// iOS/WebKit freezes background timers, so the library's hourly auto-refresh
+// often hasn't run when the user reopens a day-old session and plays. Without
+// this, score/token writes go out with an expired JWT and are silently rejected
+// until the next sign-in. Returns the (possibly refreshed) session, or null.
+async function ensureFreshSession() {
+  try {
+    const sb = getSB();
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return null;
+    const expiresAtMs = (session.expires_at || 0) * 1000;
+    // Refresh if already expired or expiring within the next 2 minutes.
+    if (Date.now() > expiresAtMs - 120000) {
+      const { data, error } = await sb.auth.refreshSession();
+      if (!error && data?.session) return data.session;
+    }
+    return session;
+  } catch { return null; }
+}
+
 async function authGetProfile(userId) {
   // maybeSingle (not single) so a transient 0-row response doesn't throw; retry once
   let { data, error } = await getSB().from('profiles').select('*').eq('id', userId).maybeSingle();
@@ -355,7 +375,12 @@ function useAuth() {
     const handleVisibilityChange = async () => {
       if (document.visibilityState !== 'visible') return;
       const s = sessionRef.current;
-      if (!s?.user || profileRef.current) return;
+      if (!s?.user) return;
+      // Proactively refresh the token on foreground — iOS freezes the library's
+      // background auto-refresh timer, so a day-old session can hold an expired
+      // JWT that silently breaks the first score/token write after reopening.
+      ensureFreshSession();
+      if (profileRef.current) return;
       await loadProfile(s.user.id, m);
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -3187,8 +3212,12 @@ function WordFlip() {
         return r==="green" ? "🟩" : r==="yellow" ? "🟨" : "🟥";
       }).join("");
       if (session?.user) {
-        submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
-        grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
+        // Refresh the token first so a day-old session's expired JWT doesn't
+        // cause the write to be silently rejected (it would only land on next sign-in).
+        ensureFreshSession().then(() => {
+          submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
+          grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
+        });
       }
       saveToHistory({
         dayKey: dateKey(),
@@ -3205,7 +3234,8 @@ function WordFlip() {
     } else if (mode==="solo") {
       // Repeatable grant — unique reason each game so it always pays out
       if (session?.user) {
-        grantTokens(TOKENS.SOLO, 'solo-' + Date.now()).then(refreshWallet);
+        ensureFreshSession().then(() =>
+          grantTokens(TOKENS.SOLO, 'solo-' + Date.now()).then(refreshWallet));
       }
     }
     setScreen("win");
