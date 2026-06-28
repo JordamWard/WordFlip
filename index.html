@@ -380,7 +380,11 @@ function useAuth() {
   const refreshWallet = useCallback(async () => {
     const s = sessionRef.current || await authGetSession();
     if (s?.user) {
-      try { setBalance(await fetchWallet(s.user.id)); } catch {}
+      try {
+        const b = await fetchWallet(s.user.id);
+        setBalance(b);
+        try { localStorage.setItem('wf_balance', String(b)); } catch {}
+      } catch {}
     }
   }, [session]);
 
@@ -1729,7 +1733,9 @@ function LeaderboardView({ onBack, session, onSignIn }) {
   useEffect(() => {
     if (tab !== "personal" || !session?.user) return;
     let cancelled = false;
-    setMyLoading(true);
+    // Only show the loading spinner on first load (no data yet); subsequent
+    // re-fetches (e.g. after a session token refresh) refresh silently in bg.
+    if (myScores === null) setMyLoading(true);
     setMyError(false);
     Promise.race([
       fetchMyScores(session.user.id),
@@ -1751,7 +1757,7 @@ function LeaderboardView({ onBack, session, onSignIn }) {
       if (!cancelled) { setMyScores([]); setMyLoading(false); setMyError(true); }
     });
     return () => { cancelled = true; };
-  }, [tab, session, retryKey]);
+  }, [tab, session?.user?.id, retryKey]);
 
   // Signed in → account scores; signed out → local device history
   const history = session?.user ? (myScores || []) : getHistory();
