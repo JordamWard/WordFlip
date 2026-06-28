@@ -1097,8 +1097,8 @@ function FoundWordBanner({ words, wordResults }) {
 
 // ─── Reveal Phase (daily challenge intro) ────────────────────────────────────
 function RevealGrid({ words, tiles, maxTurns, onDone }) {
-  const [phase, setPhase] = useState('show'); // show | scramble | flip
-  const scrambleDur = useRef(600 + Math.floor(Math.random() * 600)); // 600–1199 ms, randomised
+  const [phase, setPhase] = useState('show'); // show | flip | shuffle
+  const SHUFFLE_MS = 650;
 
   // Shuffled position of each tile in the final 4×4 grid
   const shuffledPos = useMemo(() => {
@@ -1107,19 +1107,21 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
     return m;
   }, [tiles]);
 
-  // Reveal → Scramble → hold → Flip → Done
+  // Show words (face up, in order) → flip face down in place → shuffle while
+  // face down → done. The board is never face-up while scrambled, so there's
+  // no frame to screenshot for the answers.
   useEffect(() => {
-    const t = setTimeout(() => setPhase('scramble'), 1000);
+    const t = setTimeout(() => setPhase('flip'), 1100);
     return () => clearTimeout(t);
   }, []);
   useEffect(() => {
-    if (phase !== 'scramble') return;
-    const t = setTimeout(() => setPhase('flip'), scrambleDur.current + 250);
+    if (phase !== 'flip') return;
+    const t = setTimeout(() => setPhase('shuffle'), 520); // let the flip finish
     return () => clearTimeout(t);
   }, [phase]);
   useEffect(() => {
-    if (phase !== 'flip') return;
-    const t = setTimeout(onDone, 480);
+    if (phase !== 'shuffle') return;
+    const t = setTimeout(onDone, SHUFFLE_MS + 120);
     return () => clearTimeout(t);
   }, [phase]);
 
@@ -1130,8 +1132,9 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
     return () => document.removeEventListener('visibilitychange', skip);
   }, []);
 
-  const isShow = phase === 'show';
-  const isFlipping = phase === 'flip';
+  // Tiles appear in word order during show + flip, then slide to shuffled spots.
+  const sorted = phase === 'show' || phase === 'flip';
+  const faceDown = phase === 'flip' || phase === 'shuffle';
 
   return (
     <div style={{width:"100%",maxWidth:480,margin:"0 auto"}}>
@@ -1177,17 +1180,17 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
                   width:'25%', height:'25%',
                   padding:'clamp(2px,0.75vw,5px)',
                   boxSizing:'border-box',
-                  transform: isShow ? `translate(${dC*100}%,${dR*100}%)` : 'translate(0,0)',
-                  transition: phase==='scramble'
-                    ? `transform ${scrambleDur.current}ms cubic-bezier(.4,0,.6,1)`
+                  transform: sorted ? `translate(${dC*100}%,${dR*100}%)` : 'translate(0,0)',
+                  transition: phase==='shuffle'
+                    ? `transform ${SHUFFLE_MS}ms cubic-bezier(.4,0,.6,1)`
                     : 'none',
                 }}>
                   <div style={{width:'100%',height:'100%',perspective:'600px'}}>
                     <div style={{
                       width:'100%',height:'100%',
                       transformStyle:'preserve-3d',
-                      transition: isFlipping ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
-                      transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                      transition: phase==='flip' ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
+                      transform: faceDown ? 'rotateY(180deg)' : 'rotateY(0deg)',
                     }}>
                       {/* Face-up: gold selected-tile look, same as tapped tiles in game */}
                       <div style={{
@@ -1263,6 +1266,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const processingRef = useRef(false); // hard lock during 4-tile processing
   const flippedRef = useRef([]);       // always-current mirror of flipped state
   const foundTileIdsRef = useRef(new Set()); // always-current mirror
+  const dismissTimerRef = useRef(null);    // auto-flip-back timer for a wrong guess
+  const awaitingDismissRef = useRef(false); // true while a wrong guess lingers (tap to dismiss)
 
   useEffect(()=>{
     if (!started) return;
@@ -1313,10 +1318,18 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
 
   function unlock() {
     processingRef.current = false;
+    awaitingDismissRef.current = false;
+    clearTimeout(dismissTimerRef.current);
     flippedRef.current = [];
     setFlipped([]);
     setError([]);
     setFlash(null);
+  }
+
+  // Tap anywhere to flip a lingering wrong guess back early.
+  function dismissGuess() {
+    if (!awaitingDismissRef.current) return;
+    unlock();
   }
 
   function handleTileClick(tile) {
@@ -1363,10 +1376,14 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
           setTimeout(()=>unlock(), 1200);
           return;
         }
-        // Bad guess
+        // Bad guess — linger so the player can read the four letters, then flip
+        // back. They can tap anywhere to dismiss sooner (see dismissGuess).
         setError(newFlipped); setFlash("bad"); setHadError(true); setWrongGuesses(g=>g+1);
         soundManager.wrong();
-        setTimeout(()=>unlock(), 700);
+        // Arm tap-to-dismiss after a short grace period so the tap that made
+        // this 4th flip doesn't instantly dismiss it.
+        setTimeout(()=>{ awaitingDismissRef.current = true; }, 400);
+        dismissTimerRef.current = setTimeout(()=>unlock(), 2200);
         return;
       }
 
@@ -1399,7 +1416,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   }
 
   return (
-    <div style={{width:"100%",maxWidth:480,margin:"0 auto"}}>
+    <div style={{width:"100%",maxWidth:480,margin:"0 auto"}} onClick={dismissGuess}>
       {(() => {
         const turnsLeft = maxTurns ? maxTurns - turns : null;
         const turnsDanger = turnsLeft !== null && turnsLeft <= 3;
