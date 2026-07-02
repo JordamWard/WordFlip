@@ -1761,7 +1761,9 @@ function LeaderboardView({ onBack, session, onSignIn }) {
     const today = new Date();
     const dk = `${today.getFullYear()}-${today.getMonth()+1}-${today.getDate()}`;
     Promise.race([
-      fetchLeaderboard(globalTab, dk),
+      // Refresh an expired JWT first — signed-in reads 401 otherwise (the
+      // "leaderboards not loading after being signed in a while" bug).
+      ensureFreshSession().then(() => fetchLeaderboard(globalTab, dk)),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
     ]).then(data => {
       if (!cancelled) { setLeaderboard(data || []); setLbLoading(false); }
@@ -1780,7 +1782,7 @@ function LeaderboardView({ onBack, session, onSignIn }) {
     if (myScores === null) setMyLoading(true);
     setMyError(false);
     Promise.race([
-      fetchMyScores(session.user.id),
+      ensureFreshSession().then(() => fetchMyScores(session.user.id)),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
     ]).then(rows => {
       if (!cancelled) {
@@ -2208,11 +2210,26 @@ function OnlineScreen({ onBack }) {
     if (phase !== 'game' || !gs?.turn_expires_at) return;
     clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
-      const left = Math.max(0, Math.round((new Date(gs.turn_expires_at) - Date.now()) / 1000));
-      setTimeLeft(left);
-      if (left <= 0 && gsRef.current?.current_player_id === myId && !processingRef.current) {
+      const raw = Math.round((new Date(gs.turn_expires_at) - Date.now()) / 1000);
+      setTimeLeft(Math.max(0, raw));
+      if (processingRef.current) return;
+      const cur = gsRef.current;
+      if (!cur) return;
+      if (raw <= 0 && cur.current_player_id === myId) {
         clearInterval(timerRef.current);
-        autoPassTurn();
+        passTurn(cur);
+      } else if (raw <= 0 && cur.current_player_id !== myId) {
+        // Takeover: if the current player closed the app, their device can't
+        // pass its own turn and the game would hang at 0:00 forever. After a
+        // grace period — staggered by turn order so clients don't stampede —
+        // another client advances the turn. passTurn's turn_number guard means
+        // only the first writer wins; the rest are no-ops.
+        const sorted = [...playersRef.current].sort((a,b)=>a.turn_order-b.turn_order);
+        const myIdx = Math.max(0, sorted.findIndex(p => p.id === myId));
+        if (raw <= -(4 + myIdx * 2)) {
+          clearInterval(timerRef.current);
+          passTurn(cur);
+        }
       }
     }, 500);
     return () => clearInterval(timerRef.current);
@@ -2223,6 +2240,57 @@ function OnlineScreen({ onBack }) {
     const idx = sorted.findIndex(p => p.id === currentId);
     return sorted[(idx + 1) % sorted.length];
   }
+
+  // Full re-sync from the DB: covers realtime events missed while the WebSocket
+  // was down (iOS kills it whenever Safari is backgrounded). Applies the same
+  // transitions the realtime handlers would have.
+  async function refreshRoomState(roomId) {
+    try {
+      const db = getSB();
+      const [{ data: r }, { data: pl }, { data: gsData }] = await Promise.all([
+        db.from('rooms').select('*').eq('id', roomId).single(),
+        db.from('players').select('*').eq('room_id', roomId).order('turn_order'),
+        db.from('game_state').select('*').eq('room_id', roomId).maybeSingle(),
+      ]);
+      if (pl) { setPlayers(pl); playersRef.current = pl; }
+      if (gsData) {
+        setGs(gsData); gsRef.current = gsData;
+        const ids = new Set();
+        (gsData.found_words || []).forEach(fw => (fw.tile_ids || []).forEach(id => ids.add(id)));
+        foundTileIdsRef.current = ids;
+      }
+      if (r) {
+        setRoom(r); roomRef.current = r;
+        if (r.status === 'playing' && phaseRef.current === 'lobby') {
+          setTiles(buildTilesSeeded(r.words, r.shuffle_seed));
+          setPhase('game'); phaseRef.current = 'game';
+        }
+        if (r.status === 'done' && phaseRef.current === 'game') {
+          setPhase('done'); phaseRef.current = 'done';
+        }
+      }
+    } catch(e) { console.error('refreshRoomState:', e); }
+  }
+
+  // Re-sync + resubscribe when the app returns to the foreground. iOS drops the
+  // realtime WebSocket on background; without this, guests stay stuck in the
+  // lobby after the host starts, and turn changes stop arriving.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const r = roomRef.current;
+      if (!r || (phaseRef.current !== 'lobby' && phaseRef.current !== 'game')) return;
+      ensureFreshSession();
+      refreshRoomState(r.id);
+      const st = channelRef.current?.state;
+      if (st !== 'joined' && st !== 'joining') {
+        leaveCurrentChannel();
+        subscribeToRoom(r.id);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   function subscribeToRoom(roomId) {
     const channel = getSB()
@@ -2273,15 +2341,33 @@ function OnlineScreen({ onBack }) {
           setRemoteFlips(prev => new Set([...prev, payload.tileId]));
         }
       })
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          // Catch anything that happened between connect attempts
+          refreshRoomState(roomId);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          // Retry unless we intentionally left this room
+          if (channelRef.current === channel &&
+              (phaseRef.current === 'lobby' || phaseRef.current === 'game')) {
+            setTimeout(() => {
+              if (channelRef.current !== channel) return;
+              leaveCurrentChannel();
+              subscribeToRoom(roomId);
+            }, 2000);
+          }
+        }
+      });
     channelRef.current = channel;
   }
 
   // Shared cleanup: unsubscribe from any active channel before entering a new room
   function leaveCurrentChannel() {
-    if (channelRef.current) {
-      try { getSB().removeChannel(channelRef.current); } catch(e) {}
+    const ch = channelRef.current;
+    if (ch) {
+      // Null the ref first: the CLOSED status callback fires during removal and
+      // must see this as an intentional leave, not a dropped connection to retry.
       channelRef.current = null;
+      try { getSB().removeChannel(ch); } catch(e) {}
     }
   }
 
@@ -2302,6 +2388,9 @@ function OnlineScreen({ onBack }) {
     localStorage.setItem('wf_online_name', playerName.trim());
     leaveCurrentChannel();
     try {
+      // Signed-in users attach their JWT to every REST call; a day-old expired
+      // token would make all of these 401. Refresh it first (no-op when signed out).
+      await ensureFreshSession();
       const db = getSB();
       // Close any stale waiting rooms this player hosted so they don't linger
       await db.from('rooms').update({ status: 'done' }).eq('host_id', myId).eq('status', 'waiting');
@@ -2337,6 +2426,9 @@ function OnlineScreen({ onBack }) {
     localStorage.setItem('wf_online_name', playerName.trim());
     leaveCurrentChannel();
     try {
+      // Same as createRoom: make sure a signed-in user's JWT isn't expired,
+      // or every call below 401s ("it kept not letting us join").
+      await ensureFreshSession();
       const db = getSB();
       // Fetch room regardless of status so we can give specific errors
       const { data: r, error: re } = await db.from('rooms').select('*').eq('code', code).single();
@@ -2467,7 +2559,11 @@ function OnlineScreen({ onBack }) {
     setTimeout(async () => {
       try {
         const gameOver = newFoundWords.length >= words.length;
-        await db.from('players').update({ score: (myPlayerData?.score || 0) + pts }).eq('id', myId);
+        // Read my current score fresh — the local players list can be stale if a
+        // realtime event was missed, and score = stale + pts would drop points.
+        const { data: freshMe } = await db.from('players').select('score').eq('id', myId).maybeSingle();
+        const baseScore = freshMe?.score ?? myPlayerData?.score ?? 0;
+        await db.from('players').update({ score: baseScore + pts }).eq('id', myId);
         await db.from('game_state').update({
           found_words: newFoundWords, turn_number: (currentGs.turn_number || 0) + 1,
           current_player_id: myId,
@@ -2479,21 +2575,27 @@ function OnlineScreen({ onBack }) {
     }, 500);
   }
 
-  async function autoPassTurn() {
+  // Advance an expired turn. Works both for my own turn and as a takeover when
+  // the current player disconnected. The .eq('turn_number') guard means only
+  // the first client's write lands; concurrent attempts match zero rows.
+  async function passTurn(fromGs) {
     processingRef.current = true;
-    const currentGs = gsRef.current; const currentRoom = roomRef.current;
-    if (!currentGs || !currentRoom) { processingRef.current = false; return; }
+    const currentRoom = roomRef.current;
+    if (!fromGs || !currentRoom) { processingRef.current = false; return; }
     const now = new Date();
     const expires = new Date(now.getTime() + 60000);
-    const nextP = getNextPlayer(playersRef.current, myId);
-    flippedRef.current = []; setFlipped([]);
+    const nextP = getNextPlayer(playersRef.current, fromGs.current_player_id);
+    if (fromGs.current_player_id === myId) { flippedRef.current = []; setFlipped([]); }
     try {
       await getSB().from('game_state').update({
-        turn_number: (currentGs.turn_number || 0) + 1,
+        turn_number: (fromGs.turn_number || 0) + 1,
         current_player_id: nextP.id,
         turn_started_at: now.toISOString(), turn_expires_at: expires.toISOString(),
-      }).eq('room_id', currentRoom.id).eq('current_player_id', myId); // idempotent guard
-    } catch(e) { console.error('autoPassTurn:', e); }
+      }).eq('room_id', currentRoom.id).eq('turn_number', fromGs.turn_number || 0);
+      // Pull the result back immediately in case our realtime channel is down
+      // (otherwise we'd wait on an event that never arrives).
+      await refreshRoomState(currentRoom.id);
+    } catch(e) { console.error('passTurn:', e); }
     processingRef.current = false;
   }
 
@@ -3175,7 +3277,10 @@ function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
 }
 
 function WordFlip() {
-  const [screen,setScreen] = useState("menu");
+  // Deep link: opening an invite link (?room=CODE) lands directly in Online Play,
+  // where the room code is pre-filled and auto-join fires if a name is saved.
+  const [screen,setScreen] = useState(() =>
+    new URLSearchParams(window.location.search).get('room') ? "multi-online" : "menu");
   const [soloLarge,setSoloLarge] = useState(false);
   const [winResult,setWinResult] = useState(null);
   const [winMode,setWinMode] = useState("");
