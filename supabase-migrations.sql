@@ -111,3 +111,83 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.spend_tokens(integer, text) TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 7. ACCOUNT-LEVEL INVENTORY: power-ups follow the account across devices.
+--    buy_item atomically charges the wallet AND grants the item (one
+--    transaction — coins can't be spent without receiving the item).
+--    use_item atomically consumes one; CHECKs keep counts non-negative.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.inventories (
+  user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  hint integer NOT NULL DEFAULT 0 CHECK (hint >= 0),
+  xray integer NOT NULL DEFAULT 0 CHECK (xray >= 0),
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.inventories ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "inventories_select" ON public.inventories;
+CREATE POLICY "inventories_select" ON public.inventories FOR SELECT USING (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION public.buy_item(p_item text, p_price integer)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_new_balance integer;
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray') THEN RAISE EXCEPTION 'unknown item'; END IF;
+  IF p_price IS NULL OR p_price < 0 THEN RAISE EXCEPTION 'invalid price'; END IF;
+
+  IF p_price > 0 THEN
+    UPDATE public.wallets
+       SET balance = balance - p_price, updated_at = now()
+     WHERE user_id = v_uid AND balance >= p_price
+     RETURNING balance INTO v_new_balance;
+    IF v_new_balance IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+    INSERT INTO public.token_transactions (user_id, amount, reason)
+    VALUES (v_uid, -p_price, 'buy-' || p_item);
+  END IF;
+
+  INSERT INTO public.inventories (user_id, hint, xray)
+  VALUES (v_uid,
+          CASE WHEN p_item = 'hint' THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'xray' THEN 1 ELSE 0 END)
+  ON CONFLICT (user_id) DO UPDATE SET
+    hint = inventories.hint + CASE WHEN p_item = 'hint' THEN 1 ELSE 0 END,
+    xray = inventories.xray + CASE WHEN p_item = 'xray' THEN 1 ELSE 0 END,
+    updated_at = now();
+
+  SELECT CASE WHEN p_item = 'hint' THEN hint ELSE xray END
+    INTO v_count FROM public.inventories WHERE user_id = v_uid;
+  RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.use_item(p_item text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray') THEN RAISE EXCEPTION 'unknown item'; END IF;
+
+  IF p_item = 'hint' THEN
+    UPDATE public.inventories SET hint = hint - 1, updated_at = now()
+     WHERE user_id = v_uid AND hint >= 1 RETURNING hint INTO v_count;
+  ELSE
+    UPDATE public.inventories SET xray = xray - 1, updated_at = now()
+     WHERE user_id = v_uid AND xray >= 1 RETURNING xray INTO v_count;
+  END IF;
+
+  IF v_count IS NULL THEN RAISE EXCEPTION 'none left'; END IF;
+  RETURN v_count;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer) FROM anon;
+GRANT EXECUTE ON FUNCTION public.buy_item(text, integer) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.use_item(text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.use_item(text) TO authenticated;

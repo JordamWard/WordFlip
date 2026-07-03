@@ -312,6 +312,7 @@ function addDailyHelps(n) {
 
 // Atomic server-side spend via the spend_tokens RPC (see supabase-migrations.sql).
 // The RPC rejects overdrafts, so the balance can never go negative.
+// (Kept for future non-inventory purchases; item buys go through buyItem below.)
 async function spendTokens(amount, reason) {
   const { data, error } = await getSB().rpc('spend_tokens', { p_amount: amount, p_reason: reason });
   if (error) {
@@ -322,6 +323,54 @@ async function spendTokens(amount, reason) {
     return { ok:false, msg:'Purchase failed — please try again.' };
   }
   return { ok:true, balance:data };
+}
+
+// Buy a power-up: one atomic RPC charges the wallet AND increments the
+// account-level inventory (see migration section 7). Returns the new count.
+async function buyItem(itemKey, price) {
+  const { data, error } = await getSB().rpc('buy_item', { p_item: itemKey, p_price: price });
+  if (error) {
+    console.error('Buy item error:', error);
+    const m = String(error.message || '');
+    if (/insufficient/i.test(m)) return { ok:false, msg:'Not enough coins.' };
+    if (/find the function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Shop upgrade pending — one more migration to run.' };
+    return { ok:false, msg:'Purchase failed — please try again.' };
+  }
+  return { ok:true, count:data };
+}
+
+// Pull the account's inventory into the local cache (wf_inv_*) so power-ups
+// follow the account across browsers/devices. First sync for an account
+// imports any pre-existing local purchases (bought before inventories existed).
+async function syncInventoryFromServer(userId) {
+  try {
+    const db = getSB();
+    const { data, error } = await db.from('inventories').select('hint,xray').eq('user_id', userId).maybeSingle();
+    if (error) return; // table missing (migration not run) — keep local behavior
+    if (!data) {
+      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray');
+      for (let i = 0; i < lh; i++) await db.rpc('buy_item', { p_item:'hint', p_price:0 });
+      for (let i = 0; i < lx; i++) await db.rpc('buy_item', { p_item:'xray', p_price:0 });
+      return; // local cache already reflects the imported counts
+    }
+    try {
+      localStorage.setItem('wf_inv_hint', String(data.hint || 0));
+      localStorage.setItem('wf_inv_xray', String(data.xray || 0));
+    } catch {}
+  } catch (e) {}
+}
+
+// Consume one item server-side (fire-and-forget). The local cache was already
+// decremented for instant UI; the server response re-syncs it exactly.
+function syncUseItem(itemKey) {
+  ensureFreshSession().then(s => {
+    if (!s?.user) return; // guests play off the local count
+    getSB().rpc('use_item', { p_item: itemKey }).then(({ data, error }) => {
+      if (!error && typeof data === 'number') {
+        try { localStorage.setItem('wf_inv_' + itemKey, String(data)); } catch {}
+      }
+    });
+  }).catch(() => {});
 }
 
 function useAuth() {
@@ -1110,7 +1159,7 @@ function FloatingScore({ items }) {
 }
 
 // ─── Tile ─────────────────────────────────────────────────────────────────────
-function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor, isHint }) {
+function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor, isHint, isXray }) {
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -1143,14 +1192,28 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
       }}>
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
-          background:"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)",
-          borderRadius:10,border:"2px solid #2a4060",
+          // X-ray: the card doesn't flip — it goes dark like radiograph film
+          // and the letter glows through in pale blue, like a bone.
+          background: isXray?"linear-gradient(135deg,#050f1c 0%,#03111f 100%)":"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)",
+          borderRadius:10,border: isXray?"2px solid #4FC3F7":"2px solid #2a4060",
           display:"flex",alignItems:"center",justifyContent:"center",
-          boxShadow:"0 2px 8px #00000066",
+          boxShadow: isXray?"0 0 16px #4FC3F766, inset 0 0 22px #4FC3F722":"0 2px 8px #00000066",
           backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px)`,
           backgroundSize:"12px 12px",
+          transition:"background 0.25s, border 0.25s, box-shadow 0.25s",
         }}>
-          <span style={{color:"#1e3048",fontSize:"1.4em",fontWeight:900}}>✦</span>
+          {isXray ? (
+            <span style={{
+              fontFamily:"'JetBrains Mono',monospace",
+              fontSize:"clamp(1.1rem,3.5vw,1.8rem)",fontWeight:800,letterSpacing:"0.05em",
+              color:"#9BE8FF",
+              textShadow:"0 0 8px #4FC3F7, 0 0 20px #4FC3F788",
+              filter:"blur(0.3px)",
+              animation:"xrayPulse 1.3s ease both",
+            }}>{tile.letter}</span>
+          ) : (
+            <span style={{color:"#1e3048",fontSize:"1.4em",fontWeight:900}}>✦</span>
+          )}
         </div>
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
@@ -1527,6 +1590,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     }
     if (!tid) return;
     setInvHint(addInv('wf_inv_hint', -1));
+    syncUseItem('hint'); // account-level consume (no-op for guests)
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setHintTileId(tid);
     setTimeout(() => setHintTileId(null), 1600);
@@ -1541,6 +1605,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       if (foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
       if (getInv('wf_inv_xray') < 1 || helpsLeft < 1) return;
       setInvXray(addInv('wf_inv_xray', -1));
+      syncUseItem('xray'); // account-level consume (no-op for guests)
       if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
       setXrayTiles(new Set([tile.id]));
       setTimeout(() => setXrayTiles(new Set()), 1300);
@@ -1725,12 +1790,13 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         }}>
         {tiles.map(tile=>(
           <Tile key={tile.id} tile={tile}
-            isFlipped={flipped.includes(tile.id)||xrayTiles.has(tile.id)}
+            isFlipped={flipped.includes(tile.id)}
             isFound={foundTileIds.has(tile.id)}
             foundInOrder={foundInOrderSet.has(tile.id)}
             isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
             isError={error.includes(tile.id)}
             isHint={hintTileId===tile.id}
+            isXray={xrayTiles.has(tile.id)}
             onClick={()=>handleTileClick(tile)}
             orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined}
           />
@@ -3532,6 +3598,16 @@ function ShopScreen({ onBack, balance, refreshWallet }) {
   const [buying, setBuying] = useState(null);  // item key while a purchase is in flight
   const [msg, setMsg] = useState(null);        // { key, text, good }
 
+  // Show purchases made on other devices: pull the account inventory on open.
+  useEffect(() => {
+    ensureFreshSession().then(s => {
+      if (!s?.user) return;
+      syncInventoryFromServer(s.user.id).then(() => {
+        setInv({ hint:getInv('wf_inv_hint'), xray:getInv('wf_inv_xray') });
+      });
+    }).catch(() => {});
+  }, []);
+
   async function buy(item) {
     if (buying) return;
     if (balance < item.price) {
@@ -3540,10 +3616,11 @@ function ShopScreen({ onBack, balance, refreshWallet }) {
     }
     setBuying(item.key); setMsg(null);
     await ensureFreshSession();
-    const res = await spendTokens(item.price, `buy-${item.key}-${Date.now()}`);
+    // One atomic RPC: charges the wallet AND grants the item account-wide.
+    const res = await buyItem(item.key, item.price);
     if (res.ok) {
-      const n = addInv(item.invKey, 1);
-      setInv(prev => ({ ...prev, [item.key]: n }));
+      try { localStorage.setItem(item.invKey, String(res.count)); } catch {}
+      setInv(prev => ({ ...prev, [item.key]: res.count }));
       setMsg({ key:item.key, text:`✓ ${item.name} added to your kit!`, good:true });
       await refreshWallet(); // pull the new balance into the app + wf_balance cache
     } else {
@@ -3698,6 +3775,7 @@ function WordFlip() {
         });
       }
       grantEarnedTokens(session.user.id).then(refreshWallet);
+      syncInventoryFromServer(session.user.id); // power-ups follow the account
     }
   }, [session?.user?.id]);
 
@@ -3777,6 +3855,7 @@ function WordFlip() {
         .tokenPill:hover{box-shadow:0 0 12px #00F5C455;opacity:1;}
         .tokenPill:active{transform:scale(0.93);}
         @keyframes hintWiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-6deg)}40%{transform:rotate(6deg)}60%{transform:rotate(-4deg)}80%{transform:rotate(4deg)}}
+        @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
