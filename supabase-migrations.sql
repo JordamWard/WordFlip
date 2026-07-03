@@ -146,8 +146,11 @@ BEGIN
      WHERE user_id = v_uid AND balance >= p_price
      RETURNING balance INTO v_new_balance;
     IF v_new_balance IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+    -- Reason must be UNIQUE per purchase: token_transactions enforces one row
+    -- per (user, reason) for idempotent grants, so a repeated 'buy-hint' would
+    -- reject every purchase after the first.
     INSERT INTO public.token_transactions (user_id, amount, reason)
-    VALUES (v_uid, -p_price, 'buy-' || p_item);
+    VALUES (v_uid, -p_price, 'buy-' || p_item || '-' || gen_random_uuid());
   END IF;
 
   INSERT INTO public.inventories (user_id, hint, xray)

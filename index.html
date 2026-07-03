@@ -1194,13 +1194,15 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
           position:"absolute",inset:0,backfaceVisibility:"hidden",
           // X-ray: the card doesn't flip — it goes dark like radiograph film
           // and the letter glows through in pale blue, like a bone.
-          background: isXray?"linear-gradient(135deg,#050f1c 0%,#03111f 100%)":"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)",
+          // NOTE: gradient + dots all live in backgroundImage layers. Mixing the
+          // `background` shorthand with backgroundImage makes React drop the dot
+          // layer when the shorthand changes (tiles stayed "flat" after x-ray).
           borderRadius:10,border: isXray?"2px solid #4FC3F7":"2px solid #2a4060",
           display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow: isXray?"0 0 16px #4FC3F766, inset 0 0 22px #4FC3F722":"0 2px 8px #00000066",
-          backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px)`,
-          backgroundSize:"12px 12px",
-          transition:"background 0.25s, border 0.25s, box-shadow 0.25s",
+          backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px),${isXray?"linear-gradient(135deg,#050f1c 0%,#03111f 100%)":"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)"}`,
+          backgroundSize:"12px 12px, 12px 12px, 100% 100%",
+          transition:"border 0.25s, box-shadow 0.25s",
         }}>
           {isXray ? (
             <span style={{
