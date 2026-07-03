@@ -162,9 +162,11 @@ async function authCheckUsername(username) {
 
 // ─── Leaderboard helpers ──────────────────────────────────────────────────────
 async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGuesses, blocks) {
+  // ignoreDuplicates: the FIRST score of the day wins. Replaying the daily on a
+  // second browser (before it syncs) can no longer overwrite the real score.
   const { error } = await getSB().from('daily_scores').upsert({
     user_id: userId, score, day_key: dayKey, turns, elapsed, wrong_guesses: wrongGuesses, blocks,
-  }, { onConflict: 'user_id,day_key' });
+  }, { onConflict: 'user_id,day_key', ignoreDuplicates: true });
   if (error) console.error("Score submit error:", error);
 }
 
@@ -200,6 +202,33 @@ function dayKeyToDates(dayKey) {
     date: dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
     shortDate: dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
   };
+}
+
+// One daily per ACCOUNT, not per device: if this account already submitted a
+// score today (played on another browser/device), reconstruct the local
+// "done" marker from the server row so this device also shows Already Played.
+async function syncDailyDoneFromServer(userId) {
+  if (getDailyDone()) return false;
+  try {
+    await ensureFreshSession();
+    const dk = dateKey().replace('wf_', '');
+    const { data } = await getSB().from('daily_scores').select('*')
+      .eq('user_id', userId).eq('day_key', dk).maybeSingle();
+    if (!data) return false;
+    const wordResults = {};
+    [...(data.blocks || '')].forEach((ch, i) => {
+      if (ch === '🟩') wordResults[i] = 'green';
+      else if (ch === '🟨') wordResults[i] = 'yellow';
+    });
+    const missed = [...(data.blocks || '')].some(ch => ch === '🟥');
+    setDailyDone({
+      turns: data.turns, elapsed: data.elapsed, score: data.score,
+      wordResults, wrongGuesses: data.wrong_guesses || 0,
+      outOfTurns: missed, bonusPts: null, bonusWords: [],
+    });
+    clearDailyProgress(); // finished elsewhere — discard any local in-progress game
+    return true;
+  } catch (e) { return false; }
 }
 
 async function retroSubmitTodayScore(userId) {
@@ -1451,22 +1480,55 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const [dailyHelpsUsed, setDailyHelpsUsed] = useState(() => isDaily ? getDailyHelps() : 0);
   const helpsLeft = isDaily ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed) : Infinity;
 
-  // 💡 Hint: wiggle the next correct tile of the first unsolved word.
-  // Tile ids encode word+letter position (`${wi}-${li}`), so "next correct" is
-  // the target word's tile at the length of the correctly-flipped in-order prefix.
+  // 💡 Hint: infer which word you're building from the letters you've flipped
+  // (order doesn't matter), then wiggle a tile for that word's next missing letter.
+  //   B flipped, BOWL unfound   → wiggles an O (next letter in order)
+  //   O+W flipped, any order    → still infers BOWL, wiggles the B
+  //   B flipped, BOWL AND BANK  → either is a fair answer; first match wins
+  //   nothing flipped           → first unsolved word's first letter
   function useHint() {
     if (getInv('wf_inv_hint') < 1 || helpsLeft < 1) return;
     if (processingRef.current || hasEndedRef.current) return;
     const s = stateRef.current;
-    const targetWi = words.findIndex((_, i) => !s.found.includes(i));
-    if (targetWi === -1) return;
+    const unfound = words.map((_, i) => i).filter(i => !s.found.includes(i));
+    if (!unfound.length) return;
     const flippedNow = flippedRef.current;
-    let k = 0;
-    while (k < flippedNow.length && flippedNow[k] === `${targetWi}-${k}`) k++;
-    if (k >= words[targetWi].length) return; // whole word already flipped in order
+    const flippedLetters = flippedNow.map(id => tiles.find(t => t.id === id)?.letter).filter(Boolean);
+
+    // Candidate: first unfound word whose letters contain the flipped selection
+    // as a sub-multiset. If the selection matches nothing, fall back to the
+    // first unsolved word so the hint is still useful.
+    const containsSelection = (word) => {
+      const pool = {};
+      flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
+      let unmatched = flippedLetters.length;
+      [...word].forEach(l => { if (pool[l] > 0) { pool[l]--; unmatched--; } });
+      return unmatched === 0;
+    };
+    const targetWi = unfound.find(i => containsSelection(words[i])) ?? unfound[0];
+    const word = words[targetWi];
+
+    // Next missing letter: walk the word in order, crossing off letters the
+    // player already has flipped; the first letter not covered is the hint.
+    const pool = {};
+    flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
+    let hintPos = -1;
+    for (let p = 0; p < word.length; p++) {
+      if (pool[word[p]] > 0) pool[word[p]]--;
+      else { hintPos = p; break; }
+    }
+    if (hintPos === -1) return; // selection already covers the whole word — no hint needed
+
+    // Wiggle the target word's own tile for that letter, skipping any position
+    // that's already face-up (duplicate letters can sit at several positions).
+    let tid = null;
+    for (let q = 0; q < word.length; q++) {
+      if (word[q] === word[hintPos] && !flippedNow.includes(`${targetWi}-${q}`)) { tid = `${targetWi}-${q}`; break; }
+    }
+    if (!tid) return;
     setInvHint(addInv('wf_inv_hint', -1));
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
-    setHintTileId(`${targetWi}-${k}`);
+    setHintTileId(tid);
     setTimeout(() => setHintTileId(null), 1600);
   }
 
@@ -3617,12 +3679,27 @@ function WordFlip() {
   const [fireworks,setFireworks] = useState(false);
   const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet, signOut } = useAuth();
 
+  // Bumped when the server says today's daily was played on another device —
+  // forces a re-render so the menu button flips to "✓ Done today".
+  const [, setDailySyncTick] = useState(0);
+
   useEffect(() => {
     if (session?.user) {
-      if (getDailyDone()) retroSubmitTodayScore(session.user.id);
+      if (getDailyDone()) {
+        retroSubmitTodayScore(session.user.id);
+      } else {
+        syncDailyDoneFromServer(session.user.id).then(found => {
+          if (found) {
+            setDailySyncTick(t => t + 1);
+            // If they'd already wandered into the daily on this device, bounce
+            // them to the Already Played screen instead of letting a replay run.
+            setScreen(sc => sc === "daily" ? "daily-done" : sc);
+          }
+        });
+      }
       grantEarnedTokens(session.user.id).then(refreshWallet);
     }
-  }, [session]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (recovery) setScreen("reset-password");
