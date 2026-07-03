@@ -216,7 +216,8 @@ async function retroSubmitTodayScore(userId) {
 
 // ─── Token economy ────────────────────────────────────────────────────────────
 // Earning amounts (tweak freely — placeholders until the shop is priced)
-const TOKENS = { SIGNUP: 100, SOLO: 50, MP_WIN: 50, MP_LOSS: 25 };
+// Daily pays the most (10% of score, ~150-240); every other mode pays less.
+const TOKENS = { SIGNUP: 100, SOLO: 50, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
 // Daily challenge pays out 10% of the score earned
 const dailyTokens = (score) => Math.max(0, Math.round((score || 0) * 0.1));
 
@@ -259,6 +260,27 @@ function addInv(invKey, delta) {
   try { localStorage.setItem(invKey, String(n)); } catch {}
   return n;
 }
+// Grant tokens only when signed in (the RPC uses auth.uid server-side).
+// Refreshes a stale JWT first so the grant can't 401 on a day-old session.
+async function grantIfSignedIn(amount, reason, refreshWallet) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return;
+  await grantTokens(amount, reason);
+  if (refreshWallet) refreshWallet();
+}
+
+// Daily-challenge help budget: 3 combined Hint/X-ray uses per day.
+// Keyed to today's date (same pattern as _done/_best) so it resets at midnight.
+const DAILY_HELP_LIMIT = 3;
+function getDailyHelps() {
+  try { return Math.max(0, parseInt(localStorage.getItem(dateKey()+"_helps") || '0', 10) || 0); } catch { return 0; }
+}
+function addDailyHelps(n) {
+  const v = getDailyHelps() + n;
+  try { localStorage.setItem(dateKey()+"_helps", String(v)); } catch {}
+  return v;
+}
+
 // Atomic server-side spend via the spend_tokens RPC (see supabase-migrations.sql).
 // The RPC rejects overdrafts, so the balance can never go negative.
 async function spendTokens(amount, reason) {
@@ -1384,11 +1406,15 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     unlock();
   }
 
+  // Daily challenge allows DAILY_HELP_LIMIT combined helps per day; solo is unlimited.
+  const [dailyHelpsUsed, setDailyHelpsUsed] = useState(() => isDaily ? getDailyHelps() : 0);
+  const helpsLeft = isDaily ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed) : Infinity;
+
   // 💡 Hint: wiggle the next correct tile of the first unsolved word.
   // Tile ids encode word+letter position (`${wi}-${li}`), so "next correct" is
   // the target word's tile at the length of the correctly-flipped in-order prefix.
   function useHint() {
-    if (getInv('wf_inv_hint') < 1) return;
+    if (getInv('wf_inv_hint') < 1 || helpsLeft < 1) return;
     if (processingRef.current || hasEndedRef.current) return;
     const s = stateRef.current;
     const targetWi = words.findIndex((_, i) => !s.found.includes(i));
@@ -1398,6 +1424,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     while (k < flippedNow.length && flippedNow[k] === `${targetWi}-${k}`) k++;
     if (k >= words[targetWi].length) return; // whole word already flipped in order
     setInvHint(addInv('wf_inv_hint', -1));
+    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setHintTileId(`${targetWi}-${k}`);
     setTimeout(() => setHintTileId(null), 1600);
   }
@@ -1409,8 +1436,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       setXrayArmed(false);
       if (processingRef.current || hasEndedRef.current) return;
       if (foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
-      if (getInv('wf_inv_xray') < 1) return;
+      if (getInv('wf_inv_xray') < 1 || helpsLeft < 1) return;
       setInvXray(addInv('wf_inv_xray', -1));
+      if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
       setXrayTiles(new Set([tile.id]));
       setTimeout(() => setXrayTiles(new Set()), 1300);
       return;
@@ -1562,18 +1590,27 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         )}
       </div>
       {/* Power-up row — only shows when the player owns items (bought in the shop) */}
-      {(invHint>0||invXray>0||xrayArmed)&&(
-        <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:6}}>
-          <button onClick={useHint} disabled={invHint<1}
-            style={{...btnStyle(invHint>0?"#0e2a3a":"#0a1520",invHint>0?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${invHint>0?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
-            💡 Hint ×{invHint}
-          </button>
-          <button onClick={()=>setXrayArmed(a=>!a)} disabled={invXray<1&&!xrayArmed}
-            style={{...btnStyle(xrayArmed?"#2a1a3e":invXray>0?"#0e2a3a":"#0a1520",xrayArmed?"#9B5DE5":invXray>0?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":invXray>0?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
-            {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
-          </button>
-        </div>
-      )}
+      {(invHint>0||invXray>0||xrayArmed)&&(()=>{
+        const hintOk = invHint>0 && helpsLeft>0;
+        const xrayOk = invXray>0 && helpsLeft>0;
+        return (
+          <div style={{display:"flex",gap:8,justifyContent:"center",alignItems:"center",marginBottom:6}}>
+            <button onClick={useHint} disabled={!hintOk}
+              style={{...btnStyle(hintOk?"#0e2a3a":"#0a1520",hintOk?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${hintOk?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+              💡 Hint ×{invHint}
+            </button>
+            <button onClick={()=>setXrayArmed(a=>!a)} disabled={!xrayOk&&!xrayArmed}
+              style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"#0a1520",xrayArmed?"#9B5DE5":xrayOk?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+              {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
+            </button>
+            {isDaily&&(
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",color:helpsLeft>0?"#3a5570":"#FF5E5B"}}>
+                {helpsLeft>0?`${helpsLeft} left today`:"daily limit reached"}
+              </span>
+            )}
+          </div>
+        );
+      })()}
       <div
         role="grid"
         aria-label="WordFlip game board"
@@ -2107,7 +2144,7 @@ function LeaderboardView({ onBack, session, onSignIn }) {
 }
 
 // ─── Local Multiplayer ────────────────────────────────────────────────────────
-function LocalMultiScreen({ onBack }) {
+function LocalMultiScreen({ onBack, refreshWallet }) {
   const [playerCount,setPlayerCount] = useState(2);
   const [started,setStarted] = useState(false);
   const [scores,setScores] = useState([0,0]);
@@ -2201,7 +2238,13 @@ function LocalMultiScreen({ onBack }) {
         const ns=[...scores]; ns[currentPlayer]+=multiPts; setScores(ns);
         multiFlippedRef.current=[];multiProcessingRef.current=false;
         setFlipped([]); setFlash(null);
-        if (newFW.length===words.length) { soundManager.complete(); setGameOver(true); }
+        if (newFW.length===words.length) {
+          soundManager.complete(); setGameOver(true);
+          // Small payout for a completed pass-and-play game (signed-in device
+          // owner). Only on natural completion — the End button pays nothing,
+          // so quick-quitting can't farm coins.
+          grantIfSignedIn(TOKENS.LOCAL, 'lmp-' + Date.now(), refreshWallet);
+        }
       },400);
     }
   }
@@ -2247,7 +2290,7 @@ function LocalMultiScreen({ onBack }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack }) {
+function OnlineScreen({ onBack, refreshWallet }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
   const [codeInput, setCodeInput] = useState(() => new URLSearchParams(window.location.search).get('room') || '');
@@ -2301,6 +2344,19 @@ function OnlineScreen({ onBack }) {
     if (channelRef.current) try { getSB().removeChannel(channelRef.current); } catch(e) {}
     clearInterval(timerRef.current);
   }, []);
+
+  // Token payout when the game ends: winner gets MP_WIN, everyone else MP_LOSS.
+  // The 'mp-<roomId>' reason is idempotent server-side, so re-renders, refreshes,
+  // and revisits of the done screen can never double-pay.
+  useEffect(() => {
+    if (phase !== 'done' || !roomRef.current) return;
+    const ps = playersRef.current;
+    if (!ps.length) return;
+    const maxScore = Math.max(...ps.map(p => p.score || 0));
+    const mine = ps.find(p => p.id === myId)?.score || 0;
+    const amount = (maxScore > 0 && mine >= maxScore) ? TOKENS.MP_WIN : TOKENS.MP_LOSS;
+    grantIfSignedIn(amount, 'mp-' + roomRef.current.id, refreshWallet);
+  }, [phase]);
 
   // 60-second countdown; auto-pass when it hits 0 on my turn
   useEffect(() => {
@@ -3535,6 +3591,7 @@ function WordFlip() {
       }
       saveToHistory({
         dayKey: dateKey(),
+        helps: getDailyHelps(), // power-up uses today (0 = clean score; indicator TBD)
         date: d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
         shortDate: d.toLocaleDateString("en-US",{month:"short",day:"numeric"}),
         isoDate: d.toISOString(),
@@ -3667,8 +3724,8 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} /></div>}
+      {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} /></div>}
       {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
