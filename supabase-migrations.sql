@@ -73,3 +73,41 @@ SELECT
 FROM auth.users u
 LEFT JOIN public.profiles p ON p.id = u.id
 WHERE p.id IS NULL;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 6. TOKEN SHOP: spend_tokens RPC (required for the in-app Token Shop)
+--    Atomic spend: the single UPDATE with `balance >= p_amount` means the
+--    wallet can never go negative, even under concurrent purchases.
+--    Signed-in users only (anon EXECUTE revoked).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.spend_tokens(p_amount integer, p_reason text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_new_balance integer;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'not signed in';
+  END IF;
+  IF p_amount IS NULL OR p_amount <= 0 THEN
+    RAISE EXCEPTION 'invalid amount';
+  END IF;
+
+  UPDATE public.wallets
+     SET balance = balance - p_amount, updated_at = now()
+   WHERE user_id = v_uid AND balance >= p_amount
+   RETURNING balance INTO v_new_balance;
+
+  IF v_new_balance IS NULL THEN
+    RAISE EXCEPTION 'insufficient balance';
+  END IF;
+
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+  VALUES (v_uid, -p_amount, p_reason);
+
+  RETURN v_new_balance;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.spend_tokens(integer, text) TO authenticated;

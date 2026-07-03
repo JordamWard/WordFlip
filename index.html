@@ -243,6 +243,36 @@ async function grantEarnedTokens(userId) {
   }
 }
 
+// ─── Token Shop ───────────────────────────────────────────────────────────────
+// PLACEHOLDER PRICES — tune freely. Keys under wf_inv_* hold per-device
+// consumable counts (purchases deduct server-side via the spend_tokens RPC,
+// so the wallet stays the single source of truth).
+const SHOP_ITEMS = [
+  { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the first unsolved word.', price:50, invKey:'wf_inv_hint' },
+  { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:30, invKey:'wf_inv_xray' },
+];
+function getInv(invKey) {
+  try { return Math.max(0, parseInt(localStorage.getItem(invKey) || '0', 10) || 0); } catch { return 0; }
+}
+function addInv(invKey, delta) {
+  const n = Math.max(0, getInv(invKey) + delta);
+  try { localStorage.setItem(invKey, String(n)); } catch {}
+  return n;
+}
+// Atomic server-side spend via the spend_tokens RPC (see supabase-migrations.sql).
+// The RPC rejects overdrafts, so the balance can never go negative.
+async function spendTokens(amount, reason) {
+  const { data, error } = await getSB().rpc('spend_tokens', { p_amount: amount, p_reason: reason });
+  if (error) {
+    console.error('Spend tokens error:', error);
+    const m = String(error.message || '');
+    if (/insufficient/i.test(m)) return { ok:false, msg:'Not enough coins.' };
+    if (/find the function|does not exist|404/i.test(m)) return { ok:false, msg:'Shop is not set up yet — try again later.' };
+    return { ok:false, msg:'Purchase failed — please try again.' };
+  }
+  return { ok:true, balance:data };
+}
+
 function useAuth() {
   const [session, setSession] = useState(null);
   // Initialize profile and balance from localStorage immediately — no network needed.
@@ -1015,7 +1045,7 @@ function FloatingScore({ items }) {
 }
 
 // ─── Tile ─────────────────────────────────────────────────────────────────────
-function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor }) {
+function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor, isHint }) {
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -1040,9 +1070,11 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
     >
       <div style={{
         position:"relative",width:"100%",height:"100%",transformStyle:"preserve-3d",
-        animation: isFound?"tileVanish 0.5s cubic-bezier(.4,0,.2,1) 0.15s both":"none",
+        animation: isFound?"tileVanish 0.5s cubic-bezier(.4,0,.2,1) 0.15s both":isHint?"hintWiggle 0.4s ease 4":"none",
         transition: isFound?"none":"transform 0.22s cubic-bezier(.4,2,.6,1)",
         transform: isFlipped?"rotateY(180deg)":"rotateY(0deg)",
+        boxShadow: isHint?"0 0 16px #00F5C4AA":"none",
+        borderRadius:10,
       }}>
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
@@ -1272,6 +1304,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const [outOfTurns, setOutOfTurns] = useState(false);
   const [floatingScores, setFloatingScores] = useState([]);
   const [scorePop, setScorePop] = useState(false);
+  // Shop power-ups (bought in the Token Shop, counts held per-device)
+  const [invHint, setInvHint] = useState(() => getInv('wf_inv_hint'));
+  const [invXray, setInvXray] = useState(() => getInv('wf_inv_xray'));
+  const [hintTileId, setHintTileId] = useState(null);   // tile currently wiggling
+  const [xrayArmed, setXrayArmed] = useState(false);    // next tap peeks instead of flips
+  const [xrayTiles, setXrayTiles] = useState(new Set()); // tiles briefly revealed
   const timerRef = useRef(null);
   const startRef = useRef(null);
   const floatIdRef = useRef(0);
@@ -1346,7 +1384,38 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     unlock();
   }
 
+  // 💡 Hint: wiggle the next correct tile of the first unsolved word.
+  // Tile ids encode word+letter position (`${wi}-${li}`), so "next correct" is
+  // the target word's tile at the length of the correctly-flipped in-order prefix.
+  function useHint() {
+    if (getInv('wf_inv_hint') < 1) return;
+    if (processingRef.current || hasEndedRef.current) return;
+    const s = stateRef.current;
+    const targetWi = words.findIndex((_, i) => !s.found.includes(i));
+    if (targetWi === -1) return;
+    const flippedNow = flippedRef.current;
+    let k = 0;
+    while (k < flippedNow.length && flippedNow[k] === `${targetWi}-${k}`) k++;
+    if (k >= words[targetWi].length) return; // whole word already flipped in order
+    setInvHint(addInv('wf_inv_hint', -1));
+    setHintTileId(`${targetWi}-${k}`);
+    setTimeout(() => setHintTileId(null), 1600);
+  }
+
   function handleTileClick(tile) {
+    // 🔍 X-ray peek: when armed, this tap reveals the tile briefly instead of
+    // flipping it. Pure early-return — does not count as a flip or a turn.
+    if (xrayArmed) {
+      setXrayArmed(false);
+      if (processingRef.current || hasEndedRef.current) return;
+      if (foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
+      if (getInv('wf_inv_xray') < 1) return;
+      setInvXray(addInv('wf_inv_xray', -1));
+      setXrayTiles(new Set([tile.id]));
+      setTimeout(() => setXrayTiles(new Set()), 1300);
+      return;
+    }
+
     // Ref-based guards — always current, never stale, immune to React batching
     if (processingRef.current) return;
     if (hasEndedRef.current) return;
@@ -1492,6 +1561,19 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
           </span>
         )}
       </div>
+      {/* Power-up row — only shows when the player owns items (bought in the shop) */}
+      {(invHint>0||invXray>0||xrayArmed)&&(
+        <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:6}}>
+          <button onClick={useHint} disabled={invHint<1}
+            style={{...btnStyle(invHint>0?"#0e2a3a":"#0a1520",invHint>0?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${invHint>0?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+            💡 Hint ×{invHint}
+          </button>
+          <button onClick={()=>setXrayArmed(a=>!a)} disabled={invXray<1&&!xrayArmed}
+            style={{...btnStyle(xrayArmed?"#2a1a3e":invXray>0?"#0e2a3a":"#0a1520",xrayArmed?"#9B5DE5":invXray>0?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":invXray>0?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+            {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
+          </button>
+        </div>
+      )}
       <div
         role="grid"
         aria-label="WordFlip game board"
@@ -1503,11 +1585,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         }}>
         {tiles.map(tile=>(
           <Tile key={tile.id} tile={tile}
-            isFlipped={flipped.includes(tile.id)}
+            isFlipped={flipped.includes(tile.id)||xrayTiles.has(tile.id)}
             isFound={foundTileIds.has(tile.id)}
             foundInOrder={foundInOrderSet.has(tile.id)}
             isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
             isError={error.includes(tile.id)}
+            isHint={hintTileId===tile.id}
             onClick={()=>handleTileClick(tile)}
             orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined}
           />
@@ -3249,6 +3332,101 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
   );
 }
 
+// ─── Token Shop Screen ────────────────────────────────────────────────────────
+function ShopScreen({ onBack, balance, refreshWallet }) {
+  const [inv, setInv] = useState(() => {
+    const m = {};
+    SHOP_ITEMS.forEach(it => { m[it.key] = getInv(it.invKey); });
+    return m;
+  });
+  const [buying, setBuying] = useState(null);  // item key while a purchase is in flight
+  const [msg, setMsg] = useState(null);        // { key, text, good }
+
+  async function buy(item) {
+    if (buying) return;
+    if (balance < item.price) {
+      setMsg({ key:item.key, text:'Not enough coins yet — play to earn more!' });
+      return;
+    }
+    setBuying(item.key); setMsg(null);
+    await ensureFreshSession();
+    const res = await spendTokens(item.price, `buy-${item.key}-${Date.now()}`);
+    if (res.ok) {
+      const n = addInv(item.invKey, 1);
+      setInv(prev => ({ ...prev, [item.key]: n }));
+      setMsg({ key:item.key, text:`✓ ${item.name} added to your kit!`, good:true });
+      await refreshWallet(); // pull the new balance into the app + wf_balance cache
+    } else {
+      setMsg({ key:item.key, text:res.msg });
+    }
+    setBuying(null);
+  }
+
+  return (
+    <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
+      <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
+
+      {/* Balance header — same source of truth as the menu pill */}
+      <div style={{
+        background:'linear-gradient(135deg,#0e2a3a,#0a1520)', border:'1.5px solid #00F5C4',
+        borderRadius:14, padding:'14px 18px', marginBottom:18,
+        display:'flex', justifyContent:'space-between', alignItems:'center',
+      }}>
+        <div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', letterSpacing:'0.08em', marginBottom:4}}>YOUR COINS</div>
+          <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontWeight:900, fontSize:'1.8rem'}}>🪙 {balance.toLocaleString()}</div>
+        </div>
+        <div style={{fontSize:'2rem'}}>🛍️</div>
+      </div>
+
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>POWER-UPS</p>
+
+      {SHOP_ITEMS.map(item => {
+        const canAfford = balance >= item.price;
+        const isBuying = buying === item.key;
+        return (
+          <div key={item.key} style={{
+            background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:14,
+            padding:'14px 16px', marginBottom:12,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <div style={{fontSize:'1.9rem', flexShrink:0}}>{item.icon}</div>
+              <div style={{flex:1, textAlign:'left'}}>
+                <div style={{display:'flex', alignItems:'center', gap:8}}>
+                  <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.05rem'}}>{item.name}</span>
+                  {inv[item.key] > 0 && (
+                    <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.65rem', fontWeight:700, background:'#00F5C422', color:'#00F5C4', borderRadius:6, padding:'2px 7px'}}>
+                      ×{inv[item.key]} owned
+                    </span>
+                  )}
+                </div>
+                <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.72rem', margin:'4px 0 0', lineHeight:1.4}}>{item.desc}</p>
+              </div>
+              <button onClick={() => buy(item)} disabled={isBuying || !canAfford}
+                style={{
+                  ...btnStyle(canAfford ? 'linear-gradient(90deg,#FFB703,#ff9f1c)' : '#1e3048', canAfford ? '#0D1B2A' : '#3a5570'),
+                  padding:'10px 14px', fontSize:'0.8rem', flexShrink:0,
+                  opacity:isBuying ? 0.6 : 1, cursor:canAfford ? 'pointer' : 'default',
+                }}>
+                {isBuying ? '…' : `🪙 ${item.price}`}
+              </button>
+            </div>
+            {msg?.key === item.key && (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:msg.good ? '#00F5C4' : '#FFB703'}}>
+                {msg.text}
+              </p>
+            )}
+          </div>
+        );
+      })}
+
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', textAlign:'center', marginTop:14, lineHeight:1.5}}>
+        Power-ups are used during a game — look for the 💡 and 🔍 buttons above the board.
+      </p>
+    </div>
+  );
+}
+
 function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
 
   return (
@@ -3390,6 +3568,9 @@ function WordFlip() {
         @keyframes scorePop{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
         @keyframes fwParticle{0%{transform:translate(0,0) scale(1);opacity:1}100%{transform:translate(var(--fw-tx),var(--fw-ty)) scale(0);opacity:0}}
         *{box-sizing:border-box;} button:hover{opacity:0.85;} button:focus-visible{outline:3px solid #00F5C4;outline-offset:3px;} a:focus-visible{outline:3px solid #00F5C4;}
+        .tokenPill:hover{box-shadow:0 0 12px #00F5C455;opacity:1;}
+        .tokenPill:active{transform:scale(0.93);}
+        @keyframes hintWiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-6deg)}40%{transform:rotate(6deg)}60%{transform:rotate(-4deg)}80%{transform:rotate(4deg)}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
@@ -3400,7 +3581,7 @@ function WordFlip() {
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
         </button>
         {session && (
-          <button onClick={()=>setScreen("profile")} style={{position:"fixed",top:16,left:56,background:"#0a1520",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"#00F5C4",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Tokens">
+          <button onClick={()=>setScreen("shop")} className="tokenPill" style={{position:"fixed",top:16,left:56,background:"#0a1520",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"#00F5C4",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace",transition:"transform 0.12s, box-shadow 0.15s"}} aria-label="Open token shop">
             🪙 {balance.toLocaleString()}
           </button>
         )}
@@ -3501,6 +3682,7 @@ function WordFlip() {
         setScreen("menu");
       }} />}
       {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={signOut} balance={balance} />}
+      {screen==="shop"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><ShopScreen onBack={()=>setScreen("menu")} balance={balance} refreshWallet={refreshWallet} /></div>}
     </div>
   );
 }
