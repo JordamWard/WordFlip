@@ -311,7 +311,16 @@ function useAuth() {
     } catch {}
 
     // onAuthStateChange is the single source of truth for auth state.
-    const { data: { subscription } } = getSB().auth.onAuthStateChange(async (event, s) => {
+    //
+    // CRITICAL: the callback body is deferred to a fresh tick via setTimeout.
+    // supabase-js fires this callback (especially INITIAL_SESSION on page load)
+    // while holding its internal auth lock. Any Supabase call made directly in
+    // the callback — REST reads (they call getSession() internally to attach
+    // the access token), setSession(), refreshSession() — waits on that same
+    // lock and deadlocks. The visible symptom: after a page refresh, every DB
+    // query in the app hangs forever (leaderboards stuck, score submits and
+    // token grants silently dropped) while cached profile/balance still render.
+    const handleAuthEvent = async (event, s) => {
       if (!m.current) return;
       if (event === "PASSWORD_RECOVERY") { setRecovery(true); return; }
 
@@ -359,6 +368,11 @@ function useAuth() {
       }
 
       if (m.current) setLoading(false);
+    };
+    const { data: { subscription } } = getSB().auth.onAuthStateChange((event, s) => {
+      // Defer out of the auth lock (see comment above). Events still process
+      // in order — setTimeout callbacks run FIFO.
+      setTimeout(() => handleAuthEvent(event, s), 0);
     });
 
     // Fallback: if no INITIAL_SESSION fires within a tick (no stored session),
@@ -3392,7 +3406,9 @@ function WordFlip() {
         )}
         <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
       </>)}
-      <div style={{marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
+      {/* On the menu, push the title below the fixed top controls (avatar + token
+          pill on the left, help on the right) so a wide balance can't overlap it */}
+      <div style={{marginTop:screen==="menu"?40:0,marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
         <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:"linear-gradient(90deg,#00F5C4,#FFB703)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
         {screen==="menu"&&(
           <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
