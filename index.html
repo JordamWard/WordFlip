@@ -972,9 +972,46 @@ function clearDailyProgress() {
 }
 
 // ─── Streak helpers (no login needed — stored per device) ─────────────────────
+// Weekly milestone payout: every 7 consecutive days pays an escalating bonus.
+// TUNABLE — week 1: 200, week 2: 400, ... capped at 1000/week.
+const streakWeekBonus = (weeks) => Math.min(200 * weeks, 1000);
+
 function getStreak() {
   try { return JSON.parse(localStorage.getItem("wf_streak")||'{"count":0,"lastDate":""}'); }
   catch { return { count:0, lastDate:"" }; }
+}
+// Longest consecutive run in local history — seeds `best` for players whose
+// streak record predates best-tracking. DST-tolerant day diff (20h–28h).
+function computeBestFromHistory() {
+  const times = getHistory()
+    .map(e => String(e.dayKey||'').replace('wf_',''))
+    .filter(Boolean)
+    .map(k => { const [y,m,d] = k.split('-').map(Number); return new Date(y, m-1, d).getTime(); })
+    .sort((a,b) => a-b);
+  let best = 0, run = 0, prev = null;
+  for (const t of times) {
+    const diff = prev === null ? null : t - prev;
+    run = (diff !== null && diff > 72e6 && diff < 108e6) ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = t;
+  }
+  return best;
+}
+// The stored count can be stale (streak silently broken days ago) — this
+// returns what the streak actually IS right now.
+function getLiveStreak() {
+  const s = getStreak();
+  const today = dateKey();
+  const yesterday = (() => {
+    const d = new Date(); d.setDate(d.getDate()-1);
+    return `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+  })();
+  const alive = s.lastDate === today || s.lastDate === yesterday;
+  return {
+    count: alive ? (s.count || 0) : 0,
+    best: Math.max(s.best || 0, s.count || 0, computeBestFromHistory()),
+    playedToday: s.lastDate === today,
+  };
 }
 function updateStreak() {
   const today = dateKey();
@@ -985,7 +1022,8 @@ function updateStreak() {
   })();
   if (s.lastDate === today) return s; // already counted today
   const newCount = s.lastDate === yesterday ? s.count + 1 : 1;
-  const updated = { count: newCount, lastDate: today };
+  const best = Math.max(s.best || 0, computeBestFromHistory(), newCount);
+  const updated = { count: newCount, lastDate: today, best };
   localStorage.setItem("wf_streak", JSON.stringify(updated));
   return updated;
 }
@@ -2001,8 +2039,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
-  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) : mode==="solo" ? TOKENS.SOLO : 0;
-  const coinsFormula = mode==="daily" ? "10% of your score" : "win bonus";
+  const streakBonus = (signedIn && mode==="daily" && streak > 0 && streak % 7 === 0) ? streakWeekBonus(streak / 7) : 0;
+  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? TOKENS.SOLO : 0;
+  const coinsFormula = mode==="daily"
+    ? (streakBonus ? `10% of score + ${streak}-day streak bonus!` : "10% of your score")
+    : "win bonus";
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -3228,8 +3269,68 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
   );
 }
 
+// ─── Streak Card ──────────────────────────────────────────────────────────────
+// Week strip (Mon–Sun): 🔥 per day the daily was completed, dimmed dots for
+// missed/future days, today ringed. Below: current/best streak and how far to
+// the next 7-day token milestone.
+function StreakCard({ playedDays }) {
+  const live = getLiveStreak();
+  const today = new Date();
+  const mondayIdx = (today.getDay() + 6) % 7; // 0 = Monday
+  const labels = ["M","T","W","Th","F","S","S"];
+  const cells = labels.map((label, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - mondayIdx + i);
+    const key = `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return {
+      label,
+      played: playedDays.has(key),
+      isToday: i === mondayIdx,
+      isFuture: i > mondayIdx,
+    };
+  });
+  const weeksDone = Math.floor(live.count / 7);
+  const hitMilestoneToday = live.playedToday && live.count > 0 && live.count % 7 === 0;
+  const daysToNext = (weeksDone + 1) * 7 - live.count;
+  const nextBonus = streakWeekBonus(weeksDone + 1);
+
+  return (
+    <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:14,padding:"12px 14px 10px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+        {cells.map((c, i) => (
+          <div key={i} style={{
+            display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+            width:34,padding:"4px 0",borderRadius:9,
+            background: c.isToday ? "#12253a" : "transparent",
+            border: c.isToday ? "1.5px solid #FFB70366" : "1.5px solid transparent",
+          }}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,color:c.isToday?"#FFB703":"#3a5570"}}>{c.label}</span>
+            <span style={{fontSize:"0.95rem",lineHeight:1,opacity:c.played?1:c.isFuture?0.25:0.45,filter:c.played?"none":"grayscale(1)"}}>
+              {c.played ? "🔥" : "🔘"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",color:"#F5EDD6"}}>
+          Current: <strong style={{color:"#FFB703"}}>{live.count}🔥</strong>
+        </span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",color:"#7a9cc0"}}>
+          Best: <strong style={{color:"#FFB703"}}>{live.best}🔥</strong>
+        </span>
+      </div>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.66rem",margin:"7px 0 0",textAlign:"center",
+        color: hitMilestoneToday ? "#00F5C4" : "#3a5570"}}>
+        {hitMilestoneToday
+          ? `🎉 ${live.count}-day streak bonus earned: +${streakWeekBonus(live.count/7)} 🪙`
+          : `${daysToNext} more day${daysToNext===1?"":"s"} → +${nextBonus} 🪙 streak bonus`}
+      </p>
+    </div>
+  );
+}
+
 // ─── Daily Already Done Screen ────────────────────────────────────────────────
-function DailyAlreadyDone({ onMenu, streak, session, onSignIn }) {
+function DailyAlreadyDone({ onMenu, streak, session, onSignIn, playedDays }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   // Infer bonusPts from saved total for old entries that predate the bonusPts field
@@ -3253,10 +3354,9 @@ function DailyAlreadyDone({ onMenu, streak, session, onSignIn }) {
       <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",marginBottom:16}}>
         Come back tomorrow for a new challenge.
       </p>
-      {streak>0&&(
-        <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:20,padding:"6px 16px",marginBottom:16}}>
-          <span style={{fontSize:"1.2rem"}}>🔥</span>
-          <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{streak} day streak</span>
+      {playedDays&&(
+        <div style={{marginBottom:16,textAlign:"left"}}>
+          <StreakCard playedDays={playedDays} />
         </div>
       )}
       {done&&(
@@ -3762,6 +3862,15 @@ function WordFlip() {
   // forces a re-render so the menu button flips to "✓ Done today".
   const [, setDailySyncTick] = useState(0);
 
+  // Days the daily was completed, for the streak week strip. Seeded from local
+  // history (+ today's done marker), then merged with the account's server
+  // scores so the strip is accurate across devices.
+  const [playedDays, setPlayedDays] = useState(() => {
+    const s = new Set(getHistory().map(e => e.dayKey).filter(Boolean));
+    if (getDailyDone()) s.add(dateKey());
+    return s;
+  });
+
   useEffect(() => {
     if (session?.user) {
       if (getDailyDone()) {
@@ -3770,6 +3879,7 @@ function WordFlip() {
         syncDailyDoneFromServer(session.user.id).then(found => {
           if (found) {
             setDailySyncTick(t => t + 1);
+            setPlayedDays(prev => new Set([...prev, dateKey()]));
             // If they'd already wandered into the daily on this device, bounce
             // them to the Already Played screen instead of letting a replay run.
             setScreen(sc => sc === "daily" ? "daily-done" : sc);
@@ -3778,6 +3888,10 @@ function WordFlip() {
       }
       grantEarnedTokens(session.user.id).then(refreshWallet);
       syncInventoryFromServer(session.user.id); // power-ups follow the account
+      // Merge the account's played days into the streak strip
+      fetchMyScores(session.user.id).then(rows => {
+        if (rows?.length) setPlayedDays(prev => new Set([...prev, ...rows.map(r => 'wf_' + r.day_key)]));
+      }).catch(() => {});
     }
   }, [session?.user?.id]);
 
@@ -3805,6 +3919,7 @@ function WordFlip() {
       const s = updateStreak();
       setWinStreak(s.count);
       setWinIsNewBest(score > getPersonalBest());
+      setPlayedDays(prev => new Set([...prev, dateKey()]));
       const d = new Date();
       const blocks = result.words.map((_,i) => {
         const r = result.wordResults?.[i];
@@ -3816,6 +3931,11 @@ function WordFlip() {
         ensureFreshSession().then(() => {
           submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
           grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
+          // Weekly streak milestone: every 7th consecutive day pays a bonus.
+          // Reason keyed to today's date — idempotent, can't double-pay.
+          if (s.count > 0 && s.count % 7 === 0) {
+            grantTokens(streakWeekBonus(s.count / 7), 'streakwk-' + dateKey().replace('wf_','')).then(refreshWallet);
+          }
         });
       }
       saveToHistory({
@@ -3894,6 +4014,7 @@ function WordFlip() {
                 {getDailyDone()?"✓ Done today":getDailyProgress()?"▶ Resume":dailyBest?`Best: ${dailyBest.toLocaleString()}`:"Play today!"}
               </span>
             </button>
+            <StreakCard playedDays={playedDays} />
             <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #1e3048",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"#7a9cc0"}}>→</span>
             </button>
@@ -3932,7 +4053,7 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} streak={streak.count} session={session} onSignIn={()=>setScreen("auth")} />}
+      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} streak={streak.count} session={session} onSignIn={()=>setScreen("auth")} playedDays={playedDays} />}
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
