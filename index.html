@@ -879,6 +879,20 @@ function setDailyDone(result) {
   localStorage.setItem(dateKey()+"_done", JSON.stringify(result));
 }
 
+// ─── Daily challenge in-progress state ────────────────────────────────────────
+// Persists a started-but-unfinished daily so leaving and returning RESUMES
+// mid-game rather than restarting (you can't bail on a bad round and retry).
+// Keyed to today's date so it naturally expires at midnight. Cleared on finish.
+function getDailyProgress() {
+  try { return JSON.parse(localStorage.getItem(dateKey()+"_progress")||"null"); } catch { return null; }
+}
+function saveDailyProgress(data) {
+  try { localStorage.setItem(dateKey()+"_progress", JSON.stringify(data)); } catch {}
+}
+function clearDailyProgress() {
+  try { localStorage.removeItem(dateKey()+"_progress"); } catch {}
+}
+
 // ─── Streak helpers (no login needed — stored per device) ─────────────────────
 function getStreak() {
   try { return JSON.parse(localStorage.getItem("wf_streak")||'{"count":0,"lastDate":""}'); }
@@ -1306,22 +1320,25 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 // ─── Game Board ───────────────────────────────────────────────────────────────
 function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const cols = words.length===4?4:6;
-  const [tiles] = useState(()=>buildTiles(words));
-  const [showReveal, setShowReveal] = useState(!!isDaily);
+  // Resume an in-progress daily so leaving mid-game continues instead of restarting.
+  const savedProg = isDaily ? getDailyProgress() : null;
+  const [tiles] = useState(()=> savedProg ? savedProg.tiles : buildTiles(words));
+  // A resumed game already showed its reveal — skip straight to the board.
+  const [showReveal, setShowReveal] = useState(!!isDaily && !savedProg);
   const [flipped, setFlipped] = useState([]);
-  const [found, setFound] = useState([]);
-  const [foundTileIds, setFoundTileIds] = useState(new Set());
+  const [found, setFound] = useState(()=> savedProg ? savedProg.found : []);
+  const [foundTileIds, setFoundTileIds] = useState(()=> savedProg ? new Set(savedProg.foundTileIds) : new Set());
   const [error, setError] = useState([]);
-  const [turns, setTurns] = useState(0);
+  const [turns, setTurns] = useState(()=> savedProg ? savedProg.turns : 0);
   const [hadError, setHadError] = useState(false);
-  const [wrongGuesses, setWrongGuesses] = useState(0);
-  const [wordResults, setWordResults] = useState({});
-  const [foundInOrderSet, setFoundInOrderSet] = useState(new Set());
-  const [foundBonusWords, setFoundBonusWords] = useState([]);
+  const [wrongGuesses, setWrongGuesses] = useState(()=> savedProg ? savedProg.wrongGuesses : 0);
+  const [wordResults, setWordResults] = useState(()=> savedProg ? savedProg.wordResults : {});
+  const [foundInOrderSet, setFoundInOrderSet] = useState(()=> savedProg ? new Set(savedProg.foundInOrderSet) : new Set());
+  const [foundBonusWords, setFoundBonusWords] = useState(()=> savedProg ? savedProg.foundBonusWords : []);
   const [lastBonusWord, setLastBonusWord] = useState("");
-  const [bonusPts, setBonusPts] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
-  const [started, setStarted] = useState(false);
+  const [bonusPts, setBonusPts] = useState(()=> savedProg ? savedProg.bonusPts : 0);
+  const [elapsed, setElapsed] = useState(()=> savedProg ? savedProg.elapsed : 0);
+  const [started, setStarted] = useState(()=> savedProg ? savedProg.started : false);
   const [flash, setFlash] = useState(null);
   const [outOfTurns, setOutOfTurns] = useState(false);
   const [floatingScores, setFloatingScores] = useState([]);
@@ -1354,11 +1371,35 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     return ()=>clearInterval(timerRef.current);
   },[started]);
 
+  // Auto-save daily progress on every meaningful change so a mid-game exit resumes.
+  // Gated on `started` (first flip) so merely peeking at the challenge and backing
+  // out doesn't commit you — but once you've begun guessing, you can't restart.
+  useEffect(()=>{
+    if (!isDaily || !started || hasEndedRef.current) return;
+    saveDailyProgress({
+      tiles, found, foundTileIds:[...foundTileIds], turns, wrongGuesses,
+      wordResults, foundInOrderSet:[...foundInOrderSet],
+      foundBonusWords, bonusPts, elapsed:stateRef.current.elapsed||elapsed, started,
+    });
+  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started]);
+
+  // Keep the saved elapsed time roughly current (within ~5s) while playing.
+  useEffect(()=>{
+    if (!isDaily || !started) return;
+    const t = setInterval(()=>{
+      if (hasEndedRef.current) return;
+      const prog = getDailyProgress();
+      if (prog) saveDailyProgress({...prog, elapsed:stateRef.current.elapsed||elapsed});
+    }, 5000);
+    return ()=>clearInterval(t);
+  },[isDaily, started]);
+
   // safeOnWin: can only fire once per game, always uses fresh state from stateRef
   function safeOnWin(extraProps={}) {
     if (hasEndedRef.current) return;
     hasEndedRef.current = true;
     clearInterval(timerRef.current);
+    if (isDaily) clearDailyProgress(); // game finished — no resume next time
     setFlipped([]);
     setError([]);
     setFlash(null);
@@ -1639,7 +1680,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
 }
 
 // ─── Count-up number animation ──────────────────────────────────────────────────────
-function CountUp({ to, active, color, large }) {
+function CountUp({ to, active, color, large, unit = "pts" }) {
   const [val, setVal] = useState(0);
   const [big, setBig] = useState(false);
   const started = useRef(false);
@@ -1672,7 +1713,7 @@ function CountUp({ to, active, color, large }) {
       transform: big ? `scale(${popScale})` : "scale(1)",
       transition: "transform 0.22s cubic-bezier(.4,2,.6,1)",
     }}>
-      +{val.toLocaleString()}{large && <span style={{fontSize:"0.85rem",fontWeight:700}}> pts</span>}
+      +{val.toLocaleString()}{large && unit && <span style={{fontSize:"0.85rem",fontWeight:700}}> {unit}</span>}
     </span>
   );
 }
@@ -1706,7 +1747,7 @@ function Firework({ color, trigger, large }) {
 }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [] }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], coins = 0, coinsFormula = "" }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -1751,10 +1792,16 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     const totalShow = 300 + rows.length * ROW_MS;
     timers.push(setTimeout(() => setVisibleCount(rows.length + 1), totalShow));
     timers.push(setTimeout(() => fire("total"),                    totalShow + 900));
+    // Coins earned reveals last, after the total has landed
+    if (coins > 0) {
+      timers.push(setTimeout(() => setVisibleCount(rows.length + 2), totalShow + 1400));
+      timers.push(setTimeout(() => fire("coins"),                    totalShow + 2100));
+    }
     return () => timers.forEach(clearTimeout);
   }, []);
 
   const totalVisible = visibleCount > rows.length;
+  const coinsVisible = visibleCount > rows.length + 1;
 
   return (
     <div style={{background:"#0a1520", border:"1.5px solid #1e3048", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
@@ -1794,15 +1841,38 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
           <CountUp to={score} active={totalVisible} color="#FFB703" large />
         </div>
       </div>
+      {coins > 0 && (
+        <div style={{
+          marginTop:12, paddingTop:12, borderTop:"1.5px solid #1e304833",
+          display:"flex", justifyContent:"space-between", alignItems:"center",
+          opacity:coinsVisible?1:0,
+          transform:coinsVisible?"scale(1)":"scale(0.88)",
+          transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
+        }}>
+          <div>
+            <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#00F5C4", fontSize:"0.78rem", fontWeight:700}}>🪙 COINS EARNED</span>
+            {coinsFormula && (
+              <div style={{fontFamily:"'JetBrains Mono',monospace", color:"#3a5570", fontSize:"0.66rem", marginTop:3}}>{coinsFormula}</div>
+            )}
+          </div>
+          <div style={{position:"relative", display:"flex", alignItems:"center"}}>
+            <Firework color="#00F5C4" trigger={firedSet.has("coins")} large />
+            <CountUp to={coins} active={coinsVisible} color="#00F5C4" large unit="🪙" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBest }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBest, signedIn }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
+  // Coins are only granted server-side when signed in, so only advertise them then.
+  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) : mode==="solo" ? TOKENS.SOLO : 0;
+  const coinsFormula = mode==="daily" ? "10% of your score" : "win bonus";
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -1850,6 +1920,8 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
         score={score}
         bonusPts={result.bonusPts||0}
         bonusWords={result.bonusWords||[]}
+        coins={coins}
+        coinsFormula={coinsFormula}
       />
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
         {isDaily&&(
@@ -3661,7 +3733,7 @@ function WordFlip() {
             <button onClick={()=>{ if(getDailyDone()){setScreen("daily-done");}else{setScreen("daily");}}} style={{...btnStyle("linear-gradient(90deg,#FFB703,#ff9f1c)","#0D1B2A"),padding:"14px 24px",fontSize:"1rem",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>⚡ Daily Challenge</span>
               <span style={{fontSize:"0.75rem",opacity:0.7}}>
-                {getDailyDone()?"✓ Done today":dailyBest?`Best: ${dailyBest.toLocaleString()}`:"Play today!"}
+                {getDailyDone()?"✓ Done today":getDailyProgress()?"▶ Resume":dailyBest?`Best: ${dailyBest.toLocaleString()}`:"Play today!"}
               </span>
             </button>
             <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #1e3048",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -3706,7 +3778,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} isNewBest={winIsNewBest} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} isNewBest={winIsNewBest} signedIn={!!session} />
           {winMode==="daily"&&!session&&(
             <div onClick={()=>setScreen("auth")} style={{
               maxWidth:380,margin:"12px auto 0",padding:"12px 16px",borderRadius:12,cursor:"pointer",
