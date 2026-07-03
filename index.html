@@ -2042,8 +2042,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
   const streakBonus = (signedIn && mode==="daily" && streak > 0 && streak % 7 === 0) ? streakWeekBonus(streak / 7) : 0;
   const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? TOKENS.SOLO : 0;
   const coinsFormula = mode==="daily"
-    ? (streakBonus ? `10% of score + ${streak}-day streak bonus!` : "10% of your score")
+    ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
+  // Start the streak animation right after the receipt's coins row lands
+  const receiptRows = 3 + ((result.bonusPts||0) > 0 ? 1 : 0);
+  const streakDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -2088,7 +2091,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
       />
       {isDaily&&(
         <div style={{marginBottom:20}}>
-          <StreakCard />
+          <StreakCard animate delay={streakDelay} />
         </div>
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
@@ -3271,7 +3274,7 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
 // milestone window began (start Thursday → Th F S S M T W). Streak days are
 // consecutive by definition, so the first N cells burn and the rest are dots.
 // The chip at the end shows the token bonus for completing this window.
-function StreakCard() {
+function StreakCard({ animate, delay = 600 }) {
   const live = getLiveStreak();
   const count = live.count;
   // Anchor = the most recent streak day (today, or yesterday if not yet played)
@@ -3289,13 +3292,41 @@ function StreakCard() {
   const hitMilestoneToday = live.playedToday && count > 0 && count % 7 === 0;
   const windowBonus = streakWeekBonus(count > 0 ? Math.ceil(count / 7) : 1);
 
+  // Animated mode (results screen): the number shows yesterday's count, then
+  // ticks up with a pop + firework; a milestone's bonus counts up after it.
+  const [shownCount, setShownCount] = useState(animate && count > 0 ? count - 1 : count);
+  const [pop, setPop] = useState(false);
+  const [numFw, setNumFw] = useState(false);
+  const [bonusReveal, setBonusReveal] = useState(!animate);
+  const [bonusFw, setBonusFw] = useState(false);
+  useEffect(() => {
+    if (!animate) return;
+    const timers = [];
+    if (count > 0) {
+      timers.push(setTimeout(() => {
+        setShownCount(count); setPop(true); setNumFw(true);
+        timers.push(setTimeout(() => setPop(false), 500));
+      }, delay));
+    }
+    if (hitMilestoneToday) {
+      timers.push(setTimeout(() => setBonusReveal(true), delay + 700));
+      timers.push(setTimeout(() => setBonusFw(true), delay + 1600));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
   return (
     <div style={{textAlign:"center"}}>
-      <div style={{
-        fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"clamp(3rem,12vw,4.2rem)",lineHeight:1,
-        background:"linear-gradient(180deg,#ffcf40,#FFB703)",
-        WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
-      }}>{count}</div>
+      <div style={{position:"relative",display:"inline-block"}}>
+        <Firework color="#FFB703" trigger={numFw} large />
+        <div style={{
+          fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"clamp(3rem,12vw,4.2rem)",lineHeight:1,
+          background:"linear-gradient(180deg,#ffcf40,#FFB703)",
+          WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
+          transform: pop ? "scale(1.22)" : "scale(1)",
+          transition:"transform 0.3s cubic-bezier(.4,2,.6,1)",
+        }}>{shownCount}</div>
+      </div>
       <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#FFB703",fontSize:"1.05rem",margin:"2px 0 12px"}}>
         day streak
       </div>
@@ -3320,9 +3351,15 @@ function StreakCard() {
           </span>
         </div>
         {hitMilestoneToday && (
-          <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.68rem",margin:"9px 0 0",color:"#00F5C4"}}>
-            🎉 {count}-day streak bonus earned: +{streakWeekBonus(count/7)} 🪙
-          </p>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",margin:"10px 0 0",color:"#00F5C4",
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+            opacity: bonusReveal ? 1 : 0, transition:"opacity 0.35s ease"}}>
+            <span>🎉 {count}-day streak bonus:</span>
+            <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+              <Firework color="#00F5C4" trigger={bonusFw} large />
+              <CountUp to={streakWeekBonus(count/7)} active={bonusReveal} color="#00F5C4" large unit="🪙" />
+            </span>
+          </div>
         )}
         {live.best > count && (
           <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.64rem",margin:"8px 0 0",color:"#3a5570"}}>
@@ -3368,6 +3405,8 @@ function DailyAlreadyDone({ onMenu, session, onSignIn }) {
           score={score}
           bonusPts={bonusPts}
           bonusWords={done.bonusWords||[]}
+          coins={session ? dailyTokens(score) : 0}
+          coinsFormula={`10% of ${score.toLocaleString()} pts`}
         />
       )}
       <div style={{margin:"16px 0"}}>
