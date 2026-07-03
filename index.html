@@ -2067,20 +2067,12 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
       <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
         {result.words.join(" · ")}
       </p>
-      {isDaily&&(
+      {isDaily&&showNewBest&&(
         <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:16}}>
-          {streak>0&&(
-            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#1a1200",border:"1.5px solid #FFB703",borderRadius:20,padding:"5px 14px"}}>
-              <span>🔥</span>
-              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700,fontSize:"0.9rem"}}>{streak} day streak</span>
-            </div>
-          )}
-          {showNewBest&&(
-            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#0a2e24",border:"1.5px solid #00F5C4",borderRadius:20,padding:"5px 14px"}}>
-              <span>🏆</span>
-              <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontWeight:700,fontSize:"0.9rem"}}>New personal best!</span>
-            </div>
-          )}
+          <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#0a2e24",border:"1.5px solid #00F5C4",borderRadius:20,padding:"5px 14px"}}>
+            <span>🏆</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontWeight:700,fontSize:"0.9rem"}}>New personal best!</span>
+          </div>
         </div>
       )}
       <ScoreReceipt
@@ -2094,6 +2086,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBe
         coins={coins}
         coinsFormula={coinsFormula}
       />
+      {isDaily&&(
+        <div style={{marginBottom:20}}>
+          <StreakCard />
+        </div>
+      )}
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
         {isDaily&&(
           <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"#1e3048",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
@@ -2128,7 +2125,7 @@ function LeaderboardView({ onBack, session, onSignIn }) {
   const [myLoading, setMyLoading] = useState(false);
   const [myError, setMyError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const streak = getStreak();
+  const streak = getLiveStreak(); // live, not the possibly-stale stored record
 
   useEffect(() => {
     if (tab !== "global") return;
@@ -3270,67 +3267,75 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
 }
 
 // ─── Streak Card ──────────────────────────────────────────────────────────────
-// Week strip (Mon–Sun): 🔥 per day the daily was completed, dimmed dots for
-// missed/future days, today ringed. Below: current/best streak and how far to
-// the next 7-day token milestone.
-function StreakCard({ playedDays }) {
+// Big streak number + a 7-day strip that starts on the day the current
+// milestone window began (start Thursday → Th F S S M T W). Streak days are
+// consecutive by definition, so the first N cells burn and the rest are dots.
+// The chip at the end shows the token bonus for completing this window.
+function StreakCard() {
   const live = getLiveStreak();
-  const today = new Date();
-  const mondayIdx = (today.getDay() + 6) % 7; // 0 = Monday
-  const labels = ["M","T","W","Th","F","S","S"];
-  const cells = labels.map((label, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() - mondayIdx + i);
-    const key = `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
-    return {
-      label,
-      played: playedDays.has(key),
-      isToday: i === mondayIdx,
-      isFuture: i > mondayIdx,
-    };
+  const count = live.count;
+  // Anchor = the most recent streak day (today, or yesterday if not yet played)
+  const anchor = new Date();
+  if (!live.playedToday && count > 0) anchor.setDate(anchor.getDate() - 1);
+  const daysIntoWindow = count > 0 ? ((count - 1) % 7) + 1 : 0;
+  const windowStart = new Date(anchor);
+  windowStart.setDate(anchor.getDate() - Math.max(0, daysIntoWindow - 1));
+  const DAY_LETTERS = ["S","M","T","W","Th","F","S"];
+  const cells = Array.from({length:7}, (_, i) => {
+    const d = new Date(windowStart);
+    d.setDate(windowStart.getDate() + i);
+    return { label: DAY_LETTERS[d.getDay()], fired: i < daysIntoWindow };
   });
-  const weeksDone = Math.floor(live.count / 7);
-  const hitMilestoneToday = live.playedToday && live.count > 0 && live.count % 7 === 0;
-  const daysToNext = (weeksDone + 1) * 7 - live.count;
-  const nextBonus = streakWeekBonus(weeksDone + 1);
+  const hitMilestoneToday = live.playedToday && count > 0 && count % 7 === 0;
+  const windowBonus = streakWeekBonus(count > 0 ? Math.ceil(count / 7) : 1);
 
   return (
-    <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:14,padding:"12px 14px 10px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-        {cells.map((c, i) => (
-          <div key={i} style={{
-            display:"flex",flexDirection:"column",alignItems:"center",gap:3,
-            width:34,padding:"4px 0",borderRadius:9,
-            background: c.isToday ? "#12253a" : "transparent",
-            border: c.isToday ? "1.5px solid #FFB70366" : "1.5px solid transparent",
+    <div style={{textAlign:"center"}}>
+      <div style={{
+        fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"clamp(3rem,12vw,4.2rem)",lineHeight:1,
+        background:"linear-gradient(180deg,#ffcf40,#FFB703)",
+        WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
+      }}>{count}</div>
+      <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#FFB703",fontSize:"1.05rem",margin:"2px 0 12px"}}>
+        day streak
+      </div>
+      <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:14,padding:"12px 14px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+          {cells.map((c, i) => (
+            <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,color:c.fired?"#FFB703":"#3a5570"}}>{c.label}</span>
+              <span style={{fontSize:"1.05rem",lineHeight:1,opacity:c.fired?1:0.3,filter:c.fired?"none":"grayscale(1)"}}>
+                {c.fired ? "🔥" : "🔘"}
+              </span>
+            </div>
+          ))}
+          <span style={{
+            fontFamily:"'JetBrains Mono',monospace",fontSize:"0.66rem",fontWeight:700,
+            color: hitMilestoneToday ? "#00F5C4" : "#FFB703",
+            background: hitMilestoneToday ? "#0a2e2455" : "#1a120055",
+            border: `1px solid ${hitMilestoneToday ? "#00F5C455" : "#FFB70344"}`,
+            borderRadius:8,padding:"3px 7px",marginLeft:4,whiteSpace:"nowrap",flexShrink:0,
           }}>
-            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,color:c.isToday?"#FFB703":"#3a5570"}}>{c.label}</span>
-            <span style={{fontSize:"0.95rem",lineHeight:1,opacity:c.played?1:c.isFuture?0.25:0.45,filter:c.played?"none":"grayscale(1)"}}>
-              {c.played ? "🔥" : "🔘"}
-            </span>
-          </div>
-        ))}
+            {hitMilestoneToday ? "✓" : "×"}{windowBonus}🪙
+          </span>
+        </div>
+        {hitMilestoneToday && (
+          <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.68rem",margin:"9px 0 0",color:"#00F5C4"}}>
+            🎉 {count}-day streak bonus earned: +{streakWeekBonus(count/7)} 🪙
+          </p>
+        )}
+        {live.best > count && (
+          <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.64rem",margin:"8px 0 0",color:"#3a5570"}}>
+            Best: {live.best}🔥
+          </p>
+        )}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",color:"#F5EDD6"}}>
-          Current: <strong style={{color:"#FFB703"}}>{live.count}🔥</strong>
-        </span>
-        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",color:"#7a9cc0"}}>
-          Best: <strong style={{color:"#FFB703"}}>{live.best}🔥</strong>
-        </span>
-      </div>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.66rem",margin:"7px 0 0",textAlign:"center",
-        color: hitMilestoneToday ? "#00F5C4" : "#3a5570"}}>
-        {hitMilestoneToday
-          ? `🎉 ${live.count}-day streak bonus earned: +${streakWeekBonus(live.count/7)} 🪙`
-          : `${daysToNext} more day${daysToNext===1?"":"s"} → +${nextBonus} 🪙 streak bonus`}
-      </p>
     </div>
   );
 }
 
 // ─── Daily Already Done Screen ────────────────────────────────────────────────
-function DailyAlreadyDone({ onMenu, streak, session, onSignIn, playedDays }) {
+function DailyAlreadyDone({ onMenu, session, onSignIn }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   // Infer bonusPts from saved total for old entries that predate the bonusPts field
@@ -3354,11 +3359,6 @@ function DailyAlreadyDone({ onMenu, streak, session, onSignIn, playedDays }) {
       <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",marginBottom:16}}>
         Come back tomorrow for a new challenge.
       </p>
-      {playedDays&&(
-        <div style={{marginBottom:16,textAlign:"left"}}>
-          <StreakCard playedDays={playedDays} />
-        </div>
-      )}
       {done&&(
         <ScoreReceipt
           wordResults={wordResultsArr2}
@@ -3370,6 +3370,9 @@ function DailyAlreadyDone({ onMenu, streak, session, onSignIn, playedDays }) {
           bonusWords={done.bonusWords||[]}
         />
       )}
+      <div style={{margin:"16px 0"}}>
+        <StreakCard />
+      </div>
       {!session&&onSignIn&&(
         <div onClick={onSignIn} style={{
           margin:"12px auto 16px",padding:"12px 16px",borderRadius:12,cursor:"pointer",
@@ -3862,15 +3865,6 @@ function WordFlip() {
   // forces a re-render so the menu button flips to "✓ Done today".
   const [, setDailySyncTick] = useState(0);
 
-  // Days the daily was completed, for the streak week strip. Seeded from local
-  // history (+ today's done marker), then merged with the account's server
-  // scores so the strip is accurate across devices.
-  const [playedDays, setPlayedDays] = useState(() => {
-    const s = new Set(getHistory().map(e => e.dayKey).filter(Boolean));
-    if (getDailyDone()) s.add(dateKey());
-    return s;
-  });
-
   useEffect(() => {
     if (session?.user) {
       if (getDailyDone()) {
@@ -3879,7 +3873,6 @@ function WordFlip() {
         syncDailyDoneFromServer(session.user.id).then(found => {
           if (found) {
             setDailySyncTick(t => t + 1);
-            setPlayedDays(prev => new Set([...prev, dateKey()]));
             // If they'd already wandered into the daily on this device, bounce
             // them to the Already Played screen instead of letting a replay run.
             setScreen(sc => sc === "daily" ? "daily-done" : sc);
@@ -3888,10 +3881,6 @@ function WordFlip() {
       }
       grantEarnedTokens(session.user.id).then(refreshWallet);
       syncInventoryFromServer(session.user.id); // power-ups follow the account
-      // Merge the account's played days into the streak strip
-      fetchMyScores(session.user.id).then(rows => {
-        if (rows?.length) setPlayedDays(prev => new Set([...prev, ...rows.map(r => 'wf_' + r.day_key)]));
-      }).catch(() => {});
     }
   }, [session?.user?.id]);
 
@@ -3900,7 +3889,6 @@ function WordFlip() {
   }, [recovery]);
 
   const dailyBest = getDailyBest();
-  const streak = getStreak();
 
   function startSolo(large) {
     setSoloLarge(large);
@@ -3919,7 +3907,6 @@ function WordFlip() {
       const s = updateStreak();
       setWinStreak(s.count);
       setWinIsNewBest(score > getPersonalBest());
-      setPlayedDays(prev => new Set([...prev, dateKey()]));
       const d = new Date();
       const blocks = result.words.map((_,i) => {
         const r = result.wordResults?.[i];
@@ -4014,7 +4001,11 @@ function WordFlip() {
                 {getDailyDone()?"✓ Done today":getDailyProgress()?"▶ Resume":dailyBest?`Best: ${dailyBest.toLocaleString()}`:"Play today!"}
               </span>
             </button>
-            <StreakCard playedDays={playedDays} />
+            {getLiveStreak().count > 0 && (
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.74rem",textAlign:"center",margin:"-2px 0 0"}}>
+                Current streak: {getLiveStreak().count}🔥
+              </p>
+            )}
             <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #1e3048",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"#7a9cc0"}}>→</span>
             </button>
@@ -4053,7 +4044,7 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} streak={streak.count} session={session} onSignIn={()=>setScreen("auth")} playedDays={playedDays} />}
+      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} />}
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
