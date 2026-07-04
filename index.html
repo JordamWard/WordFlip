@@ -1128,6 +1128,38 @@ function evaluateAchievements(ctx) {
 
 function achById(id) { return ACHIEVEMENTS.find(a => a.id === id); }
 
+// ─── Themes ───────────────────────────────────────────────────────────────────
+// Accent + background restyles (tile face colors keep their green/yellow meaning
+// for readability). Ownership is derived from token_transactions with a stable
+// 'theme-<id>' reason — account-level, no extra tables. Prices are PLACEHOLDERS.
+const THEMES = [
+  { id:'default',   name:'Classic',   price:0,   bg:'linear-gradient(160deg,#0D1B2A 0%,#091422 100%)', title:'linear-gradient(90deg,#00F5C4,#FFB703)', swatch:['#0D1B2A','#00F5C4','#FFB703'] },
+  { id:'midnight',  name:'Midnight',  price:150, bg:'linear-gradient(160deg,#05070d 0%,#02030a 100%)', title:'linear-gradient(90deg,#8ea2c8,#cdd8ee)', swatch:['#05070d','#8ea2c8','#cdd8ee'] },
+  { id:'sunset',    name:'Sunset',    price:200, bg:'linear-gradient(160deg,#2a1428 0%,#180a1c 100%)', title:'linear-gradient(90deg,#ff9f6b,#ff5e8a)', swatch:['#2a1428','#ff9f6b','#ff5e8a'] },
+  { id:'forest',    name:'Forest',    price:200, bg:'linear-gradient(160deg,#0c1f17 0%,#06120d 100%)', title:'linear-gradient(90deg,#00d68f,#a8e05f)', swatch:['#0c1f17','#00d68f','#a8e05f'] },
+  { id:'ocean',     name:'Ocean',     price:200, bg:'linear-gradient(160deg,#0a1a2f 0%,#050f1f 100%)', title:'linear-gradient(90deg,#38bdf8,#22d3ee)', swatch:['#0a1a2f','#38bdf8','#22d3ee'] },
+  { id:'bubblegum', name:'Bubblegum', price:200, bg:'linear-gradient(160deg,#2a0f2e 0%,#1a0820 100%)', title:'linear-gradient(90deg,#f472b6,#a78bfa)', swatch:['#2a0f2e','#f472b6','#a78bfa'] },
+];
+const FREE_THEMES = ['default'];
+function themeById(id) { return THEMES.find(t => t.id === id) || THEMES[0]; }
+function getActiveThemeId() { try { return localStorage.getItem('wf_theme') || 'default'; } catch { return 'default'; } }
+function setActiveThemeId(id) { try { localStorage.setItem('wf_theme', id); } catch {} }
+// Owned = free themes + any bought (a theme-<id> token_transaction exists).
+async function fetchOwnedThemes(userId) {
+  try {
+    const { data } = await getSB().from('token_transactions').select('reason').eq('user_id', userId).like('reason', 'theme-%');
+    const ids = (data || [])
+      .map(r => String(r.reason))
+      .filter(r => r.startsWith('theme-'))   // defensive: only theme rows
+      .map(r => r.slice('theme-'.length));
+    return new Set([...FREE_THEMES, ...ids]);
+  } catch { return new Set(FREE_THEMES); }
+}
+// Buy = atomic coin spend keyed to a stable reason (un-rebuyable, account-level).
+async function buyTheme(themeId, price) {
+  return spendTokens(price, 'theme-' + themeId);
+}
+
 // ─── Share helper ─────────────────────────────────────────────────────────────
 function buildShareText(turns, ms, score, wordResults, totalWords) {
   const d = new Date();
@@ -3919,7 +3951,7 @@ function AchievementsScreen({ onBack }) {
   );
 }
 
-function ShopScreen({ onBack, balance, refreshWallet }) {
+function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ownedThemes, onApplyTheme, onOwnTheme }) {
   const [inv, setInv] = useState(() => {
     const m = {};
     SHOP_ITEMS.forEach(it => { m[it.key] = getInv(it.invKey); });
@@ -3927,6 +3959,24 @@ function ShopScreen({ onBack, balance, refreshWallet }) {
   });
   const [buying, setBuying] = useState(null);  // item key while a purchase is in flight
   const [msg, setMsg] = useState(null);        // { key, text, good }
+  const [themeMsg, setThemeMsg] = useState(null); // { id, text, good }
+
+  async function buyThemeFlow(t) {
+    if (buying) return;
+    if (!session?.user) { setThemeMsg({ id:t.id, text:'Sign in to buy themes.' }); return; }
+    if (balance < t.price) { setThemeMsg({ id:t.id, text:'Not enough coins yet!' }); return; }
+    setBuying('theme-'+t.id); setThemeMsg(null);
+    await ensureFreshSession();
+    const res = await buyTheme(t.id, t.price);
+    if (res.ok) {
+      onOwnTheme(t.id); onApplyTheme(t.id);
+      setThemeMsg({ id:t.id, text:`✓ ${t.name} unlocked & applied!`, good:true });
+      await refreshWallet();
+    } else {
+      setThemeMsg({ id:t.id, text:res.msg });
+    }
+    setBuying(null);
+  }
 
   // Show purchases made on other devices: pull the account inventory on open.
   useEffect(() => {
@@ -4017,9 +4067,50 @@ function ShopScreen({ onBack, balance, refreshWallet }) {
         );
       })}
 
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', textAlign:'center', marginTop:14, lineHeight:1.5}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', textAlign:'center', margin:'14px 0 0', lineHeight:1.5}}>
         Power-ups are used during a game — look for the 💡 and 🔍 buttons above the board.
       </p>
+
+      {/* ── Themes ── */}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
+      {THEMES.map(t => {
+        const owned = ownedThemes.has(t.id);
+        const active = activeThemeId === t.id;
+        const isBuying = buying === 'theme-'+t.id;
+        const canAfford = balance >= t.price;
+        return (
+          <div key={t.id} style={{background:'#0a1520', border:`1.5px solid ${active?'#00F5C455':'#1e3048'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              {/* Swatch preview */}
+              <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+                <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
+                  <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
+                  <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
+                </div>
+              </div>
+              <div style={{flex:1, textAlign:'left'}}>
+                <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+                {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'#3a5570', marginLeft:8}}>owned</span>}
+              </div>
+              {active ? (
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'#00F5C4', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+              ) : owned ? (
+                <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','#00F5C4'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
+              ) : (
+                <button onClick={() => buyThemeFlow(t)} disabled={isBuying || !canAfford}
+                  style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'#1e3048', canAfford?'#0D1B2A':'#3a5570'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
+                  {isBuying ? '…' : `🪙 ${t.price}`}
+                </button>
+              )}
+            </div>
+            {themeMsg?.id === t.id && (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:themeMsg.good ? '#00F5C4' : '#FFB703'}}>
+                {themeMsg.text}
+              </p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4081,6 +4172,13 @@ function WordFlip() {
     setAchToast(ids);
     setTimeout(() => setAchToast([]), 4800);
   }
+  // Cosmetic theme (accent + background). Selection is local; ownership is
+  // account-level (derived from token_transactions).
+  const [activeThemeId,setActiveThemeIdState] = useState(()=>getActiveThemeId());
+  const [ownedThemes,setOwnedThemes] = useState(()=>new Set(FREE_THEMES));
+  const theme = themeById(activeThemeId);
+  function applyTheme(id) { setActiveThemeId(id); setActiveThemeIdState(id); }
+  useEffect(() => { try { document.body.style.background = themeById(activeThemeId).bg; } catch {} }, [activeThemeId]);
   const [winIsNewBest,setWinIsNewBest] = useState(false);
   const [showTutorial,setShowTutorial] = useState(()=>{
     try { return !localStorage.getItem(TUTORIAL_KEY); } catch { return true; }
@@ -4113,6 +4211,7 @@ function WordFlip() {
       }
       grantEarnedTokens(session.user.id).then(refreshWallet);
       syncInventoryFromServer(session.user.id); // power-ups follow the account
+      fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
     }
   }, [session?.user?.id]);
 
@@ -4203,7 +4302,7 @@ function WordFlip() {
   }
 
   return (
-    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:"linear-gradient(160deg,#0D1B2A 0%,#091422 100%)",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif"}}>
+    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:theme.bg,transition:"background 0.4s ease",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,700;0,900;1,700&family=JetBrains+Mono:wght@400;700;800&display=swap');
         @keyframes fadeInOut{0%{opacity:0;transform:translateY(-4px)}20%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0}}
@@ -4240,7 +4339,7 @@ function WordFlip() {
       {/* On the menu, push the title below the fixed top controls (avatar + token
           pill on the left, help on the right) so a wide balance can't overlap it */}
       <div style={{marginTop:screen==="menu"?40:0,marginBottom:screen==="menu"?28:16,textAlign:"center",animation:"menuIn 0.5s ease"}}>
-        <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:"linear-gradient(90deg,#00F5C4,#FFB703)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
+        <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:theme.title,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
         {screen==="menu"&&(
           <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>flip · match · win</p>
@@ -4343,7 +4442,7 @@ function WordFlip() {
         setScreen("menu");
       }} />}
       {screen==="profile"&&<ProfileScreen onBack={()=>setScreen("menu")} profile={profile} onSignOut={signOut} balance={balance} />}
-      {screen==="shop"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><ShopScreen onBack={()=>setScreen("menu")} balance={balance} refreshWallet={refreshWallet} /></div>}
+      {screen==="shop"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><ShopScreen onBack={()=>setScreen("menu")} balance={balance} refreshWallet={refreshWallet} session={session} activeThemeId={activeThemeId} ownedThemes={ownedThemes} onApplyTheme={applyTheme} onOwnTheme={(id)=>setOwnedThemes(prev=>new Set([...prev,id]))} /></div>}
     </div>
   );
 }
