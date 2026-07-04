@@ -198,9 +198,12 @@ GRANT EXECUTE ON FUNCTION public.use_item(text) TO authenticated;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 8. STREAK FREEZE: adds a third inventory item. Adds the column and teaches
 --    buy_item / use_item about 'freeze'. Safe to run on top of section 7.
+--    NOTE: the column is `freezes` (plural) because FREEZE is a reserved
+--    keyword in PostgreSQL and can't be a plain column name. The item KEY
+--    passed from the app is still 'freeze'.
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE public.inventories
-  ADD COLUMN IF NOT EXISTS freeze integer NOT NULL DEFAULT 0 CHECK (freeze >= 0);
+  ADD COLUMN IF NOT EXISTS freezes integer NOT NULL DEFAULT 0 CHECK (freezes >= 0);
 
 CREATE OR REPLACE FUNCTION public.buy_item(p_item text, p_price integer)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -223,18 +226,18 @@ BEGIN
     VALUES (v_uid, -p_price, 'buy-' || p_item || '-' || gen_random_uuid());
   END IF;
 
-  INSERT INTO public.inventories (user_id, hint, xray, freeze)
+  INSERT INTO public.inventories (user_id, hint, xray, freezes)
   VALUES (v_uid,
           CASE WHEN p_item = 'hint'   THEN 1 ELSE 0 END,
           CASE WHEN p_item = 'xray'   THEN 1 ELSE 0 END,
           CASE WHEN p_item = 'freeze' THEN 1 ELSE 0 END)
   ON CONFLICT (user_id) DO UPDATE SET
-    hint   = inventories.hint   + CASE WHEN p_item = 'hint'   THEN 1 ELSE 0 END,
-    xray   = inventories.xray   + CASE WHEN p_item = 'xray'   THEN 1 ELSE 0 END,
-    freeze = inventories.freeze + CASE WHEN p_item = 'freeze' THEN 1 ELSE 0 END,
+    hint    = inventories.hint    + CASE WHEN p_item = 'hint'   THEN 1 ELSE 0 END,
+    xray    = inventories.xray    + CASE WHEN p_item = 'xray'   THEN 1 ELSE 0 END,
+    freezes = inventories.freezes + CASE WHEN p_item = 'freeze' THEN 1 ELSE 0 END,
     updated_at = now();
 
-  SELECT CASE p_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray ELSE freeze END
+  SELECT CASE p_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray ELSE freezes END
     INTO v_count FROM public.inventories WHERE user_id = v_uid;
   RETURN v_count;
 END;
@@ -256,8 +259,8 @@ BEGIN
     UPDATE public.inventories SET xray = xray - 1, updated_at = now()
      WHERE user_id = v_uid AND xray >= 1 RETURNING xray INTO v_count;
   ELSE
-    UPDATE public.inventories SET freeze = freeze - 1, updated_at = now()
-     WHERE user_id = v_uid AND freeze >= 1 RETURNING freeze INTO v_count;
+    UPDATE public.inventories SET freezes = freezes - 1, updated_at = now()
+     WHERE user_id = v_uid AND freezes >= 1 RETURNING freezes INTO v_count;
   END IF;
 
   IF v_count IS NULL THEN RAISE EXCEPTION 'none left'; END IF;
