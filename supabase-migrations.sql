@@ -194,3 +194,73 @@ REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer) FROM anon;
 GRANT EXECUTE ON FUNCTION public.buy_item(text, integer) TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.use_item(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.use_item(text) TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8. STREAK FREEZE: adds a third inventory item. Adds the column and teaches
+--    buy_item / use_item about 'freeze'. Safe to run on top of section 7.
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER TABLE public.inventories
+  ADD COLUMN IF NOT EXISTS freeze integer NOT NULL DEFAULT 0 CHECK (freeze >= 0);
+
+CREATE OR REPLACE FUNCTION public.buy_item(p_item text, p_price integer)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_new_balance integer;
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray','freeze') THEN RAISE EXCEPTION 'unknown item'; END IF;
+  IF p_price IS NULL OR p_price < 0 THEN RAISE EXCEPTION 'invalid price'; END IF;
+
+  IF p_price > 0 THEN
+    UPDATE public.wallets
+       SET balance = balance - p_price, updated_at = now()
+     WHERE user_id = v_uid AND balance >= p_price
+     RETURNING balance INTO v_new_balance;
+    IF v_new_balance IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+    INSERT INTO public.token_transactions (user_id, amount, reason)
+    VALUES (v_uid, -p_price, 'buy-' || p_item || '-' || gen_random_uuid());
+  END IF;
+
+  INSERT INTO public.inventories (user_id, hint, xray, freeze)
+  VALUES (v_uid,
+          CASE WHEN p_item = 'hint'   THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'xray'   THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'freeze' THEN 1 ELSE 0 END)
+  ON CONFLICT (user_id) DO UPDATE SET
+    hint   = inventories.hint   + CASE WHEN p_item = 'hint'   THEN 1 ELSE 0 END,
+    xray   = inventories.xray   + CASE WHEN p_item = 'xray'   THEN 1 ELSE 0 END,
+    freeze = inventories.freeze + CASE WHEN p_item = 'freeze' THEN 1 ELSE 0 END,
+    updated_at = now();
+
+  SELECT CASE p_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray ELSE freeze END
+    INTO v_count FROM public.inventories WHERE user_id = v_uid;
+  RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.use_item(p_item text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray','freeze') THEN RAISE EXCEPTION 'unknown item'; END IF;
+
+  IF p_item = 'hint' THEN
+    UPDATE public.inventories SET hint = hint - 1, updated_at = now()
+     WHERE user_id = v_uid AND hint >= 1 RETURNING hint INTO v_count;
+  ELSIF p_item = 'xray' THEN
+    UPDATE public.inventories SET xray = xray - 1, updated_at = now()
+     WHERE user_id = v_uid AND xray >= 1 RETURNING xray INTO v_count;
+  ELSE
+    UPDATE public.inventories SET freeze = freeze - 1, updated_at = now()
+     WHERE user_id = v_uid AND freeze >= 1 RETURNING freeze INTO v_count;
+  END IF;
+
+  IF v_count IS NULL THEN RAISE EXCEPTION 'none left'; END IF;
+  RETURN v_count;
+END;
+$$;

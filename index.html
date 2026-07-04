@@ -280,6 +280,7 @@ async function grantEarnedTokens(userId) {
 const SHOP_ITEMS = [
   { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the first unsolved word.', price:50, invKey:'wf_inv_hint' },
   { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:30, invKey:'wf_inv_xray' },
+  { key:'freeze', icon:'🧊', name:'Streak Freeze', desc:'Miss a day and your streak survives — one freeze is spent per skipped day.', price:100, invKey:'wf_inv_freeze' },
 ];
 function getInv(invKey) {
   try { return Math.max(0, parseInt(localStorage.getItem(invKey) || '0', 10) || 0); } catch { return 0; }
@@ -345,17 +346,19 @@ async function buyItem(itemKey, price) {
 async function syncInventoryFromServer(userId) {
   try {
     const db = getSB();
-    const { data, error } = await db.from('inventories').select('hint,xray').eq('user_id', userId).maybeSingle();
+    const { data, error } = await db.from('inventories').select('hint,xray,freeze').eq('user_id', userId).maybeSingle();
     if (error) return; // table missing (migration not run) — keep local behavior
     if (!data) {
-      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray');
+      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray'), lf = getInv('wf_inv_freeze');
       for (let i = 0; i < lh; i++) await db.rpc('buy_item', { p_item:'hint', p_price:0 });
       for (let i = 0; i < lx; i++) await db.rpc('buy_item', { p_item:'xray', p_price:0 });
+      for (let i = 0; i < lf; i++) await db.rpc('buy_item', { p_item:'freeze', p_price:0 });
       return; // local cache already reflects the imported counts
     }
     try {
       localStorage.setItem('wf_inv_hint', String(data.hint || 0));
       localStorage.setItem('wf_inv_xray', String(data.xray || 0));
+      localStorage.setItem('wf_inv_freeze', String(data.freeze || 0));
     } catch {}
   } catch (e) {}
 }
@@ -997,35 +1000,64 @@ function computeBestFromHistory() {
   }
   return best;
 }
+function parseDayKey(k) {
+  const [y, m, d] = String(k || '').replace('wf_', '').split('-').map(Number);
+  return (y && m && d) ? new Date(y, m - 1, d) : null;
+}
+// Whole calendar days from dayKey k until today (0 = today, 1 = yesterday…).
+// Math.round absorbs DST hour shifts.
+function daysSinceKey(k) {
+  const d = parseDayKey(k);
+  if (!d) return Infinity;
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today0 - d) / 86400000);
+}
+
 // The stored count can be stale (streak silently broken days ago) — this
-// returns what the streak actually IS right now.
+// returns what the streak actually IS right now. A gap of missed days still
+// counts as alive if the player owns enough Streak Freezes to cover it
+// (they're consumed when the next daily is actually played).
 function getLiveStreak() {
   const s = getStreak();
-  const today = dateKey();
-  const yesterday = (() => {
-    const d = new Date(); d.setDate(d.getDate()-1);
-    return `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
-  })();
-  const alive = s.lastDate === today || s.lastDate === yesterday;
+  const gap = s.lastDate ? daysSinceKey(s.lastDate) - 1 : Infinity; // missed days
+  const alive = gap <= 0 || (gap !== Infinity && getInv('wf_inv_freeze') >= gap);
   return {
     count: alive ? (s.count || 0) : 0,
     best: Math.max(s.best || 0, s.count || 0, computeBestFromHistory()),
-    playedToday: s.lastDate === today,
+    playedToday: s.lastDate === dateKey(),
+    lastDate: s.lastDate || null,
+    frozen: s.frozen || [],
   };
 }
 function updateStreak() {
   const today = dateKey();
   const s = getStreak();
-  const yesterday = (() => {
-    const d = new Date(); d.setDate(d.getDate()-1);
-    return `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
-  })();
-  if (s.lastDate === today) return s; // already counted today
-  const newCount = s.lastDate === yesterday ? s.count + 1 : 1;
+  const prevCount = s.count || 0;
+  if (s.lastDate === today) return { ...s, prevCount }; // already counted today
+  const gap = s.lastDate ? daysSinceKey(s.lastDate) - 1 : Infinity; // missed days
+  const frozen = (s.frozen || []).slice(-30);
+  let newCount;
+  if (gap === 0) {
+    newCount = prevCount + 1; // played yesterday — normal continuation
+  } else if (gap > 0 && gap !== Infinity && getInv('wf_inv_freeze') >= gap) {
+    // Streak Freeze: burn one per missed day; those days join the chain as
+    // "frozen" (blue flame in the strip) and the streak survives.
+    const last = parseDayKey(s.lastDate);
+    for (let j = 1; j <= gap; j++) {
+      addInv('wf_inv_freeze', -1);
+      syncUseItem('freeze'); // account-level consume (no-op for guests)
+      const d = new Date(last); d.setDate(last.getDate() + j);
+      frozen.push(`wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`);
+    }
+    newCount = prevCount + gap + 1; // frozen days keep their place in the chain
+  } else {
+    newCount = 1; // broken (no freezes wasted on an unsalvageable gap)
+  }
   const best = Math.max(s.best || 0, computeBestFromHistory(), newCount);
-  const updated = { count: newCount, lastDate: today, best };
+  const updated = { count: newCount, lastDate: today, best, frozen };
   localStorage.setItem("wf_streak", JSON.stringify(updated));
-  return updated;
+  return { ...updated, prevCount };
 }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
@@ -2035,11 +2067,11 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, isNewBest, signedIn }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
-  const streakBonus = (signedIn && mode==="daily" && streak > 0 && streak % 7 === 0) ? streakWeekBonus(streak / 7) : 0;
+  // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
   const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? TOKENS.SOLO : 0;
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
@@ -3284,10 +3316,12 @@ function StreakCard({ animate, delay = 600 }) {
   const windowStart = new Date(anchor);
   windowStart.setDate(anchor.getDate() - Math.max(0, daysIntoWindow - 1));
   const DAY_LETTERS = ["S","M","T","W","Th","F","S"];
+  const frozenSet = new Set(live.frozen || []);
   const cells = Array.from({length:7}, (_, i) => {
     const d = new Date(windowStart);
     d.setDate(windowStart.getDate() + i);
-    return { label: DAY_LETTERS[d.getDay()], fired: i < daysIntoWindow };
+    const key = `wf_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return { label: DAY_LETTERS[d.getDay()], fired: i < daysIntoWindow, frozen: frozenSet.has(key) };
   });
   const hitMilestoneToday = live.playedToday && count > 0 && count % 7 === 0;
   const windowBonus = streakWeekBonus(count > 0 ? Math.ceil(count / 7) : 1);
@@ -3334,8 +3368,12 @@ function StreakCard({ animate, delay = 600 }) {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
           {cells.map((c, i) => (
             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1}}>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,color:c.fired?"#FFB703":"#3a5570"}}>{c.label}</span>
-              <span style={{fontSize:"1.05rem",lineHeight:1,opacity:c.fired?1:0.3,filter:c.fired?"none":"grayscale(1)"}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,color:c.frozen?"#4FC3F7":c.fired?"#FFB703":"#3a5570"}}>{c.label}</span>
+              <span style={{fontSize:"1.05rem",lineHeight:1,
+                opacity:c.fired?1:0.3,
+                // Frozen days: recolor the 🔥 to an icy blue via hue-rotate + a
+                // cool cast, so a saved day reads as a blue flame, not orange.
+                filter:c.frozen?"hue-rotate(180deg) saturate(1.5) brightness(1.05)":c.fired?"none":"grayscale(1)"}}>
                 {c.fired ? "🔥" : "🔘"}
               </span>
             </div>
@@ -3888,6 +3926,7 @@ function WordFlip() {
   const [winResult,setWinResult] = useState(null);
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
+  const [winStreakBonus,setWinStreakBonus] = useState(0); // milestone tokens earned this win
   const [winIsNewBest,setWinIsNewBest] = useState(false);
   const [showTutorial,setShowTutorial] = useState(()=>{
     try { return !localStorage.getItem(TUTORIAL_KEY); } catch { return true; }
@@ -3945,6 +3984,11 @@ function WordFlip() {
       setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0,bonusWords:result.bonusWords||[]});
       const s = updateStreak();
       setWinStreak(s.count);
+      // Milestone bonus = value of any week-boundary crossed this play (0 if none).
+      const weekBefore = Math.floor((s.prevCount || 0) / 7);
+      const weekNow = Math.floor(s.count / 7);
+      const streakMilestoneBonus = weekNow > weekBefore ? streakWeekBonus(weekNow) : 0;
+      setWinStreakBonus(streakMilestoneBonus);
       setWinIsNewBest(score > getPersonalBest());
       const d = new Date();
       const blocks = result.words.map((_,i) => {
@@ -3957,10 +4001,12 @@ function WordFlip() {
         ensureFreshSession().then(() => {
           submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
           grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
-          // Weekly streak milestone: every 7th consecutive day pays a bonus.
+          // Weekly streak milestone: pay when the streak crosses a multiple of
+          // 7. Uses week-boundary crossing (not exact %7) so a Streak Freeze
+          // that jumps the count over a milestone (e.g. 6 -> 8) still pays it.
           // Reason keyed to today's date — idempotent, can't double-pay.
-          if (s.count > 0 && s.count % 7 === 0) {
-            grantTokens(streakWeekBonus(s.count / 7), 'streakwk-' + dateKey().replace('wf_','')).then(refreshWallet);
+          if (streakMilestoneBonus > 0) {
+            grantTokens(streakMilestoneBonus, 'streakwk-' + dateKey().replace('wf_','')).then(refreshWallet);
           }
         });
       }
@@ -4087,7 +4133,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} isNewBest={winIsNewBest} signedIn={!!session} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} />
           {winMode==="daily"&&!session&&(
             <div onClick={()=>setScreen("auth")} style={{
               maxWidth:380,margin:"12px auto 0",padding:"12px 16px",borderRadius:12,cursor:"pointer",
