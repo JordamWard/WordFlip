@@ -1198,6 +1198,23 @@ const THEMES = [
           face:{bg:'#f3dcee',border:'#c79ec0',text:'#1a0820'}, error:{bg:'#ff5e5b',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
+
+// Chrome palette = the app's surface/border/text/accent colors, themed per theme.
+// Applied as CSS variables (--wf-*) on the app root; the render code references
+// var(--wf-surface) etc. so buttons, cards and the header bars all reskin too.
+const THEME_CHROME = {
+  default:   { surface:'#0a1520', border:'#1e3048', accent:'#00F5C4', accent2:'#FFB703', textDim:'#7a9cc0', textMute:'#3a5570' },
+  midnight:  { surface:'#0a0e18', border:'#222d47', accent:'#9fb2d6', accent2:'#cdd8ee', textDim:'#8a97b5', textMute:'#55618a' },
+  sunset:    { surface:'#1e0f22', border:'#3d2340', accent:'#ff9f6b', accent2:'#ff7ba0', textDim:'#c49ab0', textMute:'#7a556e' },
+  forest:    { surface:'#0a1a12', border:'#1e4030', accent:'#34d99a', accent2:'#a8e05f', textDim:'#86ac96', textMute:'#4d7361' },
+  ocean:     { surface:'#0a1826', border:'#1e3a5a', accent:'#4cc4f5', accent2:'#34d9e8', textDim:'#86a6c4', textMute:'#4d6d88' },
+  bubblegum: { surface:'#1c0a20', border:'#401f46', accent:'#f77fc0', accent2:'#b79bfc', textDim:'#bd9ac8', textMute:'#74547a' },
+};
+function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
+function themeCssVars(id) {
+  const c = THEME_CHROME[id] || THEME_CHROME.default;
+  return { '--wf-surface':c.surface, '--wf-border':c.border, '--wf-accent':c.accent, '--wf-accent2':c.accent2, '--wf-text-dim':c.textDim, '--wf-text-mute':c.textMute };
+}
 const FREE_THEMES = ['default'];
 function themeById(id) { return THEMES.find(t => t.id === id) || THEMES[0]; }
 function getActiveThemeId() { try { return localStorage.getItem('wf_theme') || 'default'; } catch { return 'default'; } }
@@ -1245,7 +1262,9 @@ function Fireworks({ active }) {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext("2d");
     canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-    const colors = ["#00F5C4","#FFB703","#FF5E5B","#9B5DE5","#F5EDD6","#00BBF9"];
+    // Lowercased on purpose: a fixed celebratory palette that must stay literal
+    // (canvas can't read CSS vars), kept distinct from the themed "var(--wf-accent)" etc.
+    const colors = ["#00f5c4","#ffb703","#ff5e5b","#9b5de5","#f5edd6","#00bbf9"];
     particles.current = [];
     for (let b=0; b<8; b++) {
       const x=Math.random()*canvas.width, y=Math.random()*canvas.height*0.6+50;
@@ -1287,14 +1306,14 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
     <span style={{ position:"relative", display:"inline-flex", alignItems:"center", marginLeft:4 }}>
       <button onClick={e=>{ e.stopPropagation(); setOpen(o=>!o); }}
         style={{
-          background:"#1e3048", border:"1.5px solid #2a4060", borderRadius:"50%",
+          background:"var(--wf-border)", border:"1.5px solid #2a4060", borderRadius:"50%",
           width:22, height:22, cursor:"pointer", padding:0,
           display:"inline-flex", alignItems:"center", justifyContent:"center",
-          color:"#7a9cc0", fontSize:"0.65rem", fontWeight:900, lineHeight:1, flexShrink:0,
+          color:"var(--wf-text-dim)", fontSize:"0.65rem", fontWeight:900, lineHeight:1, flexShrink:0,
           minWidth:44, minHeight:44, margin:"-11px -11px",
         }}
         onMouseEnter={e=>{e.currentTarget.style.background="#2a4060";e.currentTarget.style.color="#F5EDD6";}}
-        onMouseLeave={e=>{e.currentTarget.style.background="#1e3048";e.currentTarget.style.color="#7a9cc0";}}
+        onMouseLeave={e=>{e.currentTarget.style.background="var(--wf-border)";e.currentTarget.style.color="var(--wf-text-dim)";}}
         aria-label="How scoring works" aria-expanded={open}>i</button>
       {open && (<>
         <span onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:99}} />
@@ -1302,21 +1321,21 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
           <div style={{position:"absolute",top:-6,left:"50%",transform:"translateX(-50%)",width:10,height:6,overflow:"hidden"}}>
             <div style={{width:10,height:10,background:"#2a4060",transform:"rotate(45deg)",transformOrigin:"bottom",marginTop:3}}/>
           </div>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORE FORMULA</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORE FORMULA</p>
           {[
-            {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"#00F5C4"},
-            {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"#FFB703"},
-            {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"#3a5570"},
-            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"#3a5570"},
+            {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"var(--wf-accent)"},
+            {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"var(--wf-accent2)"},
+            {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"var(--wf-text-mute)"},
+            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>{row.label}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>{row.label}</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:row.color,fontSize:"0.65rem",fontWeight:700,flexShrink:0}}>{row.val}</span>
             </div>
           ))}
-          <div style={{borderTop:"1px solid #1e3048",marginTop:6,paddingTop:6,display:"flex",justifyContent:"space-between"}}>
-            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",fontWeight:700}}>Score so far</span>
-            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.8rem",fontWeight:700}}>{current.toLocaleString()}</span>
+          <div style={{borderTop:"1px solid var(--wf-border)",marginTop:6,paddingTop:6,display:"flex",justifyContent:"space-between"}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",fontWeight:700}}>Score so far</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontSize:"0.8rem",fontWeight:700}}>{current.toLocaleString()}</span>
           </div>
         </div>
       </>)}
@@ -1406,7 +1425,7 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
     : isFound && foundInOrder ? P.green.text
     : isFound ? P.yellow.text
     : P.face.text;
-  const selGlow = (isSelected ? P.sel.border : "#FFB703") + "88";
+  const selGlow = (isSelected ? P.sel.border : "var(--wf-accent2)") + "88";
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -1491,7 +1510,7 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
 function FoundWordBanner({ words, wordResults }) {
   return (
     <div role="status" aria-label="Words to find" style={{marginBottom:14}}>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.62rem",textAlign:"center",letterSpacing:"0.12em",fontWeight:700,margin:"0 0 8px"}}>FIND THESE WORDS</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.62rem",textAlign:"center",letterSpacing:"0.12em",fontWeight:700,margin:"0 0 8px"}}>FIND THESE WORDS</p>
       <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center"}}>
         {words.map((word,i)=>{
           const result = wordResults?.[i];
@@ -1506,7 +1525,7 @@ function FoundWordBanner({ words, wordResults }) {
               border: isFound?"none":"1.5px solid #2a4060",
               fontFamily:"'JetBrains Mono',monospace",fontWeight:800,letterSpacing:"0.2em",
               fontSize:"clamp(0.85rem,3vw,1.1rem)",
-              color: result==="green"?"#0a2e24":result==="yellow"?"#3d2800":"#7a9cc0",
+              color: result==="green"?"#0a2e24":result==="yellow"?"#3d2800":"var(--wf-text-dim)",
               transition:"all 0.4s cubic-bezier(.4,2,.6,1)",
               transform:isFound?"scale(1.1)":"scale(1)",
               boxShadow: result==="green"?"0 0 18px #00F5C466":result==="yellow"?"0 0 16px #FFB70355":"inset 0 0 0 1px #1e3048",
@@ -1565,17 +1584,17 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
       {/* Score header — static initial values, matches GameBoard exactly */}
       <div style={{marginBottom:8}}>
         <div style={{position:"relative",textAlign:"center",marginBottom:6}}>
-          <span style={{fontFamily:"'Fraunces',serif",fontSize:"clamp(1.4rem,5vw,2rem)",fontWeight:900,color:"#FFB703",display:"inline-block"}}>0</span>
-          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginLeft:4}}>pts</span>
+          <span style={{fontFamily:"'Fraunces',serif",fontSize:"clamp(1.4rem,5vw,2rem)",fontWeight:900,color:"var(--wf-accent2)",display:"inline-block"}}>0</span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.7rem",marginLeft:4}}>pts</span>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
-            Turns: <strong style={{color:"#FFB703"}}>{maxTurns}</strong> left
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem"}}>
+            Turns: <strong style={{color:"var(--wf-accent2)"}}>{maxTurns}</strong> left
           </span>
-          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
-            Found: <strong style={{color:"#00F5C4"}}>0/{words.length}</strong>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem"}}>
+            Found: <strong style={{color:"var(--wf-accent)"}}>0/{words.length}</strong>
           </span>
-          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.78rem",color:"#7a9cc0"}}>⏱ 0:00</span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.78rem",color:"var(--wf-text-dim)"}}>⏱ 0:00</span>
         </div>
       </div>
       <FoundWordBanner words={words} wordResults={{}} />
@@ -1584,7 +1603,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
       {/* Tile board — same container as real game board */}
       <div style={{
         padding:"clamp(4px,2vw,12px)",
-        background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
+        background:"var(--wf-surface)",borderRadius:16,border:"1.5px solid var(--wf-border)",
         boxShadow:"0 4px 32px #00000055",
       }}>
         <div style={{position:'relative',paddingBottom:'100%',userSelect:'none',WebkitUserSelect:'none'}}>
@@ -1918,7 +1937,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       // Valid word found!
       const inOrder = letters.join("") === words[matchIdx];
       const pts = inOrder ? 300 : 100;
-      const floatColor = inOrder ? "#00F5C4" : "#FFB703";
+      const floatColor = inOrder ? "var(--wf-accent)" : "var(--wf-accent2)";
       inOrder ? soundManager.wordGreen() : soundManager.wordYellow();
       const fid = ++floatIdRef.current;
       setFloatingScores(prev=>[...prev,{id:fid,pts,color:floatColor}]);
@@ -1959,30 +1978,30 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
                 fontFamily:"'Fraunces',serif",
                 fontSize:"clamp(1.4rem,5vw,2rem)",
                 fontWeight:900,
-                color:"#FFB703",
+                color:"var(--wf-accent2)",
                 animation: scorePop ? "scorePop 0.4s cubic-bezier(.4,2,.6,1)" : "none",
                 display:"inline-block",
                 transition:"color 0.2s",
               }}>
                 {liveScore.toLocaleString()}
               </span>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginLeft:4}}>pts</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.7rem",marginLeft:4}}>pts</span>
             </div>
             {/* Stats row */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem"}}>
                 {maxTurns ? (
-                  <>Turns: <strong aria-live={turnsDanger?"assertive":"off"} style={{color:turnsLeft<=3?"#FF5E5B":"#FFB703",transition:"color 0.3s"}}>{turnsLeft}</strong> left</>
+                  <>Turns: <strong aria-live={turnsDanger?"assertive":"off"} style={{color:turnsLeft<=3?"#FF5E5B":"var(--wf-accent2)",transition:"color 0.3s"}}>{turnsLeft}</strong> left</>
                 ) : (
-                  <>Guesses: <strong style={{color:"#FFB703"}}>{turns}</strong></>
+                  <>Guesses: <strong style={{color:"var(--wf-accent2)"}}>{turns}</strong></>
                 )}
               </span>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem"}}>
-                Found: <strong style={{color:"#00F5C4"}}>{found.length}/{words.length}</strong>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem"}}>
+                Found: <strong style={{color:"var(--wf-accent)"}}>{found.length}/{words.length}</strong>
               </span>
               <span
                 aria-live={timeLeft!==null&&timeLeft<15?"assertive":"off"}
-                style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.78rem",color:timeLeft!==null&&timeLeft<15?"#FF5E5B":"#7a9cc0"}}
+                style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.78rem",color:timeLeft!==null&&timeLeft<15?"#FF5E5B":"var(--wf-text-dim)"}}
               >
                 {timeLeft!==null?`⏱ ${timeLeft}s`:`⏱ ${formatTime(elapsed)}`}
               </span>
@@ -1998,7 +2017,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       >
         {flash&&(
           <span style={{fontFamily:"'Fraunces',serif",fontSize:"0.95rem",fontWeight:700,animation:"fadeInOut 0.5s ease",
-            color:flash==="good"?"#00F5C4":flash==="goodYellow"?"#FFB703":flash==="bonus"?"#9B5DE5":"#FF5E5B"}}>
+            color:flash==="good"?"var(--wf-accent)":flash==="goodYellow"?"var(--wf-accent2)":flash==="bonus"?"#9B5DE5":"#FF5E5B"}}>
             {flash==="good"&&"🟩 Nice — bonus points!"}
             {flash==="goodYellow"&&"🟨 Found! Try in order for more pts"}
             {flash==="bonus"&&`✨ Bonus word: ${lastBonusWord.toUpperCase()}! +50 pts`}
@@ -2013,15 +2032,15 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         return (
           <div style={{display:"flex",gap:8,justifyContent:"center",alignItems:"center",marginBottom:6}}>
             <button onClick={useHint} disabled={!hintOk}
-              style={{...btnStyle(hintOk?"#0e2a3a":"#0a1520",hintOk?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${hintOk?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+              style={{...btnStyle(hintOk?"#0e2a3a":"var(--wf-surface)",hintOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${hintOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
               💡 Hint ×{invHint}
             </button>
             <button onClick={()=>setXrayArmed(a=>!a)} disabled={!xrayOk&&!xrayArmed}
-              style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"#0a1520",xrayArmed?"#9B5DE5":xrayOk?"#00F5C4":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"#1e3048"}`,borderRadius:10}}>
+              style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"var(--wf-surface)",xrayArmed?"#9B5DE5":xrayOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
               {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
             </button>
             {isDaily&&(
-              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",color:helpsLeft>0?"#3a5570":"#FF5E5B"}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",color:helpsLeft>0?"var(--wf-text-mute)":"#FF5E5B"}}>
                 {helpsLeft>0?`${helpsLeft} left today`:"daily limit reached"}
               </span>
             )}
@@ -2034,7 +2053,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         style={{
           display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,
           gap:"clamp(4px,1.5vw,10px)",padding:"clamp(4px,2vw,12px)",
-          background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048",
+          background:"var(--wf-surface)",borderRadius:16,border:"1.5px solid var(--wf-border)",
           boxShadow:"0 4px 32px #00000055",
         }}>
         {tiles.map(tile=>(
@@ -2138,13 +2157,13 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const rows = [
     { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
       formula: yellows > 0 ? `${greens}×300 + ${yellows}×100` : `${greens}×300`,
-      pts:wordPts,  color:"#00F5C4" },
+      pts:wordPts,  color:"var(--wf-accent)" },
     ...(bonusPts > 0 ? [
       { icon:"✨", label:"Bonus words",
         formula: (bonusWords && bonusWords.length)
           ? `${bonusWords.map(w=>w.toUpperCase()).join(", ")} · ${bonusWords.length}×50`
           : `${Math.round(bonusPts/50)}×50`,
-        pts:bonusPts, color:"#FFB703" },
+        pts:bonusPts, color:"var(--wf-accent2)" },
     ] : []),
     { icon:"⏱", label:"Time bonus",
       formula:timeFormula,
@@ -2181,7 +2200,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const coinsVisible = visibleCount > rows.length + 1;
 
   return (
-    <div style={{background:"#0a1520", border:"1.5px solid #1e3048", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
+    <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
       {rows.map((row, i) => {
         const visible = visibleCount > i;
         return (
@@ -2191,7 +2210,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
             transition:"opacity 0.35s ease, transform 0.35s ease",
           }}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem"}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem"}}>
                 {row.icon} {row.label}
               </span>
               <div style={{position:"relative", display:"flex", alignItems:"center", flexShrink:0, marginLeft:12}}>
@@ -2199,7 +2218,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
                 <CountUp to={row.pts} active={visible} color={row.color} />
               </div>
             </div>
-            <div style={{fontFamily:"'JetBrains Mono',monospace", color:"#3a5570", fontSize:"0.68rem", marginTop:3, paddingLeft:"1.4em"}}>
+            <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.68rem", marginTop:3, paddingLeft:"1.4em"}}>
               {row.formula}
             </div>
           </div>
@@ -2212,10 +2231,10 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
         transform:totalVisible?"scale(1)":"scale(0.88)",
         transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
       }}>
-        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#7a9cc0", fontSize:"0.78rem", fontWeight:700}}>TOTAL</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>TOTAL</span>
         <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-          <Firework color="#FFB703" trigger={firedSet.has("total")} large />
-          <CountUp to={score} active={totalVisible} color="#FFB703" large />
+          <Firework color="var(--wf-accent2)" trigger={firedSet.has("total")} large />
+          <CountUp to={score} active={totalVisible} color="var(--wf-accent2)" large />
         </div>
       </div>
       {coins > 0 && (
@@ -2227,14 +2246,14 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
           transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
         }}>
           <div>
-            <span style={{fontFamily:"'JetBrains Mono',monospace", color:"#00F5C4", fontSize:"0.78rem", fontWeight:700}}>🪙 COINS EARNED</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-accent)", fontSize:"0.78rem", fontWeight:700}}>🪙 COINS EARNED</span>
             {coinsFormula && (
-              <div style={{fontFamily:"'JetBrains Mono',monospace", color:"#3a5570", fontSize:"0.66rem", marginTop:3}}>{coinsFormula}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.66rem", marginTop:3}}>{coinsFormula}</div>
             )}
           </div>
           <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-            <Firework color="#00F5C4" trigger={firedSet.has("coins")} large />
-            <CountUp to={coins} active={coinsVisible} color="#00F5C4" large unit="🪙" />
+            <Firework color="var(--wf-accent)" trigger={firedSet.has("coins")} large />
+            <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" />
           </div>
         </div>
       )}
@@ -2276,14 +2295,14 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
         {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
       </h2>
-      <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
+      <p style={{color:"var(--wf-text-dim)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
         {result.words.join(" · ")}
       </p>
       {isDaily&&showNewBest&&(
         <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:16}}>
           <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#0a2e24",border:"1.5px solid #00F5C4",borderRadius:20,padding:"5px 14px"}}>
             <span>🏆</span>
-            <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontWeight:700,fontSize:"0.9rem"}}>New personal best!</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent)",fontWeight:700,fontSize:"0.9rem"}}>New personal best!</span>
           </div>
         </div>
       )}
@@ -2305,22 +2324,33 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
         {isDaily&&(
-          <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"#1e3048",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
+          <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
             {copied?"✓ Copied!":"📤 Share"}
           </button>
         )}
         {!isDaily&&(
-          <button onClick={onPlayAgain} style={btnStyle("#00F5C4","#0a2e24")}>Play Again</button>
+          <button onClick={onPlayAgain} style={btnStyle("var(--wf-accent)","#0a2e24")}>Play Again</button>
         )}
-        <button onClick={onMenu} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
       </div>
     </div>
   );
 }
 
 function btnStyle(bg,color) {
+  // Remap the common chrome/accent literals callers pass to the active theme,
+  // so every button reskins without touching call sites. Primary gradients are
+  // rebuilt from the theme accents. Unknown values pass through untouched.
+  const c = activeChrome();
+  const map = {
+    '#00F5C4':c.accent, '#FFB703':c.accent2, '#1e3048':c.border, '#0a1520':c.surface,
+    '#7a9cc0':c.textDim, '#3a5570':c.textMute,
+    'linear-gradient(90deg,#00c49f,#00F5C4)':`linear-gradient(90deg,${c.accent},${c.accent})`,
+    'linear-gradient(90deg,#00F5C4,#FFB703)':`linear-gradient(90deg,${c.accent},${c.accent2})`,
+    'linear-gradient(90deg,#FFB703,#ff9f1c)':`linear-gradient(90deg,${c.accent2},${c.accent2})`,
+  };
   return {
-    background:bg,color,border:"none",borderRadius:10,
+    background:map[bg]||bg,color:map[color]||color,border:"none",borderRadius:10,
     padding:"10px 24px",fontFamily:"'JetBrains Mono',monospace",
     fontWeight:700,fontSize:"0.9rem",cursor:"pointer",transition:"opacity 0.15s",
   };
@@ -2406,22 +2436,22 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
 
   return (
     <div style={{maxWidth:440,margin:"0 auto"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
 
       {/* Tab row */}
       <div style={{display:"flex",gap:8,marginBottom:16}}>
         <button onClick={()=>setTab("personal")} style={{
           flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
           fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-          background: tab==="personal" ? "#00F5C4" : "#0a1520",
-          color: tab==="personal" ? "#0a2e24" : "#3a5570",
+          background: tab==="personal" ? "var(--wf-accent)" : "var(--wf-surface)",
+          color: tab==="personal" ? "#0a2e24" : "var(--wf-text-mute)",
           transition:"all 0.15s",
         }}>🏅 My Scores</button>
         <button onClick={()=>setTab("global")} style={{
           flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
           fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-          background: tab==="global" ? "#9B5DE5" : "#0a1520",
-          color: tab==="global" ? "#fff" : "#3a5570",
+          background: tab==="global" ? "#9B5DE5" : "var(--wf-surface)",
+          color: tab==="global" ? "#fff" : "var(--wf-text-mute)",
           transition:"all 0.15s",
         }}>🌍 Global</button>
       </div>
@@ -2436,14 +2466,14 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
             display:"flex", justifyContent:"space-between", alignItems:"center",
           }}>
             <div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginBottom:4,letterSpacing:"0.08em"}}>PERSONAL BEST</div>
-              <div style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:900,fontSize:"1.8rem"}}>{personalBest.toLocaleString()}</div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.7rem",marginTop:2}}>pts</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.7rem",marginBottom:4,letterSpacing:"0.08em"}}>PERSONAL BEST</div>
+              <div style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontWeight:900,fontSize:"1.8rem"}}>{personalBest.toLocaleString()}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.7rem",marginTop:2}}>pts</div>
             </div>
             <div style={{textAlign:"right"}}>
               <div style={{fontSize:"2rem"}}>🏆</div>
               {streak.count > 0 && (
-                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.75rem",marginTop:4}}>🔥 {streak.count} day streak</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.75rem",marginTop:4}}>🔥 {streak.count} day streak</div>
               )}
             </div>
           </div>
@@ -2453,13 +2483,13 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
         {session?.user && (myLoading || myScores === null) ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading your scores...</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem"}}>Loading your scores...</p>
           </div>
         ) : myError ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
-            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.75rem"}}>Retry</button>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
+            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.75rem"}}>Retry</button>
           </div>
         ) : history.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
@@ -2474,8 +2504,8 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
               const isBest = entry.score === personalBest;
               return (
                 <div key={i} style={{
-                  background:"#0a1520", borderRadius:12,
-                  border:`1.5px solid ${isBest?"#FFB703":"#1e3048"}`,
+                  background:"var(--wf-surface)", borderRadius:12,
+                  border:`1.5px solid ${isBest?"var(--wf-accent2)":"var(--wf-border)"}`,
                   padding:"10px 14px",
                   display:"grid",
                   gridTemplateColumns:"auto 1fr auto",
@@ -2484,24 +2514,24 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                   {/* Date + trophy */}
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
                     {isBest && <span style={{fontSize:"0.8rem"}}>🏆</span>}
-                    <span style={{fontFamily:"'JetBrains Mono',monospace",color:isBest?"#FFB703":"#7a9cc0",fontSize:"0.75rem",fontWeight:isBest?700:400}}>
+                    <span style={{fontFamily:"'JetBrains Mono',monospace",color:isBest?"var(--wf-accent2)":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:isBest?700:400}}>
                       {entry.shortDate || entry.date}
                     </span>
                   </div>
                   {/* Blocks + stats */}
                   <div>
                     <div style={{fontSize:"0.85rem",letterSpacing:"0.05em",marginBottom:2}}>{entry.blocks||"🟨🟨🟨🟨"}</div>
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>
                       {entry.turns} guess{entry.turns!==1?"es":""} · {formatTime(entry.elapsed)}
                       {entry.outOfTurns ? " · ran out" : ""}
                     </div>
                   </div>
                   {/* Score */}
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontFamily:"'Fraunces',serif",color:isBest?"#FFB703":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
+                    <div style={{fontFamily:"'Fraunces',serif",color:isBest?"var(--wf-accent2)":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
                       {entry.score.toLocaleString()}
                     </div>
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.6rem"}}>pts</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.6rem"}}>pts</div>
                   </div>
                 </div>
               );
@@ -2515,14 +2545,14 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
           <button onClick={()=>setGlobalTab("daily")} style={{
             flex:1, padding:"6px 0", borderRadius:8, border:"none", cursor:"pointer",
             fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.7rem",
-            background: globalTab==="daily" ? "#9B5DE5" : "#0a1520",
-            color: globalTab==="daily" ? "#fff" : "#3a5570",
+            background: globalTab==="daily" ? "#9B5DE5" : "var(--wf-surface)",
+            color: globalTab==="daily" ? "#fff" : "var(--wf-text-mute)",
           }}>Today</button>
           <button onClick={()=>setGlobalTab("alltime")} style={{
             flex:1, padding:"6px 0", borderRadius:8, border:"none", cursor:"pointer",
             fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.7rem",
-            background: globalTab==="alltime" ? "#9B5DE5" : "#0a1520",
-            color: globalTab==="alltime" ? "#fff" : "#3a5570",
+            background: globalTab==="alltime" ? "#9B5DE5" : "var(--wf-surface)",
+            color: globalTab==="alltime" ? "#fff" : "var(--wf-text-mute)",
           }}>All Time</button>
         </div>
 
@@ -2533,7 +2563,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
             display:"flex",alignItems:"center",gap:8,
           }}>
             <span style={{fontSize:"1rem"}}>🏆</span>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.72rem",margin:0,flex:1}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.72rem",margin:0,flex:1}}>
               Sign in to submit your scores to the global board!
             </p>
             <span style={{color:"#9B5DE5",fontSize:"1rem"}}>→</span>
@@ -2543,18 +2573,18 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
         {lbLoading ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem"}}>Loading scores...</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem"}}>Loading scores...</p>
           </div>
         ) : lbError ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
-            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.75rem"}}>Retry</button>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem",marginBottom:12}}>Couldn't load scores.</p>
+            <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.75rem"}}>Retry</button>
           </div>
         ) : leaderboard.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"2rem",marginBottom:8}}>🏜️</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.82rem",lineHeight:1.6}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.82rem",lineHeight:1.6}}>
               {globalTab==="daily" ? "No scores yet today." : "No scores yet."}<br/>Be the first!
             </p>
           </div>
@@ -2566,15 +2596,15 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
               const username = entry.profiles?.username || "Anonymous";
               return (
                 <div key={i} style={{
-                  background: isMe ? "#9B5DE515" : "#0a1520",
+                  background: isMe ? "#9B5DE515" : "var(--wf-surface)",
                   borderRadius:10,
-                  border:`1.5px solid ${isMe ? "#9B5DE5" : medal ? "#FFB70344" : "#1e3048"}`,
+                  border:`1.5px solid ${isMe ? "#9B5DE5" : medal ? "#FFB70344" : "var(--wf-border)"}`,
                   padding:"8px 12px",
                   display:"grid",
                   gridTemplateColumns:"28px 1fr auto",
                   gap:"0 8px", alignItems:"center",
                 }}>
-                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:medal?"#FFB703":"#3a5570",fontSize:medal?"1rem":"0.75rem",fontWeight:700,textAlign:"center"}}>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:medal?"var(--wf-accent2)":"var(--wf-text-mute)",fontSize:medal?"1rem":"0.75rem",fontWeight:700,textAlign:"center"}}>
                     {medal || (i+1)}
                   </div>
                   <div>
@@ -2584,17 +2614,17 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                     {entry.blocks && (
                       <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
                     )}
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.6rem"}}>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.6rem"}}>
                       {entry.turns != null ? `${entry.turns} guess${entry.turns!==1?"es":""}` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
                       {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
                     </div>
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontFamily:"'Fraunces',serif",color:medal?"#FFB703":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
+                    <div style={{fontFamily:"'Fraunces',serif",color:medal?"var(--wf-accent2)":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
                       {entry.score.toLocaleString()}
                     </div>
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.55rem"}}>pts</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.55rem"}}>pts</div>
                   </div>
                 </div>
               );
@@ -2624,25 +2654,25 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
   const [foundTileIdsMulti,setFoundTileIdsMulti] = useState(new Set());
   const multiProcessingRef = React.useRef(false);
   const multiFlippedRef = React.useRef([]);
-  const COLORS=["#00F5C4","#FFB703","#FF5E5B","#9B5DE5"];
+  const COLORS=["var(--wf-accent)","var(--wf-accent2)","#FF5E5B","#9B5DE5"];
   const playerNames=Array.from({length:playerCount},(_,i)=>`Player ${i+1}`);
 
   useEffect(()=>{ if (!started) setScores(Array(playerCount).fill(0)); },[playerCount]);
 
   if (!started) return (
     <div style={{textAlign:"center",maxWidth:360,margin:"0 auto"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 20px"}}>Local Multiplayer</h2>
-      <p style={{color:"#7a9cc0",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",marginBottom:8}}>Players</p>
+      <p style={{color:"var(--wf-text-dim)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.85rem",marginBottom:8}}>Players</p>
       <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:20}}>
         {[2,3,4].map(n=>(
-          <button key={n} onClick={()=>setPlayerCount(n)} style={{...btnStyle(playerCount===n?"#FFB703":"#1e3048",playerCount===n?"#0D1B2A":"#7a9cc0"),padding:"8px 18px"}}>{n}</button>
+          <button key={n} onClick={()=>setPlayerCount(n)} style={{...btnStyle(playerCount===n?"var(--wf-accent2)":"var(--wf-border)",playerCount===n?"#0D1B2A":"var(--wf-text-dim)"),padding:"8px 18px"}}>{n}</button>
         ))}
       </div>
-      <div style={{background:"#0a1520",border:"1px solid #1e3048",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",margin:0,lineHeight:1.8}}>⭐ Flip in order → <strong style={{color:"#F5EDD6"}}>300 pts</strong> · ✓ Any order → <strong style={{color:"#F5EDD6"}}>100 pts</strong> · ✗ Wrong → passes turn</p>
+      <div style={{background:"var(--wf-surface)",border:"1px solid var(--wf-border)",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:0,lineHeight:1.8}}>⭐ Flip in order → <strong style={{color:"#F5EDD6"}}>300 pts</strong> · ✓ Any order → <strong style={{color:"#F5EDD6"}}>100 pts</strong> · ✗ Wrong → passes turn</p>
       </div>
-      <button onClick={()=>setStarted(true)} style={{...btnStyle("#00F5C4","#0a2e24"),width:"100%",padding:"14px",borderRadius:12}}>Start Game</button>
+      <button onClick={()=>setStarted(true)} style={{...btnStyle("var(--wf-accent)","#0a2e24"),width:"100%",padding:"14px",borderRadius:12}}>Start Game</button>
     </div>
   );
 
@@ -2656,15 +2686,15 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
         </h2>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
           {scores.map((s,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",background:"#0a1520",borderRadius:10,padding:"10px 16px",border:`1.5px solid ${s===maxScore?COLORS[i]:"#1e3048"}`}}>
+            <div key={i} style={{display:"flex",justifyContent:"space-between",background:"var(--wf-surface)",borderRadius:10,padding:"10px 16px",border:`1.5px solid ${s===maxScore?COLORS[i]:"var(--wf-border)"}`}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:COLORS[i],fontWeight:700}}>{playerNames[i]}</span>
-              <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontWeight:700}}>{s.toLocaleString()} pts</span>
+              <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontWeight:700}}>{s.toLocaleString()} pts</span>
             </div>
           ))}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-          <button onClick={()=>{ setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); }} style={btnStyle("#00F5C4","#0a2e24")}>Rematch</button>
-          <button onClick={onBack} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+          <button onClick={()=>{ setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); }} style={btnStyle("var(--wf-accent)","#0a2e24")}>Rematch</button>
+          <button onClick={onBack} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
         </div>
       </div>
     );
@@ -2716,7 +2746,7 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
     <div style={{width:"100%",maxWidth:500,margin:"0 auto"}}>
       <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:10,flexWrap:"wrap"}}>
         {playerNames.map((name,i)=>(
-          <div key={i} style={{padding:"4px 14px",borderRadius:20,background:i===currentPlayer?COLORS[i]+"22":"#0a1520",border:`1.5px solid ${i===currentPlayer?COLORS[i]:"#1e3048"}`,fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8rem",color:i===currentPlayer?COLORS[i]:"#2a4060",fontWeight:i===currentPlayer?700:400,transition:"all 0.2s"}}>
+          <div key={i} style={{padding:"4px 14px",borderRadius:20,background:i===currentPlayer?COLORS[i]+"22":"var(--wf-surface)",border:`1.5px solid ${i===currentPlayer?COLORS[i]:"var(--wf-border)"}`,fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8rem",color:i===currentPlayer?COLORS[i]:"#2a4060",fontWeight:i===currentPlayer?700:400,transition:"all 0.2s"}}>
             {name}: {scores[i].toLocaleString()}pts
           </div>
         ))}
@@ -2724,7 +2754,7 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
       <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center",marginBottom:10}}>
         {words.map((word,i)=>{
           const fw=foundWords.find(f=>f.wordIndex===i);
-          return <div key={i} style={{padding:"3px 12px",borderRadius:20,background:fw?COLORS[fw.player]+"33":"#0e1f30",border:fw?`1.5px solid ${COLORS[fw.player]}`:"1.5px solid #1e3048",fontFamily:"'JetBrains Mono',monospace",fontWeight:fw?.inOrder?900:700,fontSize:"0.8rem",color:fw?COLORS[fw.player]:"#3a5570",letterSpacing:"0.15em",transition:"all 0.3s cubic-bezier(.4,2,.6,1)",transform:fw?"scale(1.06)":"scale(1)",boxShadow:fw?.inOrder?`0 0 10px ${COLORS[fw.player]}88`:"none"}}>{fw?.inOrder?"⭐ ":""}{word}</div>;
+          return <div key={i} style={{padding:"3px 12px",borderRadius:20,background:fw?COLORS[fw.player]+"33":"#0e1f30",border:fw?`1.5px solid ${COLORS[fw.player]}`:"1.5px solid var(--wf-border)",fontFamily:"'JetBrains Mono',monospace",fontWeight:fw?.inOrder?900:700,fontSize:"0.8rem",color:fw?COLORS[fw.player]:"var(--wf-text-mute)",letterSpacing:"0.15em",transition:"all 0.3s cubic-bezier(.4,2,.6,1)",transform:fw?"scale(1.06)":"scale(1)",boxShadow:fw?.inOrder?`0 0 10px ${COLORS[fw.player]}88`:"none"}}>{fw?.inOrder?"⭐ ":""}{word}</div>;
         })}
       </div>
       <div style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:6}}>
@@ -2734,7 +2764,7 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
           {flash==="bad"&&"✗ Next player's turn"}
         </span>}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"clamp(3px,1.2vw,8px)",padding:"clamp(4px,2vw,12px)",background:"#0a1520",borderRadius:16,border:"1.5px solid #1e3048"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"clamp(3px,1.2vw,8px)",padding:"clamp(4px,2vw,12px)",background:"var(--wf-surface)",borderRadius:16,border:"1.5px solid var(--wf-border)"}}>
         {tiles.map(tile=>(
           <Tile key={tile.id} tile={tile} isFlipped={flipped.includes(tile.id)} isFound={foundTileIdsMulti.has(tile.id)} isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)} isError={error.includes(tile.id)} onClick={()=>handleTileClick(tile)} orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined} />
         ))}
@@ -2744,8 +2774,8 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
           {playerNames[currentPlayer]}'s turn · Turn {turns+1}
         </p>
         <div style={{display:"flex",gap:6}}>
-          <button onClick={()=>{ if(window.confirm('End game and see results?')) setGameOver(true); }} style={{...btnStyle("#1e3048","#3a5570"),padding:"4px 10px",fontSize:"0.7rem"}}>End</button>
-          <button onClick={()=>{ if(window.confirm('Return to menu?')) onBack(); }} style={{...btnStyle("#1e3048","#3a5570"),padding:"4px 10px",fontSize:"0.7rem"}}>Menu</button>
+          <button onClick={()=>{ if(window.confirm('End game and see results?')) setGameOver(true); }} style={{...btnStyle("var(--wf-border)","var(--wf-text-mute)"),padding:"4px 10px",fontSize:"0.7rem"}}>End</button>
+          <button onClick={()=>{ if(window.confirm('Return to menu?')) onBack(); }} style={{...btnStyle("var(--wf-border)","var(--wf-text-mute)"),padding:"4px 10px",fontSize:"0.7rem"}}>Menu</button>
         </div>
       </div>
     </div>
@@ -3433,22 +3463,22 @@ function SoloSetup({ onBack, onStart }) {
   const [large,setLarge] = useState(false);
   return (
     <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"0 0 24px"}}>Solo Play</h2>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.8rem",marginBottom:10,letterSpacing:"0.08em"}}>GRID SIZE</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.8rem",marginBottom:10,letterSpacing:"0.08em"}}>GRID SIZE</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:24}}>
         {[{label:"Small",sub:"4 words · 4×4",val:false},{label:"Large",sub:"9 words · 6×6",val:true}].map(opt=>(
-          <button key={opt.label} onClick={()=>setLarge(opt.val)} style={{background:large===opt.val?"#0e2a3a":"#0a1520",border:`2px solid ${large===opt.val?"#00F5C4":"#1e3048"}`,borderRadius:12,padding:"14px 12px",cursor:"pointer",textAlign:"left",transition:"all 0.15s",boxShadow:large===opt.val?"0 0 14px #00F5C422":"none"}}>
-            <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:large===opt.val?"#00F5C4":"#F5EDD6",fontSize:"1.05rem"}}>{opt.label}</div>
-            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>{opt.sub}</div>
+          <button key={opt.label} onClick={()=>setLarge(opt.val)} style={{background:large===opt.val?"#0e2a3a":"var(--wf-surface)",border:`2px solid ${large===opt.val?"var(--wf-accent)":"var(--wf-border)"}`,borderRadius:12,padding:"14px 12px",cursor:"pointer",textAlign:"left",transition:"all 0.15s",boxShadow:large===opt.val?"0 0 14px #00F5C422":"none"}}>
+            <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:large===opt.val?"var(--wf-accent)":"#F5EDD6",fontSize:"1.05rem"}}>{opt.label}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",marginTop:3}}>{opt.sub}</div>
           </button>
         ))}
       </div>
-      <div style={{background:"#0a1520",border:"1px solid #1e3048",borderRadius:12,padding:"14px 16px",marginBottom:24}}>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.75rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORING</p>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",margin:0,lineHeight:1.9}}>
-          🟩 Flip in order → <strong style={{color:"#00F5C4"}}>+300 pts</strong><br/>
-          🟨 Any order → <strong style={{color:"#FFB703"}}>+100 pts</strong><br/>
+      <div style={{background:"var(--wf-surface)",border:"1px solid var(--wf-border)",borderRadius:12,padding:"14px 16px",marginBottom:24}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.75rem",margin:"0 0 8px",fontWeight:700,letterSpacing:"0.08em"}}>SCORING</p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:0,lineHeight:1.9}}>
+          🟩 Flip in order → <strong style={{color:"var(--wf-accent)"}}>+300 pts</strong><br/>
+          🟨 Any order → <strong style={{color:"var(--wf-accent2)"}}>+100 pts</strong><br/>
           ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec<br/>
           🎯 Accuracy → <strong style={{color:"#00BBF9"}}>800 pts</strong>, −50/miss
         </p>
@@ -3464,24 +3494,24 @@ function SoloSetup({ onBack, onStart }) {
 function MultiSetup({ onBack, onLocal, onOnline }) {
   return (
     <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"0 0 24px"}}>Multiplayer</h2>
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        <button onClick={onLocal} style={{background:"#0a1520",border:"2px solid #00F5C444",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
+        <button onClick={onLocal} style={{background:"var(--wf-surface)",border:"2px solid #00F5C444",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
           <span style={{fontSize:"2rem",lineHeight:1}}>👥</span>
           <div>
             <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#F5EDD6",fontSize:"1.05rem"}}>Local Play</div>
-            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Pass the device · 2–4 players · 6×6 grid</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",marginTop:3}}>Pass the device · 2–4 players · 6×6 grid</div>
           </div>
         </button>
-        <button onClick={onOnline} style={{background:"#0a1520",border:"2px solid #9B5DE566",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
+        <button onClick={onOnline} style={{background:"var(--wf-surface)",border:"2px solid #9B5DE566",borderRadius:12,padding:"18px 20px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left"}}>
           <span style={{fontSize:"2rem",lineHeight:1}}>🌐</span>
           <div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#F5EDD6",fontSize:"1.05rem"}}>Online Play</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",fontWeight:700,background:"#9B5DE533",color:"#9B5DE5",borderRadius:6,padding:"2px 7px",letterSpacing:"0.1em"}}>NEW</span>
             </div>
-            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",marginTop:3}}>Play on separate devices · 60s turns</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",marginTop:3}}>Play on separate devices · 60s turns</div>
           </div>
         </button>
       </div>
@@ -3540,7 +3570,7 @@ function StreakCard({ animate, delay = 600 }) {
   return (
     <div style={{textAlign:"center"}}>
       <div style={{position:"relative",display:"inline-block"}}>
-        <Firework color="#FFB703" trigger={numFw} large />
+        <Firework color="var(--wf-accent2)" trigger={numFw} large />
         <div style={{
           fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"clamp(3rem,12vw,4.2rem)",lineHeight:1,
           background:"linear-gradient(180deg,#ffcf40,#FFB703)",
@@ -3549,14 +3579,14 @@ function StreakCard({ animate, delay = 600 }) {
           transition:"transform 0.3s cubic-bezier(.4,2,.6,1)",
         }}>{shownCount}</div>
       </div>
-      <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"#FFB703",fontSize:"1.05rem",margin:"2px 0 12px"}}>
+      <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"var(--wf-accent2)",fontSize:"1.05rem",margin:"2px 0 12px"}}>
         day streak
       </div>
-      <div style={{background:"#0a1520",border:"1.5px solid #1e3048",borderRadius:14,padding:"12px 14px"}}>
+      <div style={{background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:14,padding:"12px 14px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
           {cells.map((c, i) => (
             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1}}>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,color:c.frozen?"#4FC3F7":c.fired?"#FFB703":"#3a5570"}}>{c.label}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,color:c.frozen?"#4FC3F7":c.fired?"var(--wf-accent2)":"var(--wf-text-mute)"}}>{c.label}</span>
               <span style={{fontSize:"1.05rem",lineHeight:1,
                 opacity:c.fired?1:0.3,
                 // Frozen days: recolor the 🔥 to an icy blue via hue-rotate + a
@@ -3568,7 +3598,7 @@ function StreakCard({ animate, delay = 600 }) {
           ))}
           <span style={{
             fontFamily:"'JetBrains Mono',monospace",fontSize:"0.66rem",fontWeight:700,
-            color: hitMilestoneToday ? "#00F5C4" : "#FFB703",
+            color: hitMilestoneToday ? "var(--wf-accent)" : "var(--wf-accent2)",
             background: hitMilestoneToday ? "#0a2e2455" : "#1a120055",
             border: `1px solid ${hitMilestoneToday ? "#00F5C455" : "#FFB70344"}`,
             borderRadius:8,padding:"3px 7px",marginLeft:4,whiteSpace:"nowrap",flexShrink:0,
@@ -3577,18 +3607,18 @@ function StreakCard({ animate, delay = 600 }) {
           </span>
         </div>
         {hitMilestoneToday && (
-          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",margin:"10px 0 0",color:"#00F5C4",
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",margin:"10px 0 0",color:"var(--wf-accent)",
             display:"flex",alignItems:"center",justifyContent:"center",gap:8,
             opacity: bonusReveal ? 1 : 0, transition:"opacity 0.35s ease"}}>
             <span>🎉 {count}-day streak bonus:</span>
             <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
-              <Firework color="#00F5C4" trigger={bonusFw} large />
-              <CountUp to={streakWeekBonus(count/7)} active={bonusReveal} color="#00F5C4" large unit="🪙" />
+              <Firework color="var(--wf-accent)" trigger={bonusFw} large />
+              <CountUp to={streakWeekBonus(count/7)} active={bonusReveal} color="var(--wf-accent)" large unit="🪙" />
             </span>
           </div>
         )}
         {live.best > count && (
-          <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.64rem",margin:"8px 0 0",color:"#3a5570"}}>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.64rem",margin:"8px 0 0",color:"var(--wf-text-mute)"}}>
             Best: {live.best}🔥
           </p>
         )}
@@ -3619,7 +3649,7 @@ function DailyAlreadyDone({ onMenu, session, onSignIn }) {
     <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
       <div style={{fontSize:"3rem",marginBottom:12}}>✅</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.8rem",margin:"0 0 8px"}}>Already Played!</h2>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.85rem",marginBottom:16}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.85rem",marginBottom:16}}>
         Come back tomorrow for a new challenge.
       </p>
       {done&&(
@@ -3647,16 +3677,16 @@ function DailyAlreadyDone({ onMenu, session, onSignIn }) {
           <span style={{fontSize:"1.2rem"}}>🏆</span>
           <div style={{textAlign:"left"}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.8rem",fontWeight:700,margin:0}}>Get on the leaderboard!</p>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score globally</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score globally</p>
           </div>
           <span style={{color:"#9B5DE5",fontSize:"1rem",marginLeft:"auto"}}>→</span>
         </div>
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"#1e3048",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
+        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
           {copied?"✓ Copied!":"📤 Share"}
         </button>
-        <button onClick={onMenu} style={btnStyle("#1e3048","#F5EDD6")}>Menu</button>
+        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
       </div>
     </div>
   );
@@ -3686,12 +3716,12 @@ function HowToPlay({ onClose }) {
       body: "Flip letters in the right order (W→O→R→D) and the word turns GREEN for +300 pts. Any order still counts — YELLOW for +100 pts.",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:8,margin:"12px 0"}}>
-          {[["🟩","+300 pts","Flip in order","#00F5C4"],["🟨","+100 pts","Any order","#FFB703"]].map(([em,pts,label,col])=>(
+          {[["🟩","+300 pts","Flip in order","var(--wf-accent)"],["🟨","+100 pts","Any order","var(--wf-accent2)"]].map(([em,pts,label,col])=>(
             <div key={label} style={{display:"flex",alignItems:"center",gap:10,background:col+"22",border:`1.5px solid ${col}`,borderRadius:10,padding:"8px 12px"}}>
               <span style={{fontSize:"1.4rem"}}>{em}</span>
               <div>
                 <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:col,fontSize:"0.95rem"}}>{pts}</div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem"}}>{label}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem"}}>{label}</div>
               </div>
             </div>
           ))}
@@ -3704,10 +3734,10 @@ function HowToPlay({ onClose }) {
       body: "Every day there are 4 new words. You have 16 turns to find them all. The turn counter turns red when you're down to your last 3!",
       visual: (
         <div style={{display:"flex",justifyContent:"center",gap:16,margin:"12px 0"}}>
-          {[[16,"#00F5C4"],[8,"#FFB703"],[3,"#FF5E5B"]].map(([n,col])=>(
+          {[[16,"var(--wf-accent)"],[8,"var(--wf-accent2)"],[3,"#FF5E5B"]].map(([n,col])=>(
             <div key={n} style={{textAlign:"center"}}>
               <div style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"2rem",color:col}}>{n}</div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.65rem"}}>turns left</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>turns left</div>
             </div>
           ))}
         </div>
@@ -3719,10 +3749,10 @@ function HowToPlay({ onClose }) {
       body: "Speed bonus: finish fast for +600 pts. Accuracy: starts at 800, drops 50 per wrong guess. Spot a hidden bonus word? That's +50 surprise pts!",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
-          {[["⏱","Speed bonus","Up to +600 pts","#9B5DE5"],["🎯","Accuracy bonus","Up to +800 pts","#00BBF9"],["✨","Bonus word","Surprise +50 pts","#FFB703"]].map(([em,label,pts,col])=>(
-            <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#0a1520",borderRadius:8,border:`1px solid ${col}44`}}>
+          {[["⏱","Speed bonus","Up to +600 pts","#9B5DE5"],["🎯","Accuracy bonus","Up to +800 pts","#00BBF9"],["✨","Bonus word","Surprise +50 pts","var(--wf-accent2)"]].map(([em,label,pts,col])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--wf-surface)",borderRadius:8,border:`1px solid ${col}44`}}>
               <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",flex:1}}>{label}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",flex:1}}>{label}</span>
               <span style={{fontFamily:"'Fraunces',serif",color:col,fontWeight:700,fontSize:"0.8rem"}}>{pts}</span>
             </div>
           ))}
@@ -3736,28 +3766,28 @@ function HowToPlay({ onClose }) {
 
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"linear-gradient(160deg,#0e1e30,#0a1520)",border:"1.5px solid #1e3048",borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",boxShadow:"0 20px 60px #000a",animation:"menuIn 0.3s ease"}}>
+      <div style={{background:"linear-gradient(160deg,#0e1e30,#0a1520)",border:"1.5px solid var(--wf-border)",borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",boxShadow:"0 20px 60px #000a",animation:"menuIn 0.3s ease"}}>
         <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:20}}>
           {steps.map((_,i)=>(
-            <div key={i} onClick={()=>setStep(i)} style={{width:i===step?20:6,height:6,borderRadius:3,background:i===step?"#00F5C4":"#1e3048",transition:"all 0.3s",cursor:"pointer"}}/>
+            <div key={i} onClick={()=>setStep(i)} style={{width:i===step?20:6,height:6,borderRadius:3,background:i===step?"var(--wf-accent)":"var(--wf-border)",transition:"all 0.3s",cursor:"pointer"}}/>
           ))}
         </div>
         <div style={{textAlign:"center"}}>
           <div style={{fontSize:"2.5rem",marginBottom:8}}>{s.emoji}</div>
           <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.4rem",fontWeight:700,margin:"0 0 10px"}}>{s.title}</h2>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.78rem",lineHeight:1.7,margin:0}}>{s.body}</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem",lineHeight:1.7,margin:0}}>{s.body}</p>
           {s.visual}
         </div>
         <div style={{display:"flex",gap:10,marginTop:16}}>
           {step > 0 && (
-            <button onClick={()=>setStep(s=>s-1)} style={{...btnStyle("#1e3048","#7a9cc0"),flex:1,padding:"10px"}}>← Back</button>
+            <button onClick={()=>setStep(s=>s-1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,padding:"10px"}}>← Back</button>
           )}
-          <button onClick={isLast ? onClose : ()=>setStep(s=>s+1)} style={{...btnStyle(isLast?"#00F5C4":"#1e3048",isLast?"#0a2e24":"#F5EDD6"),flex:2,padding:"10px",fontWeight:700}}>
+          <button onClick={isLast ? onClose : ()=>setStep(s=>s+1)} style={{...btnStyle(isLast?"var(--wf-accent)":"var(--wf-border)",isLast?"#0a2e24":"#F5EDD6"),flex:2,padding:"10px",fontWeight:700}}>
             {isLast ? "Let's Play! 🎉" : "Next →"}
           </button>
         </div>
         {!isLast && (
-          <button onClick={onClose} style={{...btnStyle("transparent","#3a5570"),width:"100%",padding:"6px",marginTop:6,fontSize:"0.75rem",textDecoration:"underline",border:"none"}}>
+          <button onClick={onClose} style={{...btnStyle("transparent","var(--wf-text-mute)"),width:"100%",padding:"6px",marginTop:6,fontSize:"0.75rem",textDecoration:"underline",border:"none"}}>
             Skip tutorial
           </button>
         )}
@@ -3848,17 +3878,17 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
   }
 
   const inputStyle = {
-    width:"100%", padding:"12px 14px", borderRadius:10, border:"1.5px solid #1e3048",
-    background:"#0a1520", color:"#F5EDD6", fontFamily:"'JetBrains Mono',monospace",
+    width:"100%", padding:"12px 14px", borderRadius:10, border:"1.5px solid var(--wf-border)",
+    background:"var(--wf-surface)", color:"#F5EDD6", fontFamily:"'JetBrains Mono',monospace",
     fontSize:"0.9rem", outline:"none", boxSizing:"border-box",
   };
 
   if (recoveryMode) {
     return (
       <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
-        <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px"}}>
+        <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"24px 20px"}}>
           <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 6px",fontSize:"1.3rem"}}>Set a new password</h2>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.72rem",margin:"0 0 16px"}}>Enter a new password for your account.</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:"0 0 16px"}}>Enter a new password for your account.</p>
           <form onSubmit={handleSetNewPassword} style={{display:"flex",flexDirection:"column",gap:12}}>
             <div style={{position:"relative"}}>
               <input type={showPassword?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="New password (6+ characters)" required minLength={6} style={{...inputStyle,paddingRight:44}} autoComplete="new-password" />
@@ -3884,28 +3914,28 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
 
   return (
     <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
 
-      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px"}}>
+      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"24px 20px"}}>
         <div style={{display:"flex",gap:8,marginBottom:20}}>
           <button onClick={()=>{setMode("signin");setError("");}} style={{
             flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
             fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-            background: mode==="signin" ? "#00F5C4" : "#0a1520",
-            color: mode==="signin" ? "#0a2e24" : "#3a5570",
+            background: mode==="signin" ? "var(--wf-accent)" : "var(--wf-surface)",
+            color: mode==="signin" ? "#0a2e24" : "var(--wf-text-mute)",
           }}>Sign In</button>
           <button onClick={()=>{setMode("signup");setError("");}} style={{
             flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
             fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-            background: mode==="signup" ? "#FFB703" : "#0a1520",
-            color: mode==="signup" ? "#0D1B2A" : "#3a5570",
+            background: mode==="signup" ? "var(--wf-accent2)" : "var(--wf-surface)",
+            color: mode==="signup" ? "#0D1B2A" : "var(--wf-text-mute)",
           }}>Create Account</button>
         </div>
 
         <form onSubmit={handleSubmit} style={{display:"flex",flexDirection:"column",gap:12}}>
           {mode==="signup" && (
             <div>
-              <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>USERNAME</label>
+              <label style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>USERNAME</label>
               <div style={{position:"relative"}}>
                 <input value={username} onChange={e=>onUsernameChange(e.target.value)} placeholder="cool_player_42" maxLength={20} style={inputStyle} autoComplete="username" />
                 {username.length >= 3 && usernameOk !== null && (
@@ -3920,11 +3950,11 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
             </div>
           )}
           <div>
-            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>EMAIL</label>
+            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>EMAIL</label>
             <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" required style={inputStyle} autoComplete="email" />
           </div>
           <div>
-            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>PASSWORD</label>
+            <label style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",marginBottom:4,display:"block",letterSpacing:"0.08em"}}>PASSWORD</label>
             <div style={{position:"relative"}}>
               <input type={showPassword?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder={mode==="signup"?"6+ characters":"••••••••"} required minLength={6} style={{...inputStyle,paddingRight:44}} autoComplete={mode==="signup"?"new-password":"current-password"} />
               <button type="button" onClick={()=>setShowPassword(s=>!s)} aria-label={showPassword?"Hide password":"Show password"} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:"1rem",padding:"4px 6px",lineHeight:1}}>
@@ -3942,7 +3972,7 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FF5E5B",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#FF5E5B15",borderRadius:8}}>{error}</p>
           )}
           {info && (
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#00F5C4",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#00F5C415",borderRadius:8}}>{info}</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.75rem",margin:0,padding:"8px 12px",background:"#00F5C415",borderRadius:8}}>{info}</p>
           )}
 
           <button type="submit" disabled={loading} style={{
@@ -3977,11 +4007,11 @@ function AchievementToast({ ids }) {
           }}>
             <span style={{fontSize:"1.6rem",flexShrink:0}}>{a.icon}</span>
             <div style={{textAlign:"left",flex:1}}>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>ACHIEVEMENT UNLOCKED</div>
               <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
             </div>
             {a.reward > 0 && (
-              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#00F5C4",fontWeight:800,fontSize:"0.82rem",flexShrink:0}}>+{a.reward}🪙</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontWeight:800,fontSize:"0.82rem",flexShrink:0}}>+{a.reward}🪙</span>
             )}
           </div>
         );
@@ -4001,29 +4031,29 @@ function AchievementsScreen({ onBack }) {
       <div style={{textAlign:"center",marginBottom:18}}>
         <div style={{fontSize:"2rem",marginBottom:4}}>🏆</div>
         <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 4px"}}>Achievements</h2>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.8rem",margin:0}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.8rem",margin:0}}>
           {unlockedCount} / {ACHIEVEMENTS.length} unlocked
         </p>
       </div>
       {tiers.map(tier => (
         <div key={tier} style={{marginBottom:16}}>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.66rem",letterSpacing:"0.1em",fontWeight:700,margin:"0 0 8px"}}>{tier.toUpperCase()}</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",letterSpacing:"0.1em",fontWeight:700,margin:"0 0 8px"}}>{tier.toUpperCase()}</p>
           {ACHIEVEMENTS.filter(a => a.tier === tier).map(a => {
             const got = !!have[a.id];
             return (
               <div key={a.id} style={{
                 display:"flex",alignItems:"center",gap:12,marginBottom:8,
-                background:"#0a1520",border:`1.5px solid ${got?"#FFB70355":"#1e3048"}`,borderRadius:12,padding:"11px 14px",
+                background:"var(--wf-surface)",border:`1.5px solid ${got?"#FFB70355":"var(--wf-border)"}`,borderRadius:12,padding:"11px 14px",
                 opacity:got?1:0.6,
               }}>
                 <span style={{fontSize:"1.6rem",flexShrink:0,filter:got?"none":"grayscale(1)"}}>{got?a.icon:"🔒"}</span>
                 <div style={{flex:1,textAlign:"left"}}>
-                  <div style={{fontFamily:"'Fraunces',serif",color:got?"#F5EDD6":"#7a9cc0",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
-                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginTop:2}}>{a.desc}</div>
+                  <div style={{fontFamily:"'Fraunces',serif",color:got?"#F5EDD6":"var(--wf-text-dim)",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",marginTop:2}}>{a.desc}</div>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
-                  {a.reward > 0 && <span style={{fontFamily:"'JetBrains Mono',monospace",color:got?"#FFB703":"#3a5570",fontSize:"0.72rem",fontWeight:700}}>{a.reward}🪙</span>}
-                  {got && <span style={{color:"#00F5C4",fontSize:"1.05rem"}}>✓</span>}
+                  {a.reward > 0 && <span style={{fontFamily:"'JetBrains Mono',monospace",color:got?"var(--wf-accent2)":"var(--wf-text-mute)",fontSize:"0.72rem",fontWeight:700}}>{a.reward}🪙</span>}
+                  {got && <span style={{color:"var(--wf-accent)",fontSize:"1.05rem"}}>✓</span>}
                 </div>
               </div>
             );
@@ -4202,34 +4232,34 @@ function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
 
   return (
     <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
-      <button onClick={onBack} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
 
-      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #1e3048",padding:"24px 20px",textAlign:"center"}}>
+      <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"24px 20px",textAlign:"center"}}>
         <div style={{width:64,height:64,borderRadius:"50%",background:"linear-gradient(135deg,#00F5C4,#FFB703)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:"1.8rem",marginBottom:12}}>
           {(profile?.username || "?")[0].toUpperCase()}
         </div>
         <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 4px",fontSize:"1.4rem"}}>{profile?.username || "Player"}</h2>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.72rem",margin:"0 0 20px"}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:"0 0 20px"}}>
           Member since {profile?.created_at ? new Date(profile.created_at).toLocaleDateString("en-US",{month:"short",year:"numeric"}) : "—"}
         </p>
 
-        <div style={{background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048",padding:"14px",marginBottom:16,textAlign:"left"}}>
+        <div style={{background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)",padding:"14px",marginBottom:16,textAlign:"left"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>USERNAME</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",letterSpacing:"0.08em"}}>USERNAME</span>
             <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.85rem"}}>{profile?.username}</span>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>BEST SCORE</span>
-            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"1rem",fontWeight:700}}>{getPersonalBest() > 0 ? getPersonalBest().toLocaleString() : "—"}</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",letterSpacing:"0.08em"}}>BEST SCORE</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontSize:"1rem",fontWeight:700}}>{getPersonalBest() > 0 ? getPersonalBest().toLocaleString() : "—"}</span>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",letterSpacing:"0.08em"}}>TOKENS</span>
-            <span style={{fontFamily:"'Fraunces',serif",color:"#00F5C4",fontSize:"1rem",fontWeight:700}}>🪙 {balance.toLocaleString()}</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.7rem",letterSpacing:"0.08em"}}>TOKENS</span>
+            <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent)",fontSize:"1rem",fontWeight:700}}>🪙 {balance.toLocaleString()}</span>
           </div>
         </div>
 
         <button onClick={onSignOut} style={{
-          ...btnStyle("#1e3048","#FF5E5B"), padding:"10px 24px", borderRadius:10,
+          ...btnStyle("var(--wf-border)","#FF5E5B"), padding:"10px 24px", borderRadius:10,
           fontSize:"0.8rem", border:"1.5px solid #FF5E5B33", width:"100%",
         }}>
           Sign Out
@@ -4392,7 +4422,7 @@ function WordFlip() {
   }
 
   return (
-    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:theme.bg,transition:"background 0.4s ease",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif"}}>
+    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:theme.bg,transition:"background 0.4s ease",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif",...themeCssVars(activeThemeId)}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,700;0,900;1,700&family=JetBrains+Mono:wght@400;700;800&display=swap');
         @keyframes fadeInOut{0%{opacity:0;transform:translateY(-4px)}20%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0}}
@@ -4416,15 +4446,15 @@ function WordFlip() {
       {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
       {screen==="menu"&&(<>
-        <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:16,left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"#1e3048",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"#7a9cc0",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
+        <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:16,left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"var(--wf-border)",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
         </button>
         {session && (
-          <button onClick={()=>setScreen("shop")} className="tokenPill" style={{position:"fixed",top:16,left:56,background:"#0a1520",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"#00F5C4",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace",transition:"transform 0.12s, box-shadow 0.15s"}} aria-label="Open token shop">
+          <button onClick={()=>setScreen("shop")} className="tokenPill" style={{position:"fixed",top:16,left:56,background:"var(--wf-surface)",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"var(--wf-accent)",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace",transition:"transform 0.12s, box-shadow 0.15s"}} aria-label="Open token shop">
             🪙 {balance.toLocaleString()}
           </button>
         )}
-        <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"#1e3048",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#7a9cc0",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
+        <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"var(--wf-border)",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"var(--wf-text-dim)",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
       </>)}
       {/* On the menu, push the title below the fixed top controls (avatar + token
           pill on the left, help on the right) so a wide balance can't overlap it */}
@@ -4447,28 +4477,28 @@ function WordFlip() {
               </span>
             </button>
             {getLiveStreak().count > 0 && (
-              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.74rem",textAlign:"center",margin:"-2px 0 0"}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.74rem",textAlign:"center",margin:"-2px 0 0"}}>
                 Current streak: {getLiveStreak().count}🔥
               </p>
             )}
-            <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #1e3048",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"#7a9cc0"}}>→</span>
+            <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid var(--wf-border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"var(--wf-text-dim)"}}>→</span>
             </button>
             <button onClick={()=>setScreen("multi-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #00F5C444",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"#00F5C4"}}>→</span>
+              <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"var(--wf-accent)"}}>→</span>
             </button>
             <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-              <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+              <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏆 Scores {getPersonalBest()>0?`· ${getPersonalBest().toLocaleString()}`:""}
               </button>
-              <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+              <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏅 Achievements
               </button>
             </div>
           </div>
-          <div style={{marginTop:24,padding:14,background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048"}}>
+          <div style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
-              <strong style={{color:"#7a9cc0"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)!
+              <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)!
             </p>
           </div>
         </div>
@@ -4479,7 +4509,7 @@ function WordFlip() {
 
       {screen==="solo"&&soloWords&&(
         <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
-          <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("#1e3048","#7a9cc0"),marginBottom:14,fontSize:"0.8rem"}}>← Back</button>
+          <button onClick={()=>setScreen("solo-setup")} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Back</button>
           <GameBoard words={soloWords} onWin={r=>handleWin(r,"solo")} timeLimit={null} />
         </div>
       )}
@@ -4487,8 +4517,8 @@ function WordFlip() {
       {screen==="daily"&&(
         <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-            <button onClick={()=>setScreen("menu")} style={{...btnStyle("#1e3048","#7a9cc0"),fontSize:"0.8rem"}}>← Menu</button>
-            <span style={{fontFamily:"'Fraunces',serif",color:"#FFB703",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
+            <button onClick={()=>setScreen("menu")} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
+            <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
           </div>
           <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={16} isDaily />
         </div>
@@ -4508,7 +4538,7 @@ function WordFlip() {
               <span style={{fontSize:"1.2rem"}}>🏆</span>
               <div>
                 <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.8rem",fontWeight:700,margin:0}}>Get on the leaderboard!</p>
-                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score and compete globally</p>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score and compete globally</p>
               </div>
               <span style={{color:"#9B5DE5",fontSize:"1rem",marginLeft:"auto"}}>→</span>
             </div>
