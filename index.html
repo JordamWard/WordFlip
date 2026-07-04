@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>WordFlip</title>
   <meta name="description" content="WordFlip — a daily word memory game. Flip tiles, spell words, earn points." />
   <meta name="theme-color" content="#0D1B2A" />
@@ -27,6 +27,7 @@
   <style>
     * { margin: 0; padding: 0; }
     html, body, #root { height: 100%; min-height: 100%; }
+    html { background: #0D1B2A; }
     body { background: #0D1B2A; overflow-x: hidden; }
   </style>
   <!-- Analytics: replace 'wordflipgame.netlify.app' with your domain if it changes -->
@@ -4436,7 +4437,7 @@ function WordFlip() {
   }
 
   return (
-    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:theme.bg,transition:"background 0.4s ease",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",fontFamily:"sans-serif",...themeCssVars(activeThemeId)}}>
+    <div style={{minHeight:"100dvh",overflowY:"auto",overflowX:"hidden",background:theme.bg,transition:"background 0.4s ease",display:"flex",flexDirection:"column",alignItems:"center",padding:"clamp(12px,4vw,32px)",paddingTop:"calc(clamp(12px,4vw,32px) + env(safe-area-inset-top))",fontFamily:"sans-serif",...themeCssVars(activeThemeId)}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,700;0,900;1,700&family=JetBrains+Mono:wght@400;700;800&display=swap');
         @keyframes fadeInOut{0%{opacity:0;transform:translateY(-4px)}20%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0}}
@@ -4460,15 +4461,15 @@ function WordFlip() {
       {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
       {screen==="menu"&&(<>
-        <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:16,left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"var(--wf-border)",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
+        <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"var(--wf-border)",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
         </button>
         {session && (
-          <button onClick={()=>setScreen("shop")} className="tokenPill" style={{position:"fixed",top:16,left:56,background:"var(--wf-surface)",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"var(--wf-accent)",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace",transition:"transform 0.12s, box-shadow 0.15s"}} aria-label="Open token shop">
+          <button onClick={()=>setScreen("shop")} className="tokenPill" style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",left:56,background:"var(--wf-surface)",border:"1.5px solid #00F5C455",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,color:"var(--wf-accent)",fontSize:"0.78rem",fontWeight:700,padding:"0 12px",zIndex:50,fontFamily:"'JetBrains Mono',monospace",transition:"transform 0.12s, box-shadow 0.15s"}} aria-label="Open token shop">
             🪙 {balance.toLocaleString()}
           </button>
         )}
-        <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:16,right:16,background:"var(--wf-border)",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"var(--wf-text-dim)",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
+        <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",right:16,background:"var(--wf-border)",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"var(--wf-text-dim)",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
       </>)}
       {/* On the menu, push the title below the fixed top controls (avatar + token
           pill on the left, help on the right) so a wide balance can't overlap it */}
@@ -4508,6 +4509,11 @@ function WordFlip() {
               <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏅 Achievements
               </button>
+              {session && (
+                <button onClick={()=>setScreen("shop")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+                  🛍️ Shop
+                </button>
+              )}
             </div>
           </div>
           <div style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>
