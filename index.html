@@ -173,7 +173,7 @@ async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGues
 async function fetchLeaderboard(mode, dayKey) {
   let query = getSB()
     .from('daily_scores')
-    .select('score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, profiles(username)')
+    .select('user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, profiles(username)')
     .order('score', { ascending: false })
     .limit(50);
   if (mode === 'daily') {
@@ -1060,6 +1060,73 @@ function updateStreak() {
   localStorage.setItem("wf_streak", JSON.stringify(updated));
   return { ...updated, prevCount };
 }
+
+// ─── Achievements ─────────────────────────────────────────────────────────────
+// Unlock-once badges. Most are evaluated from a finished game; a couple
+// (leaderboard placements) are evaluated when the leaderboard loads. Stored
+// locally under wf_achievements (account sync is a future follow-up).
+const ACHIEVEMENTS = [
+  // Skill
+  { id:'all_green',   icon:'💚', name:'Flawless',      desc:'Find every word in order',            tier:'Skill' },
+  { id:'all_yellow',  icon:'💛', name:'Scrambler',     desc:'Find every word — none in order',     tier:'Skill' },
+  { id:'no_hints',    icon:'🧠', name:'Unassisted',    desc:'Finish a daily using no power-ups',    tier:'Skill' },
+  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter',  desc:'Finish with zero wrong guesses',       tier:'Skill' },
+  // Efficiency (a 4-word board needs 4 guesses minimum)
+  { id:'turns_4',     icon:'⚡', name:'Perfect Run',    desc:'Complete a board in 4 guesses',        tier:'Efficiency' },
+  { id:'turns_8',     icon:'🏃', name:'Efficient',      desc:'Complete a board in 8 guesses or fewer',tier:'Efficiency' },
+  { id:'turns_12',    icon:'👍', name:'Steady Hand',    desc:'Complete a board in 12 guesses or fewer',tier:'Efficiency' },
+  // Streak
+  { id:'streak_7',    icon:'🔥', name:'On Fire',        desc:'Reach a 7-day streak',                 tier:'Streak' },
+  { id:'streak_30',   icon:'🌋', name:'Unstoppable',    desc:'Reach a 30-day streak',                tier:'Streak' },
+  // Leaderboard
+  { id:'top10_daily', icon:'🏅', name:'Podium',         desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard' },
+  { id:'top10_all',   icon:'👑', name:'Hall of Fame',   desc:'Reach the all-time top 10',            tier:'Leaderboard' },
+  // Dedication
+  { id:'games_10',    icon:'🎲', name:'Regular',        desc:'Play 10 games',                        tier:'Dedication' },
+  { id:'games_50',    icon:'🏆', name:'Devoted',        desc:'Play 50 games',                        tier:'Dedication' },
+];
+function getAchievements() {
+  try { return JSON.parse(localStorage.getItem('wf_achievements') || '{}'); } catch { return {}; }
+}
+// Mark ids unlocked; returns only those newly unlocked this call (for the toast).
+function unlockAchievements(ids) {
+  if (!ids || !ids.length) return [];
+  const have = getAchievements();
+  const fresh = ids.filter(id => !have[id] && ACHIEVEMENTS.some(a => a.id === id));
+  if (!fresh.length) return [];
+  fresh.forEach(id => { have[id] = dateKey().replace('wf_', ''); });
+  try { localStorage.setItem('wf_achievements', JSON.stringify(have)); } catch {}
+  return fresh;
+}
+function getGamesPlayed() {
+  try { return parseInt(localStorage.getItem('wf_games_played') || '0', 10) || 0; } catch { return 0; }
+}
+function bumpGamesPlayed() {
+  const n = getGamesPlayed() + 1;
+  try { localStorage.setItem('wf_games_played', String(n)); } catch {}
+  return n;
+}
+// Evaluate the game-derived achievements. ctx.wordResults is an array of
+// 'green' | 'yellow' | 'missed'. Returns the ids that qualify (unlock filters).
+function evaluateAchievements(ctx) {
+  const out = [];
+  const r = ctx.wordResults || [];
+  const complete = r.length > 0 && r.every(x => x === 'green' || x === 'yellow');
+  if (complete && r.every(x => x === 'green'))  out.push('all_green');
+  if (complete && r.every(x => x === 'yellow')) out.push('all_yellow');
+  if (complete && ctx.isDaily && ctx.helpsUsed === 0) out.push('no_hints');
+  if (complete && ctx.wrongGuesses === 0) out.push('no_wrong');
+  if (complete && ctx.turns <= 4)  out.push('turns_4');
+  if (complete && ctx.turns <= 8)  out.push('turns_8');
+  if (complete && ctx.turns <= 12) out.push('turns_12');
+  if (ctx.streak >= 7)  out.push('streak_7');
+  if (ctx.streak >= 30) out.push('streak_30');
+  if (ctx.gamesPlayed >= 10) out.push('games_10');
+  if (ctx.gamesPlayed >= 50) out.push('games_50');
+  return out;
+}
+
+function achById(id) { return ACHIEVEMENTS.find(a => a.id === id); }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
 function buildShareText(turns, ms, score, wordResults, totalWords) {
@@ -2151,7 +2218,7 @@ function btnStyle(bg,color) {
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
-function LeaderboardView({ onBack, session, onSignIn }) {
+function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
   const [tab, setTab] = useState("personal");
   const [globalTab, setGlobalTab] = useState("daily");
   const [leaderboard, setLeaderboard] = useState([]);
@@ -2176,7 +2243,18 @@ function LeaderboardView({ onBack, session, onSignIn }) {
       ensureFreshSession().then(() => fetchLeaderboard(globalTab, dk)),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
     ]).then(data => {
-      if (!cancelled) { setLeaderboard(data || []); setLbLoading(false); }
+      if (!cancelled) {
+        setLeaderboard(data || []);
+        setLbLoading(false);
+        // Top-10 placement achievements: is the signed-in user in the top 10?
+        if (session?.user && data?.length) {
+          const inTop10 = data.slice(0, 10).some(r => r.user_id === session.user.id);
+          if (inTop10) {
+            const fresh = unlockAchievements([globalTab === 'alltime' ? 'top10_all' : 'top10_daily']);
+            if (fresh.length && onAchievements) onAchievements(fresh);
+          }
+        }
+      }
     }).catch(() => {
       if (!cancelled) { setLeaderboard([]); setLbLoading(false); setLbError(true); }
     });
@@ -3772,6 +3850,75 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
 }
 
 // ─── Token Shop Screen ────────────────────────────────────────────────────────
+// ─── Achievement toast (slides in top-center when one unlocks) ────────────────
+function AchievementToast({ ids }) {
+  if (!ids || !ids.length) return null;
+  return (
+    <div style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",zIndex:100,
+      display:"flex",flexDirection:"column",gap:8,width:"min(340px,92vw)"}}>
+      {ids.map((id, i) => {
+        const a = achById(id); if (!a) return null;
+        return (
+          <div key={id} style={{
+            display:"flex",alignItems:"center",gap:12,
+            background:"linear-gradient(135deg,#12253a,#0a1520)",
+            border:"1.5px solid #FFB703",borderRadius:12,padding:"10px 14px",
+            boxShadow:"0 8px 28px #00000088",
+            animation:`achIn 0.45s cubic-bezier(.2,1.4,.4,1) ${i*0.12}s both`,
+          }}>
+            <span style={{fontSize:"1.6rem",flexShrink:0}}>{a.icon}</span>
+            <div style={{textAlign:"left"}}>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Achievements Screen ──────────────────────────────────────────────────────
+function AchievementsScreen({ onBack }) {
+  const have = getAchievements();
+  const unlockedCount = ACHIEVEMENTS.filter(a => have[a.id]).length;
+  const tiers = [...new Set(ACHIEVEMENTS.map(a => a.tier))];
+  return (
+    <div style={{maxWidth:440,margin:"0 auto",width:"100%"}}>
+      <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'),marginBottom:16,fontSize:'0.8rem'}}>← Back</button>
+      <div style={{textAlign:"center",marginBottom:18}}>
+        <div style={{fontSize:"2rem",marginBottom:4}}>🏆</div>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",margin:"0 0 4px"}}>Achievements</h2>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.8rem",margin:0}}>
+          {unlockedCount} / {ACHIEVEMENTS.length} unlocked
+        </p>
+      </div>
+      {tiers.map(tier => (
+        <div key={tier} style={{marginBottom:16}}>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.66rem",letterSpacing:"0.1em",fontWeight:700,margin:"0 0 8px"}}>{tier.toUpperCase()}</p>
+          {ACHIEVEMENTS.filter(a => a.tier === tier).map(a => {
+            const got = !!have[a.id];
+            return (
+              <div key={a.id} style={{
+                display:"flex",alignItems:"center",gap:12,marginBottom:8,
+                background:"#0a1520",border:`1.5px solid ${got?"#FFB70355":"#1e3048"}`,borderRadius:12,padding:"11px 14px",
+                opacity:got?1:0.6,
+              }}>
+                <span style={{fontSize:"1.6rem",flexShrink:0,filter:got?"none":"grayscale(1)"}}>{got?a.icon:"🔒"}</span>
+                <div style={{flex:1,textAlign:"left"}}>
+                  <div style={{fontFamily:"'Fraunces',serif",color:got?"#F5EDD6":"#7a9cc0",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginTop:2}}>{a.desc}</div>
+                </div>
+                {got && <span style={{color:"#00F5C4",fontSize:"1.1rem",flexShrink:0}}>✓</span>}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ShopScreen({ onBack, balance, refreshWallet }) {
   const [inv, setInv] = useState(() => {
     const m = {};
@@ -3928,6 +4075,12 @@ function WordFlip() {
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
   const [winStreakBonus,setWinStreakBonus] = useState(0); // milestone tokens earned this win
+  const [achToast,setAchToast] = useState([]); // achievement ids currently toasting
+  function showAchievements(ids) {
+    if (!ids || !ids.length) return;
+    setAchToast(ids);
+    setTimeout(() => setAchToast([]), 4800);
+  }
   const [winIsNewBest,setWinIsNewBest] = useState(false);
   const [showTutorial,setShowTutorial] = useState(()=>{
     try { return !localStorage.getItem(TUTORIAL_KEY); } catch { return true; }
@@ -3978,6 +4131,7 @@ function WordFlip() {
   function handleWin(result,mode) {
     setWinResult(result); setWinMode(mode);
     setFireworks(true); setTimeout(()=>setFireworks(false),4000);
+    let dailyStreakCount = 0;
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
     if (mode==="daily") {
@@ -4024,6 +4178,7 @@ function WordFlip() {
         wrongGuesses: result.wrongGuesses||0,
         outOfTurns: result.outOfTurns||false,
       });
+      dailyStreakCount = s.count;
     } else if (mode==="solo") {
       // Repeatable grant — unique reason each game so it always pays out
       if (session?.user) {
@@ -4031,6 +4186,19 @@ function WordFlip() {
           grantTokens(TOKENS.SOLO, 'solo-' + Date.now()).then(refreshWallet));
       }
     }
+    // Achievements (daily + solo). Evaluated from the finished game plus running
+    // counters; unlock-once, and any freshly unlocked ones raise a toast.
+    const gamesPlayed = bumpGamesPlayed();
+    const earned = evaluateAchievements({
+      wordResults: wordResultsArr,
+      turns: result.turns,
+      wrongGuesses: result.wrongGuesses || 0,
+      helpsUsed: getDailyHelps(),
+      streak: mode==="daily" ? dailyStreakCount : getLiveStreak().count,
+      gamesPlayed,
+      isDaily: mode==="daily",
+    });
+    showAchievements(unlockAchievements(earned));
     setScreen("win");
   }
 
@@ -4051,9 +4219,11 @@ function WordFlip() {
         .tokenPill:active{transform:scale(0.93);}
         @keyframes hintWiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-6deg)}40%{transform:rotate(6deg)}60%{transform:rotate(-4deg)}80%{transform:rotate(4deg)}}
         @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
+        @keyframes achIn{from{opacity:0;transform:translateY(-16px) scale(0.9)}to{opacity:1;transform:translateY(0) scale(1)}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
+      <AchievementToast ids={achToast} />
       {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
       {screen==="menu"&&(<>
@@ -4098,9 +4268,14 @@ function WordFlip() {
             <button onClick={()=>setScreen("multi-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #00F5C444",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"#00F5C4"}}>→</span>
             </button>
-            <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 24px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-              🏆 Scores {getPersonalBest()>0?`· Best: ${getPersonalBest().toLocaleString()}`:""}
-            </button>
+            <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+              <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+                🏆 Scores {getPersonalBest()>0?`· ${getPersonalBest().toLocaleString()}`:""}
+              </button>
+              <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","#7a9cc0"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+                🏅 Achievements
+              </button>
+            </div>
           </div>
           <div style={{marginTop:24,padding:14,background:"#0a1520",borderRadius:12,border:"1.5px solid #1e3048"}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
@@ -4154,7 +4329,8 @@ function WordFlip() {
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
-      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} /></div>}
+      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
+      {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
         const s = await authGetSession();
