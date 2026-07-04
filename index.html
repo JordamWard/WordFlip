@@ -1065,25 +1065,29 @@ function updateStreak() {
 // Unlock-once badges. Most are evaluated from a finished game; a couple
 // (leaderboard placements) are evaluated when the leaderboard loads. Stored
 // locally under wf_achievements (account sync is a future follow-up).
+// `reward` = tokens paid once when unlocked (PLACEHOLDER values, tune freely).
+// Rarer/harder = bigger. The Perfect Game is the jackpot; note that pulling it
+// off also stacks all_green + turns_4/8/12 + no_wrong, so the true payout is huge.
 const ACHIEVEMENTS = [
   // Skill
-  { id:'all_green',   icon:'💚', name:'Flawless',      desc:'Find every word in order',            tier:'Skill' },
-  { id:'all_yellow',  icon:'💛', name:'Scrambler',     desc:'Find every word — none in order',     tier:'Skill' },
-  { id:'no_hints',    icon:'🧠', name:'Unassisted',    desc:'Finish a daily using no power-ups',    tier:'Skill' },
-  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter',  desc:'Finish with zero wrong guesses',       tier:'Skill' },
+  { id:'perfect',     icon:'💎', name:'Perfect Game',  desc:'All four words in order, in exactly 4 guesses', tier:'Skill', reward:1000 },
+  { id:'all_green',   icon:'💚', name:'Flawless',      desc:'Find every word in order',            tier:'Skill', reward:250 },
+  { id:'all_yellow',  icon:'💛', name:'Scrambler',     desc:'Find every word — none in order',     tier:'Skill', reward:200 },
+  { id:'no_hints',    icon:'🧠', name:'Unassisted',    desc:'Finish a daily using no power-ups',    tier:'Skill', reward:50 },
+  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter',  desc:'Finish with zero wrong guesses',       tier:'Skill', reward:100 },
   // Efficiency (a 4-word board needs 4 guesses minimum)
-  { id:'turns_4',     icon:'⚡', name:'Perfect Run',    desc:'Complete a board in 4 guesses',        tier:'Efficiency' },
-  { id:'turns_8',     icon:'🏃', name:'Efficient',      desc:'Complete a board in 8 guesses or fewer',tier:'Efficiency' },
-  { id:'turns_12',    icon:'👍', name:'Steady Hand',    desc:'Complete a board in 12 guesses or fewer',tier:'Efficiency' },
+  { id:'turns_4',     icon:'⚡', name:'Speed Demon',    desc:'Complete a board in 4 guesses',        tier:'Efficiency', reward:500 },
+  { id:'turns_8',     icon:'🏃', name:'Efficient',      desc:'Complete a board in 8 guesses or fewer',tier:'Efficiency', reward:100 },
+  { id:'turns_12',    icon:'👍', name:'Steady Hand',    desc:'Complete a board in 12 guesses or fewer',tier:'Efficiency', reward:40 },
   // Streak
-  { id:'streak_7',    icon:'🔥', name:'On Fire',        desc:'Reach a 7-day streak',                 tier:'Streak' },
-  { id:'streak_30',   icon:'🌋', name:'Unstoppable',    desc:'Reach a 30-day streak',                tier:'Streak' },
+  { id:'streak_7',    icon:'🔥', name:'On Fire',        desc:'Reach a 7-day streak',                 tier:'Streak', reward:200 },
+  { id:'streak_30',   icon:'🌋', name:'Unstoppable',    desc:'Reach a 30-day streak',                tier:'Streak', reward:750 },
   // Leaderboard
-  { id:'top10_daily', icon:'🏅', name:'Podium',         desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard' },
-  { id:'top10_all',   icon:'👑', name:'Hall of Fame',   desc:'Reach the all-time top 10',            tier:'Leaderboard' },
+  { id:'top10_daily', icon:'🏅', name:'Podium',         desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard', reward:150 },
+  { id:'top10_all',   icon:'👑', name:'Hall of Fame',   desc:'Reach the all-time top 10',            tier:'Leaderboard', reward:400 },
   // Dedication
-  { id:'games_10',    icon:'🎲', name:'Regular',        desc:'Play 10 games',                        tier:'Dedication' },
-  { id:'games_50',    icon:'🏆', name:'Devoted',        desc:'Play 50 games',                        tier:'Dedication' },
+  { id:'games_10',    icon:'🎲', name:'Regular',        desc:'Play 10 games',                        tier:'Dedication', reward:40 },
+  { id:'games_50',    icon:'🏆', name:'Devoted',        desc:'Play 50 games',                        tier:'Dedication', reward:150 },
 ];
 function getAchievements() {
   try { return JSON.parse(localStorage.getItem('wf_achievements') || '{}'); } catch { return {}; }
@@ -1097,6 +1101,24 @@ function unlockAchievements(ids) {
   fresh.forEach(id => { have[id] = dateKey().replace('wf_', ''); });
   try { localStorage.setItem('wf_achievements', JSON.stringify(have)); } catch {}
   return fresh;
+}
+// Tracks which achievement rewards have been paid, so we don't spam the RPC.
+// (grantTokens is idempotent by reason too — this just avoids redundant calls.)
+function getAchPaid() {
+  try { return JSON.parse(localStorage.getItem('wf_ach_paid') || '{}'); } catch { return {}; }
+}
+// Pay the token reward for each given achievement id (skips already-paid ones).
+// Idempotent server-side via the 'ach-<id>' reason. Signed-in only.
+async function grantAchievementRewards(ids) {
+  if (!ids || !ids.length) return;
+  const paid = getAchPaid();
+  for (const id of ids) {
+    const a = achById(id);
+    if (!a || !(a.reward > 0) || paid[id]) continue;
+    const res = await grantTokens(a.reward, 'ach-' + id);
+    if (res != null) paid[id] = true; // grantTokens returns new balance, or null on error
+  }
+  try { localStorage.setItem('wf_ach_paid', JSON.stringify(paid)); } catch {}
 }
 function getGamesPlayed() {
   try { return parseInt(localStorage.getItem('wf_games_played') || '0', 10) || 0; } catch { return 0; }
@@ -1112,7 +1134,9 @@ function evaluateAchievements(ctx) {
   const out = [];
   const r = ctx.wordResults || [];
   const complete = r.length > 0 && r.every(x => x === 'green' || x === 'yellow');
-  if (complete && r.every(x => x === 'green'))  out.push('all_green');
+  const allGreen = complete && r.every(x => x === 'green');
+  if (allGreen && ctx.turns <= 4) out.push('perfect'); // the jackpot
+  if (allGreen)  out.push('all_green');
   if (complete && r.every(x => x === 'yellow')) out.push('all_yellow');
   if (complete && ctx.isDaily && ctx.helpsUsed === 0) out.push('no_hints');
   if (complete && ctx.wrongGuesses === 0) out.push('no_wrong');
@@ -1132,14 +1156,48 @@ function achById(id) { return ACHIEVEMENTS.find(a => a.id === id); }
 // Accent + background restyles (tile face colors keep their green/yellow meaning
 // for readability). Ownership is derived from token_transactions with a stable
 // 'theme-<id>' reason — account-level, no extra tables. Prices are PLACEHOLDERS.
+// Each theme carries a full tile palette (`pal`) so the board reskins too, while
+// keeping selected(warm) / green(cool success) / yellow(warm partial) visually
+// distinct within every theme for readability. Colors are tunable placeholders.
 const THEMES = [
-  { id:'default',   name:'Classic',   price:0,   bg:'linear-gradient(160deg,#0D1B2A 0%,#091422 100%)', title:'linear-gradient(90deg,#00F5C4,#FFB703)', swatch:['#0D1B2A','#00F5C4','#FFB703'] },
-  { id:'midnight',  name:'Midnight',  price:150, bg:'linear-gradient(160deg,#05070d 0%,#02030a 100%)', title:'linear-gradient(90deg,#8ea2c8,#cdd8ee)', swatch:['#05070d','#8ea2c8','#cdd8ee'] },
-  { id:'sunset',    name:'Sunset',    price:200, bg:'linear-gradient(160deg,#2a1428 0%,#180a1c 100%)', title:'linear-gradient(90deg,#ff9f6b,#ff5e8a)', swatch:['#2a1428','#ff9f6b','#ff5e8a'] },
-  { id:'forest',    name:'Forest',    price:200, bg:'linear-gradient(160deg,#0c1f17 0%,#06120d 100%)', title:'linear-gradient(90deg,#00d68f,#a8e05f)', swatch:['#0c1f17','#00d68f','#a8e05f'] },
-  { id:'ocean',     name:'Ocean',     price:200, bg:'linear-gradient(160deg,#0a1a2f 0%,#050f1f 100%)', title:'linear-gradient(90deg,#38bdf8,#22d3ee)', swatch:['#0a1a2f','#38bdf8','#22d3ee'] },
-  { id:'bubblegum', name:'Bubblegum', price:200, bg:'linear-gradient(160deg,#2a0f2e 0%,#1a0820 100%)', title:'linear-gradient(90deg,#f472b6,#a78bfa)', swatch:['#2a0f2e','#f472b6','#a78bfa'] },
+  { id:'default', name:'Classic', price:0, bg:'linear-gradient(160deg,#0D1B2A 0%,#091422 100%)', title:'linear-gradient(90deg,#00F5C4,#FFB703)', swatch:['#0D1B2A','#00F5C4','#FFB703'],
+    pal:{ back:{bg:'linear-gradient(135deg,#162030 0%,#0D1B2A 100%)',border:'#2a4060',dot:'#1e3048'},
+          sel:{bg:'linear-gradient(135deg,#FFB703,#ffcf40)',border:'#FFB703',text:'#3d2800'},
+          green:{bg:'linear-gradient(135deg,#00c49f,#00F5C4)',border:'#00F5C4',text:'#0D1B2A'},
+          yellow:{bg:'linear-gradient(135deg,#c9a800,#FFB703)',border:'#FFB703',text:'#3d2800'},
+          face:{bg:'#F5EDD6',border:'#c8bca0',text:'#0D1B2A'}, error:{bg:'#FF5E5B',text:'#fff'} } },
+  { id:'midnight', name:'Midnight', price:150, bg:'linear-gradient(160deg,#05070d 0%,#02030a 100%)', title:'linear-gradient(90deg,#8ea2c8,#cdd8ee)', swatch:['#05070d','#8ea2c8','#cdd8ee'],
+    pal:{ back:{bg:'linear-gradient(135deg,#0c1018 0%,#05070d 100%)',border:'#2a3550',dot:'#1a2740'},
+          sel:{bg:'linear-gradient(135deg,#c6b16a,#e6d29a)',border:'#e6d29a',text:'#241f0a'},
+          green:{bg:'linear-gradient(135deg,#4fd1c5,#8ceadd)',border:'#8ceadd',text:'#04120f'},
+          yellow:{bg:'linear-gradient(135deg,#b7a34f,#ddc87e)',border:'#ddc87e',text:'#241f0a'},
+          face:{bg:'#dfe6f2',border:'#9fb0cc',text:'#0a0f1a'}, error:{bg:'#ff6b6b',text:'#fff'} } },
+  { id:'sunset', name:'Sunset', price:200, bg:'linear-gradient(160deg,#2a1428 0%,#180a1c 100%)', title:'linear-gradient(90deg,#ff9f6b,#ff5e8a)', swatch:['#2a1428','#ff9f6b','#ff5e8a'],
+    pal:{ back:{bg:'linear-gradient(135deg,#3a1c33 0%,#25122a 100%)',border:'#5a3450',dot:'#432a44'},
+          sel:{bg:'linear-gradient(135deg,#ff9f6b,#ffbf94)',border:'#ff9f6b',text:'#3a1400'},
+          green:{bg:'linear-gradient(135deg,#3fbfa3,#66d9c0)',border:'#66d9c0',text:'#04120f'},
+          yellow:{bg:'linear-gradient(135deg,#e0a020,#ffcf5e)',border:'#ffcf5e',text:'#2a1c00'},
+          face:{bg:'#f3e2dc',border:'#c9a89e',text:'#25122a'}, error:{bg:'#ff5e5b',text:'#fff'} } },
+  { id:'forest', name:'Forest', price:200, bg:'linear-gradient(160deg,#0c1f17 0%,#06120d 100%)', title:'linear-gradient(90deg,#00d68f,#a8e05f)', swatch:['#0c1f17','#00d68f','#a8e05f'],
+    pal:{ back:{bg:'linear-gradient(135deg,#123024 0%,#08160f 100%)',border:'#2a5540',dot:'#1c3d2c'},
+          sel:{bg:'linear-gradient(135deg,#FFB703,#ffd24d)',border:'#FFB703',text:'#2a1c00'},
+          green:{bg:'linear-gradient(135deg,#00b56a,#3fd97f)',border:'#3fd97f',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#b8c832,#dbe86a)',border:'#dbe86a',text:'#20260a'},
+          face:{bg:'#e6f0dc',border:'#a8bfa0',text:'#08160f'}, error:{bg:'#ff5e5b',text:'#fff'} } },
+  { id:'ocean', name:'Ocean', price:200, bg:'linear-gradient(160deg,#0a1a2f 0%,#050f1f 100%)', title:'linear-gradient(90deg,#38bdf8,#22d3ee)', swatch:['#0a1a2f','#38bdf8','#22d3ee'],
+    pal:{ back:{bg:'linear-gradient(135deg,#0e2137 0%,#081426 100%)',border:'#2a4a6a',dot:'#1c3654'},
+          sel:{bg:'linear-gradient(135deg,#f0b429,#ffd166)',border:'#ffd166',text:'#2a1c00'},
+          green:{bg:'linear-gradient(135deg,#22d3ee,#67e8f9)',border:'#67e8f9',text:'#042630'},
+          yellow:{bg:'linear-gradient(135deg,#d9a441,#f0c56a)',border:'#f0c56a',text:'#2a1c00'},
+          face:{bg:'#dcecf5',border:'#9cb8cc',text:'#081426'}, error:{bg:'#ff6b6b',text:'#fff'} } },
+  { id:'bubblegum', name:'Bubblegum', price:200, bg:'linear-gradient(160deg,#2a0f2e 0%,#1a0820 100%)', title:'linear-gradient(90deg,#f472b6,#a78bfa)', swatch:['#2a0f2e','#f472b6','#a78bfa'],
+    pal:{ back:{bg:'linear-gradient(135deg,#38143c 0%,#220a28 100%)',border:'#5e2a62',dot:'#48224e'},
+          sel:{bg:'linear-gradient(135deg,#f9a8d4,#fbcfe8)',border:'#f9a8d4',text:'#3a0a2a'},
+          green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#c084fc,#d8b4fe)',border:'#d8b4fe',text:'#2a0a3a'},
+          face:{bg:'#f3dcee',border:'#c79ec0',text:'#1a0820'}, error:{bg:'#ff5e5b',text:'#fff'} } },
 ];
+function activePalette() { return themeById(getActiveThemeId()).pal; }
 const FREE_THEMES = ['default'];
 function themeById(id) { return THEMES.find(t => t.id === id) || THEMES[0]; }
 function getActiveThemeId() { try { return localStorage.getItem('wf_theme') || 'default'; } catch { return 'default'; } }
@@ -1330,6 +1388,25 @@ function FloatingScore({ items }) {
 
 // ─── Tile ─────────────────────────────────────────────────────────────────────
 function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onClick, orderNum, remoteColor, isHint, isXray }) {
+  const P = activePalette(); // current theme's tile palette
+  // Which face state applies (order matters — error > remote > selected > found)
+  const faceBg = isError ? P.error.bg
+    : remoteColor && isFlipped && !isFound ? remoteColor + "28"
+    : isSelected ? P.sel.bg
+    : isFound && foundInOrder ? P.green.bg
+    : isFound ? P.yellow.bg
+    : P.face.bg;
+  const faceBorder = remoteColor && isFlipped && !isFound ? `2.5px solid ${remoteColor}`
+    : isSelected ? `2.5px solid ${P.sel.border}`
+    : isFound && foundInOrder ? `2.5px solid ${P.green.border}`
+    : isFound ? `2.5px solid ${P.yellow.border}`
+    : `2px solid ${P.face.border}`;
+  const faceText = isError ? P.error.text
+    : isSelected ? P.sel.text
+    : isFound && foundInOrder ? P.green.text
+    : isFound ? P.yellow.text
+    : P.face.text;
+  const selGlow = (isSelected ? P.sel.border : "#FFB703") + "88";
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -1367,10 +1444,10 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
           // NOTE: gradient + dots all live in backgroundImage layers. Mixing the
           // `background` shorthand with backgroundImage makes React drop the dot
           // layer when the shorthand changes (tiles stayed "flat" after x-ray).
-          borderRadius:10,border: isXray?"2px solid #4FC3F7":"2px solid #2a4060",
+          borderRadius:10,border: isXray?"2px solid #4FC3F7":`2px solid ${P.back.border}`,
           display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow: isXray?"0 0 16px #4FC3F766, inset 0 0 22px #4FC3F722":"0 2px 8px #00000066",
-          backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px),${isXray?"linear-gradient(135deg,#050f1c 0%,#03111f 100%)":"linear-gradient(135deg,#162030 0%,#0D1B2A 100%)"}`,
+          backgroundImage:`radial-gradient(circle at 30% 30%, ${P.back.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${P.back.dot} 1px, transparent 1px),${isXray?"linear-gradient(135deg,#050f1c 0%,#03111f 100%)":P.back.bg}`,
           backgroundSize:"12px 12px, 12px 12px, 100% 100%",
           transition:"border 0.25s, box-shadow 0.25s",
         }}>
@@ -1384,25 +1461,25 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
               animation:"xrayPulse 1.3s ease both",
             }}>{tile.letter}</span>
           ) : (
-            <span style={{color:"#1e3048",fontSize:"1.4em",fontWeight:900}}>✦</span>
+            <span style={{color:P.back.dot,fontSize:"1.4em",fontWeight:900}}>✦</span>
           )}
         </div>
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
           transform:"rotateY(180deg)",borderRadius:10,
-          background: isError?"#FF5E5B":remoteColor&&isFlipped&&!isFound?remoteColor+"28":isSelected?"linear-gradient(135deg,#FFB703,#ffcf40)":isFound&&foundInOrder?"linear-gradient(135deg,#00c49f,#00F5C4)":isFound?"linear-gradient(135deg,#c9a800,#FFB703)":"#F5EDD6",
-          border: remoteColor&&isFlipped&&!isFound?`2.5px solid ${remoteColor}`:isSelected?"2.5px solid #FFB703":isFound&&foundInOrder?"2.5px solid #00F5C4":isFound?"2.5px solid #FFB703":"2px solid #c8bca0",
+          background: faceBg,
+          border: faceBorder,
           display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          boxShadow:remoteColor&&isFlipped&&!isFound?`0 0 14px ${remoteColor}55`:isSelected?"0 0 16px #FFB70388":"0 2px 8px #00000044",
+          boxShadow:remoteColor&&isFlipped&&!isFound?`0 0 14px ${remoteColor}55`:isSelected?`0 0 16px ${selGlow}`:"0 2px 8px #00000044",
           transition:"background 0.2s,box-shadow 0.2s,border 0.2s",
         }}>
           <span style={{
             fontFamily:"'JetBrains Mono',monospace",
             fontSize:"clamp(1.1rem,3.5vw,1.8rem)",fontWeight:800,
-            color:isError?"#fff":isSelected?"#3d2800":isFound&&!foundInOrder?"#3d2800":"#0D1B2A",letterSpacing:"0.05em",
+            color:faceText,letterSpacing:"0.05em",
           }}>{tile.letter}</span>
           {isFlipped&&!isFound&&orderNum!==undefined&&(
-            <span style={{position:"absolute",bottom:4,right:6,fontSize:"0.55em",fontWeight:700,opacity:0.4,color:isSelected?"#3d2800":"#0D1B2A"}}>{orderNum+1}</span>
+            <span style={{position:"absolute",bottom:4,right:6,fontSize:"0.55em",fontWeight:700,opacity:0.5,color:faceText}}>{orderNum+1}</span>
           )}
         </div>
       </div>
@@ -1445,6 +1522,7 @@ function FoundWordBanner({ words, wordResults }) {
 function RevealGrid({ words, tiles, maxTurns, onDone }) {
   const [phase, setPhase] = useState('show'); // show | flip | shuffle
   const SHUFFLE_MS = 650;
+  const P = activePalette(); // theme tile palette (face-up uses selected look)
 
   // Shuffled position of each tile in the final 4×4 grid
   const shuffledPos = useMemo(() => {
@@ -1538,36 +1616,35 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
                       transition: phase==='flip' ? 'transform 0.45s cubic-bezier(.4,0,.2,1)' : 'none',
                       transform: faceDown ? 'rotateY(180deg)' : 'rotateY(0deg)',
                     }}>
-                      {/* Face-up: gold selected-tile look, same as tapped tiles in game */}
+                      {/* Face-up: themed selected-tile look, same as tapped tiles in game */}
                       <div style={{
                         position:'absolute',inset:0,backfaceVisibility:'hidden',
-                        background:'linear-gradient(135deg,#FFB703,#ffcf40)',
-                        borderRadius:10,border:'2.5px solid #FFB703',
+                        background:P.sel.bg,
+                        borderRadius:10,border:`2.5px solid ${P.sel.border}`,
                         display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
-                        boxShadow:'0 0 16px #FFB70388',
+                        boxShadow:`0 0 16px ${P.sel.border}88`,
                       }}>
                         <span style={{
                           fontFamily:"'JetBrains Mono',monospace",
                           fontSize:'clamp(1.1rem,3.5vw,1.8rem)',fontWeight:800,
-                          color:'#3d2800',letterSpacing:'0.05em',
+                          color:P.sel.text,letterSpacing:'0.05em',
                         }}>{tile.letter}</span>
                         <span style={{
                           position:'absolute',bottom:4,right:6,
-                          fontSize:'0.55em',fontWeight:700,opacity:0.4,color:'#3d2800',
+                          fontSize:'0.55em',fontWeight:700,opacity:0.5,color:P.sel.text,
                         }}>{li+1}</span>
                       </div>
-                      {/* Face-down: identical to real tile card back */}
+                      {/* Face-down: themed tile card back */}
                       <div style={{
                         position:'absolute',inset:0,backfaceVisibility:'hidden',
                         transform:'rotateY(180deg)',borderRadius:10,
-                        background:'linear-gradient(135deg,#162030 0%,#0D1B2A 100%)',
-                        border:'2px solid #2a4060',
+                        border:`2px solid ${P.back.border}`,
                         display:'flex',alignItems:'center',justifyContent:'center',
                         boxShadow:'0 2px 8px #00000066',
-                        backgroundImage:`radial-gradient(circle at 30% 30%, #1e3048 1px, transparent 1px),radial-gradient(circle at 70% 70%, #1e3048 1px, transparent 1px)`,
-                        backgroundSize:'12px 12px',
+                        backgroundImage:`radial-gradient(circle at 30% 30%, ${P.back.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${P.back.dot} 1px, transparent 1px),${P.back.bg}`,
+                        backgroundSize:'12px 12px, 12px 12px, 100% 100%',
                       }}>
-                        <span style={{color:'#1e3048',fontSize:'1.4em',fontWeight:900}}>✦</span>
+                        <span style={{color:P.back.dot,fontSize:'1.4em',fontWeight:900}}>✦</span>
                       </div>
                     </div>
                   </div>
@@ -3899,10 +3976,13 @@ function AchievementToast({ ids }) {
             animation:`achIn 0.45s cubic-bezier(.2,1.4,.4,1) ${i*0.12}s both`,
           }}>
             <span style={{fontSize:"1.6rem",flexShrink:0}}>{a.icon}</span>
-            <div style={{textAlign:"left"}}>
+            <div style={{textAlign:"left",flex:1}}>
               <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#FFB703",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>ACHIEVEMENT UNLOCKED</div>
               <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
             </div>
+            {a.reward > 0 && (
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#00F5C4",fontWeight:800,fontSize:"0.82rem",flexShrink:0}}>+{a.reward}🪙</span>
+            )}
           </div>
         );
       })}
@@ -3941,7 +4021,10 @@ function AchievementsScreen({ onBack }) {
                   <div style={{fontFamily:"'Fraunces',serif",color:got?"#F5EDD6":"#7a9cc0",fontWeight:700,fontSize:"0.95rem"}}>{a.name}</div>
                   <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.7rem",marginTop:2}}>{a.desc}</div>
                 </div>
-                {got && <span style={{color:"#00F5C4",fontSize:"1.1rem",flexShrink:0}}>✓</span>}
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
+                  {a.reward > 0 && <span style={{fontFamily:"'JetBrains Mono',monospace",color:got?"#FFB703":"#3a5570",fontSize:"0.72rem",fontWeight:700}}>{a.reward}🪙</span>}
+                  {got && <span style={{color:"#00F5C4",fontSize:"1.05rem"}}>✓</span>}
+                </div>
               </div>
             );
           })}
@@ -4171,6 +4254,10 @@ function WordFlip() {
     if (!ids || !ids.length) return;
     setAchToast(ids);
     setTimeout(() => setAchToast([]), 4800);
+    // Pay the token rewards (signed-in only; idempotent per achievement).
+    if (session?.user) {
+      ensureFreshSession().then(() => grantAchievementRewards(ids).then(refreshWallet));
+    }
   }
   // Cosmetic theme (accent + background). Selection is local; ownership is
   // account-level (derived from token_transactions).
@@ -4212,6 +4299,9 @@ function WordFlip() {
       grantEarnedTokens(session.user.id).then(refreshWallet);
       syncInventoryFromServer(session.user.id); // power-ups follow the account
       fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
+      // Reconcile achievement rewards: pays any unlocked-but-unpaid badges
+      // (e.g. earned while signed out, or a grant that failed earlier).
+      ensureFreshSession().then(() => grantAchievementRewards(Object.keys(getAchievements())).then(refreshWallet));
     }
   }, [session?.user?.id]);
 
