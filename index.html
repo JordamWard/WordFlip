@@ -1202,13 +1202,16 @@ function activePalette() { return themeById(getActiveThemeId()).pal; }
 // Chrome palette = the app's surface/border/text/accent colors, themed per theme.
 // Applied as CSS variables (--wf-*) on the app root; the render code references
 // var(--wf-surface) etc. so buttons, cards and the header bars all reskin too.
+// `top` = the theme's top background color, used for the PWA status-bar/notch
+// tint (the <meta name="theme-color"> and the html element) — otherwise that
+// strip above the app stays the old navy regardless of theme.
 const THEME_CHROME = {
-  default:   { surface:'#0a1520', border:'#1e3048', accent:'#00F5C4', accent2:'#FFB703', textDim:'#7a9cc0', textMute:'#3a5570' },
-  midnight:  { surface:'#0a0e18', border:'#222d47', accent:'#9fb2d6', accent2:'#cdd8ee', textDim:'#8a97b5', textMute:'#55618a' },
-  sunset:    { surface:'#1e0f22', border:'#3d2340', accent:'#ff9f6b', accent2:'#ff7ba0', textDim:'#c49ab0', textMute:'#7a556e' },
-  forest:    { surface:'#0a1a12', border:'#1e4030', accent:'#34d99a', accent2:'#a8e05f', textDim:'#86ac96', textMute:'#4d7361' },
-  ocean:     { surface:'#0a1826', border:'#1e3a5a', accent:'#4cc4f5', accent2:'#34d9e8', textDim:'#86a6c4', textMute:'#4d6d88' },
-  bubblegum: { surface:'#1c0a20', border:'#401f46', accent:'#f77fc0', accent2:'#b79bfc', textDim:'#bd9ac8', textMute:'#74547a' },
+  default:   { top:'#0D1B2A', surface:'#0a1520', border:'#1e3048', accent:'#00F5C4', accent2:'#FFB703', textDim:'#7a9cc0', textMute:'#3a5570' },
+  midnight:  { top:'#05070d', surface:'#0a0e18', border:'#222d47', accent:'#9fb2d6', accent2:'#cdd8ee', textDim:'#8a97b5', textMute:'#55618a' },
+  sunset:    { top:'#2a1428', surface:'#1e0f22', border:'#3d2340', accent:'#ff9f6b', accent2:'#ff7ba0', textDim:'#c49ab0', textMute:'#7a556e' },
+  forest:    { top:'#0c1f17', surface:'#0a1a12', border:'#1e4030', accent:'#34d99a', accent2:'#a8e05f', textDim:'#86ac96', textMute:'#4d7361' },
+  ocean:     { top:'#0a1a2f', surface:'#0a1826', border:'#1e3a5a', accent:'#4cc4f5', accent2:'#34d9e8', textDim:'#86a6c4', textMute:'#4d6d88' },
+  bubblegum: { top:'#2a0f2e', surface:'#1c0a20', border:'#401f46', accent:'#f77fc0', accent2:'#b79bfc', textDim:'#bd9ac8', textMute:'#74547a' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
@@ -4295,7 +4298,18 @@ function WordFlip() {
   const [ownedThemes,setOwnedThemes] = useState(()=>new Set(FREE_THEMES));
   const theme = themeById(activeThemeId);
   function applyTheme(id) { setActiveThemeId(id); setActiveThemeIdState(id); }
-  useEffect(() => { try { document.body.style.background = themeById(activeThemeId).bg; } catch {} }, [activeThemeId]);
+  useEffect(() => {
+    const t = themeById(activeThemeId);
+    const chrome = THEME_CHROME[activeThemeId] || THEME_CHROME.default;
+    try { document.body.style.background = t.bg; } catch {}
+    // Paint the root + the PWA status-bar tint so the strip above the app
+    // (the notch / browser top bar) matches the theme instead of staying navy.
+    try { document.documentElement.style.background = chrome.top; } catch {}
+    try {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', chrome.top);
+    } catch {}
+  }, [activeThemeId]);
   const [winIsNewBest,setWinIsNewBest] = useState(false);
   const [showTutorial,setShowTutorial] = useState(()=>{
     try { return !localStorage.getItem(TUTORIAL_KEY); } catch { return true; }
