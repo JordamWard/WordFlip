@@ -1239,6 +1239,24 @@ async function buyTheme(themeId, price) {
   return spendTokens(price, 'theme-' + themeId);
 }
 
+// ─── Shop "new items" nudge ───────────────────────────────────────────────────
+// The Shop button pulses whenever the catalog has anything the player hasn't
+// seen. This covers both a first-ever visit (nothing seen yet) and any item
+// added later (its id won't be in the seen list until they next open the shop).
+function shopCatalogIds() {
+  return [...SHOP_ITEMS.map(i => i.key), ...THEMES.filter(t => t.price > 0).map(t => t.id)];
+}
+function getSeenShopItems() {
+  try { return JSON.parse(localStorage.getItem('wf_shop_seen') || '[]'); } catch { return []; }
+}
+function markShopSeen() {
+  try { localStorage.setItem('wf_shop_seen', JSON.stringify(shopCatalogIds())); } catch {}
+}
+function shopHasNew() {
+  const seen = new Set(getSeenShopItems());
+  return shopCatalogIds().some(id => !seen.has(id));
+}
+
 // ─── Share helper ─────────────────────────────────────────────────────────────
 function buildShareText(turns, ms, score, wordResults, totalWords) {
   const d = new Date();
@@ -2267,7 +2285,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
@@ -2337,6 +2355,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         )}
         <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
       </div>
+      {signedIn && onShop && coins > 0 && (
+        <button onClick={onShop} style={{...btnStyle("transparent","var(--wf-accent)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline",animation: shopHasNew()?"shopPulse 1.5s ease-in-out infinite":"none"}}>
+          🛍️ Spend your coins in the Shop →
+        </button>
+      )}
     </div>
   );
 }
@@ -4097,6 +4120,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
   // Show purchases made on other devices: pull the account inventory on open.
   useEffect(() => {
+    markShopSeen(); // opening the shop clears the "new items" pulse
     ensureFreshSession().then(s => {
       if (!s?.user) return;
       syncInventoryFromServer(s.user.id).then(() => {
@@ -4454,6 +4478,7 @@ function WordFlip() {
         @keyframes hintWiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-6deg)}40%{transform:rotate(6deg)}60%{transform:rotate(-4deg)}80%{transform:rotate(4deg)}}
         @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
         @keyframes achIn{from{opacity:0;transform:translateY(-16px) scale(0.9)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes shopPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.09);filter:drop-shadow(0 0 6px var(--wf-accent))}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
@@ -4510,8 +4535,13 @@ function WordFlip() {
                 🏅 Achievements
               </button>
               {session && (
-                <button onClick={()=>setScreen("shop")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-                  🛍️ Shop
+                <button onClick={()=>setScreen("shop")} style={{
+                  ...btnStyle("transparent", shopHasNew()?"var(--wf-accent)":"var(--wf-text-dim)"),
+                  padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline",
+                  fontWeight: shopHasNew()?800:700,
+                  animation: shopHasNew()?"shopPulse 1.5s ease-in-out infinite":"none",
+                }}>
+                  🛍️ Shop{shopHasNew()?" ✨":""}
                 </button>
               )}
             </div>
@@ -4548,7 +4578,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} />
           {winMode==="daily"&&!session&&(
             <div onClick={()=>setScreen("auth")} style={{
               maxWidth:380,margin:"12px auto 0",padding:"12px 16px",borderRadius:12,cursor:"pointer",
