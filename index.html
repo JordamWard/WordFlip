@@ -4124,7 +4124,9 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     ensureFreshSession().then(s => {
       if (!s?.user) return;
       syncInventoryFromServer(s.user.id).then(() => {
-        setInv({ hint:getInv('wf_inv_hint'), xray:getInv('wf_inv_xray') });
+        // Rebuild from every shop item (was hardcoded to hint+xray, which
+        // dropped the freeze count — its "owned" badge vanished on re-sync).
+        setInv(Object.fromEntries(SHOP_ITEMS.map(it => [it.key, getInv(it.invKey)])));
       });
     }).catch(() => {});
   }, []);
