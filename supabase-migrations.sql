@@ -305,3 +305,27 @@ END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.credit_tokens(uuid, integer, text) FROM anon, authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 10. PUSH NOTIFICATIONS: store each device's web-push subscription.
+--     The client upserts its own row (on the unique endpoint); the
+--     send-reminders edge function (service role) reads them to send pushes.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+  endpoint text PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  p256dh text NOT NULL,
+  auth text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+-- Owners manage their own subscriptions; the service role (edge function) bypasses RLS.
+DROP POLICY IF EXISTS "push_own_select" ON public.push_subscriptions;
+CREATE POLICY "push_own_select" ON public.push_subscriptions FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_own_insert" ON public.push_subscriptions;
+CREATE POLICY "push_own_insert" ON public.push_subscriptions FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_own_update" ON public.push_subscriptions;
+CREATE POLICY "push_own_update" ON public.push_subscriptions FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_own_delete" ON public.push_subscriptions;
+CREATE POLICY "push_own_delete" ON public.push_subscriptions FOR DELETE USING (auth.uid() = user_id);

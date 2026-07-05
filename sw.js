@@ -1,7 +1,7 @@
 // WordFlip Service Worker
 // !! Bump this version number every time you deploy a new version !!
 // This is what forces home screen installs to update automatically.
-const VERSION = "wordflip-v53";
+const VERSION = "wordflip-v54";
 const CACHE_NAME = VERSION;
 
 // Everything needed to run offline
@@ -106,4 +106,34 @@ self.addEventListener("fetch", (event) => {
       })
     );
   }
+});
+
+// ── Push notifications ───────────────────────────────────────────────────────
+// A push message (sent by the send-reminders edge function) wakes the SW here.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) {}
+  const title = data.title || "WordFlip";
+  const options = {
+    body: data.body || "Your daily word puzzle is waiting!",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    tag: data.tag || "wordflip-reminder", // collapses duplicates
+    data: { url: data.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Tapping a notification focuses an open tab or opens the app.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(clients => {
+      for (const c of clients) {
+        if ("focus" in c) { c.navigate(target); return c.focus(); }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
 });

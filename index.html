@@ -1302,6 +1302,36 @@ const TOKEN_PACKS = [
   { id:'coins_3000',  coins:3000,  price:'$3.99', best:true },
   { id:'coins_10000', coins:10000, price:'$8.99' },
 ];
+// Which platform are we running on? Capacitor injects window.Capacitor in the
+// native iOS/Android shells; otherwise we're the web/PWA build.
+function getPlatform() {
+  try {
+    if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+      return window.Capacitor.getPlatform(); // 'ios' | 'android'
+    }
+  } catch (e) {}
+  return 'web';
+}
+
+// Single entry point for buying coins. Apple/Google require their OWN billing
+// for in-app digital goods, so the native builds must NOT use Stripe. Each
+// platform's path credits the same wallet server-side (via credit_tokens).
+// For now only 'web' (Stripe) is wired; the native branches are stubs to fill
+// in when we wrap with Capacitor + a StoreKit / Play Billing plugin.
+async function purchaseCoins(packId) {
+  const platform = getPlatform();
+  if (platform === 'ios') {
+    // TODO(native): StoreKit IAP via a Capacitor plugin → verify receipt on the
+    // server → credit_tokens. Apple forbids Stripe for in-app digital goods.
+    return { ok:false, msg:'In-app purchases arrive with the App Store version.' };
+  }
+  if (platform === 'android') {
+    // TODO(native): Play Billing via a Capacitor plugin → verify → credit_tokens.
+    return { ok:false, msg:'In-app purchases arrive with the Play Store version.' };
+  }
+  return startCoinPurchase(packId); // web → Stripe
+}
+
 // Ask the edge function for a Stripe Checkout URL, then hand off to Stripe.
 // Coins are credited server-side by the webhook after payment — not here.
 async function startCoinPurchase(packId) {
@@ -1317,6 +1347,59 @@ async function startCoinPurchase(packId) {
     console.error('startCoinPurchase:', e);
     return { ok:false, msg:'Couldn’t start checkout — please try again.' };
   }
+}
+
+// ─── Push notifications (daily / streak reminders) ────────────────────────────
+// Web push works on Android + desktop, and on iOS 16.4+ ONLY for a PWA added to
+// the home screen. Set VAPID_PUBLIC_KEY (and the matching private key in the
+// send-reminders edge function) to turn it on — see NOTIFICATIONS_SETUP.md.
+const VAPID_PUBLIC_KEY = ''; // <-- your VAPID public key (base64url); empty = feature hidden
+function notifSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+function notifReady() { return notifSupported() && !!VAPID_PUBLIC_KEY; }
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const b64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function getPushSubscription() {
+  if (!notifSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+// Request permission, subscribe, and store the subscription against the account.
+async function enableNotifications(userId) {
+  if (!notifReady()) return { ok:false, msg:'Reminders aren’t set up yet.' };
+  if (!userId) return { ok:false, msg:'Sign in to get reminders.' };
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return { ok:false, msg:'Reminders are blocked — enable notifications in your settings.' };
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY) });
+  }
+  const j = sub.toJSON();
+  const { error } = await getSB().from('push_subscriptions').upsert({
+    user_id: userId, endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth,
+  }, { onConflict: 'endpoint' });
+  if (error) { console.error('save push sub:', error); return { ok:false, msg:'Couldn’t save your reminder settings.' }; }
+  try { localStorage.setItem('wf_notif', '1'); } catch {}
+  return { ok:true };
+}
+async function disableNotifications() {
+  try {
+    const sub = await getPushSubscription();
+    if (sub) {
+      await getSB().from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+      await sub.unsubscribe();
+    }
+  } catch (e) {}
+  try { localStorage.removeItem('wf_notif'); } catch {}
+  return { ok:true };
 }
 
 // ─── Shop "new items" nudge ───────────────────────────────────────────────────
@@ -4231,7 +4314,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     if (!session?.user) { setCoinMsg('Sign in to buy coins.'); return; }
     setBuyingCoins(packId); setCoinMsg(null);
     await ensureFreshSession();
-    const res = await startCoinPurchase(packId);
+    const res = await purchaseCoins(packId); // platform-aware (web=Stripe, native=IAP)
     if (!res.ok) { setCoinMsg(res.msg); setBuyingCoins(null); }
     // On success the browser redirects to Stripe, so no need to reset state.
   }
@@ -4476,6 +4559,19 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 }
 
 function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
+  const [notifOn, setNotifOn] = useState(() => { try { return localStorage.getItem('wf_notif')==='1'; } catch { return false; } });
+  const [notifBusy, setNotifBusy] = useState(false);
+  const [notifMsg, setNotifMsg] = useState(null);
+  async function toggleNotif() {
+    if (notifBusy) return;
+    setNotifBusy(true); setNotifMsg(null);
+    if (notifOn) { await disableNotifications(); setNotifOn(false); }
+    else {
+      const res = await enableNotifications(profile?.id);
+      if (res.ok) setNotifOn(true); else setNotifMsg(res.msg);
+    }
+    setNotifBusy(false);
+  }
 
   return (
     <div style={{width:"100%",maxWidth:380,animation:"menuIn 0.3s ease"}}>
@@ -4504,6 +4600,22 @@ function ProfileScreen({ onBack, profile, onSignOut, balance = 0 }) {
             <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent)",fontSize:"1rem",fontWeight:700}}>🪙 {balance.toLocaleString()}</span>
           </div>
         </div>
+
+        {notifReady() && (
+          <div style={{background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)",padding:"14px",marginBottom:16,textAlign:"left"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem"}}>🔔 Daily reminder</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.64rem",marginTop:3}}>A nudge to keep your streak alive</div>
+              </div>
+              <button onClick={toggleNotif} disabled={notifBusy} style={{
+                ...btnStyle(notifOn?"var(--wf-accent)":"var(--wf-border)", notifOn?"#0a2e24":"var(--wf-text-dim)"),
+                padding:"8px 16px",fontSize:"0.75rem",flexShrink:0,opacity:notifBusy?0.6:1,
+              }}>{notifBusy?"…":notifOn?"On":"Off"}</button>
+            </div>
+            {notifMsg && <p style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.68rem",margin:"10px 0 0",color:"var(--wf-accent2)"}}>{notifMsg}</p>}
+          </div>
+        )}
 
         <button onClick={onSignOut} style={{
           ...btnStyle("var(--wf-border)","#FF5E5B"), padding:"10px 24px", borderRadius:10,
