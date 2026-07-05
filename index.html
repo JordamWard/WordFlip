@@ -1293,6 +1293,32 @@ async function fetchOwnedTileBacks(userId) {
 }
 async function buyTileBack(id, price) { return spendTokens(price, 'tileback-' + id); }
 
+// ─── Real-money coin packs (Stripe) ───────────────────────────────────────────
+// Buying coins with real money. ids + coin amounts MUST match the server-side
+// PACKS in supabase/functions/create-checkout. Prices are display-only; the
+// edge function is the source of truth for what's charged and granted.
+const TOKEN_PACKS = [
+  { id:'coins_500',   coins:500,   price:'$0.99' },
+  { id:'coins_3000',  coins:3000,  price:'$3.99', best:true },
+  { id:'coins_10000', coins:10000, price:'$8.99' },
+];
+// Ask the edge function for a Stripe Checkout URL, then hand off to Stripe.
+// Coins are credited server-side by the webhook after payment — not here.
+async function startCoinPurchase(packId) {
+  try {
+    const { data, error } = await getSB().functions.invoke('create-checkout', { body: { packId } });
+    if (error || !data?.url) {
+      console.error('create-checkout:', error || data);
+      return { ok:false, msg:'Coin purchases aren’t set up yet — check back soon!' };
+    }
+    window.location.href = data.url; // hand off to Stripe Checkout
+    return { ok:true };
+  } catch (e) {
+    console.error('startCoinPurchase:', e);
+    return { ok:false, msg:'Couldn’t start checkout — please try again.' };
+  }
+}
+
 // ─── Shop "new items" nudge ───────────────────────────────────────────────────
 // The Shop button pulses whenever the catalog has anything the player hasn't
 // seen. This covers both a first-ever visit (nothing seen yet) and any item
@@ -4197,6 +4223,18 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
   const [msg, setMsg] = useState(null);        // { key, text, good }
   const [themeMsg, setThemeMsg] = useState(null); // { id, text, good }
   const [backMsg, setBackMsg] = useState(null);   // { id, text, good }
+  const [buyingCoins, setBuyingCoins] = useState(null); // pack id mid-checkout
+  const [coinMsg, setCoinMsg] = useState(null);
+
+  async function buyCoins(packId) {
+    if (buyingCoins) return;
+    if (!session?.user) { setCoinMsg('Sign in to buy coins.'); return; }
+    setBuyingCoins(packId); setCoinMsg(null);
+    await ensureFreshSession();
+    const res = await startCoinPurchase(packId);
+    if (!res.ok) { setCoinMsg(res.msg); setBuyingCoins(null); }
+    // On success the browser redirects to Stripe, so no need to reset state.
+  }
 
   async function buyTileBackFlow(t) {
     if (buying) return;
@@ -4282,6 +4320,29 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         </div>
         <div style={{fontSize:'2rem'}}>🛍️</div>
       </div>
+
+      {/* ── Get Coins (real money) ── */}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>GET COINS</p>
+      <div style={{display:'flex', gap:8, marginBottom:6}}>
+        {TOKEN_PACKS.map(p => {
+          const busyPack = buyingCoins === p.id;
+          return (
+            <button key={p.id} onClick={() => buyCoins(p.id)} disabled={!!buyingCoins}
+              style={{flex:1, background:p.best?'linear-gradient(135deg,#0e2a3a,#12253a)':'var(--wf-surface)', border:`1.5px solid ${p.best?'#FFB70366':'var(--wf-border)'}`, borderRadius:12, padding:'12px 8px', cursor:'pointer', position:'relative', opacity:busyPack?0.6:1}}>
+              {p.best && <span style={{position:'absolute', top:-8, left:'50%', transform:'translateX(-50%)', background:'var(--wf-accent2)', color:'#0D1B2A', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.52rem', fontWeight:800, padding:'2px 8px', borderRadius:8, whiteSpace:'nowrap'}}>BEST VALUE</span>}
+              <div style={{fontSize:'1.3rem', marginBottom:2}}>🪙</div>
+              <div style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:800, fontSize:'0.95rem'}}>{p.coins.toLocaleString()}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-accent)', fontWeight:700, fontSize:'0.8rem', marginTop:2}}>{busyPack?'…':p.price}</div>
+            </button>
+          );
+        })}
+      </div>
+      {coinMsg && (
+        <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', margin:'0 0 6px', color:'var(--wf-accent2)'}}>{coinMsg}</p>
+      )}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.6rem', margin:'0 0 20px', lineHeight:1.5}}>
+        Secure checkout via Stripe. Coins are added to your account after payment.
+      </p>
 
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>POWER-UPS</p>
 
@@ -4465,6 +4526,7 @@ function WordFlip() {
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
   const [winStreakBonus,setWinStreakBonus] = useState(0); // milestone tokens earned this win
+  const [purchaseMsg,setPurchaseMsg] = useState(null); // coin-purchase return banner
   const [achToast,setAchToast] = useState([]); // achievement ids currently toasting
   function showAchievements(ids) {
     if (!ids || !ids.length) return;
@@ -4540,6 +4602,22 @@ function WordFlip() {
   useEffect(() => {
     if (recovery) setScreen("reset-password");
   }, [recovery]);
+
+  // Returning from Stripe Checkout (?purchase=success|cancel). Coins are credited
+  // server-side by the webhook, so just refresh the wallet a few times to catch
+  // the async credit, show a banner, and clean the URL.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('purchase');
+    if (!p) return;
+    if (p === 'success') {
+      refreshWallet();
+      setTimeout(refreshWallet, 2500);
+      setTimeout(refreshWallet, 6000);
+      setPurchaseMsg('🪙 Payment complete — your coins are on the way!');
+      setTimeout(() => setPurchaseMsg(null), 6000);
+    }
+    try { window.history.replaceState({}, '', window.location.pathname); } catch(e) {}
+  }, []);
 
   const dailyBest = getDailyBest();
 
@@ -4646,6 +4724,14 @@ function WordFlip() {
       `}</style>
       <Fireworks active={fireworks} />
       <AchievementToast ids={achToast} />
+      {purchaseMsg && (
+        <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:"50%",transform:"translateX(-50%)",zIndex:100,
+          background:"linear-gradient(135deg,#12253a,#0a1520)",border:"1.5px solid var(--wf-accent2)",borderRadius:12,
+          padding:"12px 18px",boxShadow:"0 8px 28px #00000088",fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",
+          width:"min(340px,92vw)",textAlign:"center",animation:"achIn 0.45s cubic-bezier(.2,1.4,.4,1) both"}}>
+          {purchaseMsg}
+        </div>
+      )}
       {showTutorial && <HowToPlay onClose={closeTutorial} />}
 
       {screen==="menu"&&(<>

@@ -267,3 +267,41 @@ BEGIN
   RETURN v_count;
 END;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 9. REAL-MONEY TOKEN PURCHASES (Stripe): server-side credit function.
+--    Called ONLY by the stripe-webhook edge function (service role) after a
+--    payment is verified. Idempotent via a unique (user_id, reason) — the
+--    reason is 'stripe-<checkout_session_id>', so a re-delivered webhook can
+--    never double-credit. Not callable by anon/authenticated clients.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Ensure the idempotency key exists (safe if already present).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'token_transactions_user_id_reason_key'
+  ) THEN
+    ALTER TABLE public.token_transactions
+      ADD CONSTRAINT token_transactions_user_id_reason_key UNIQUE (user_id, reason);
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.credit_tokens(p_user_id uuid, p_amount integer, p_reason text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'invalid amount'; END IF;
+
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+  VALUES (p_user_id, p_amount, p_reason)
+  ON CONFLICT (user_id, reason) DO NOTHING;
+
+  IF NOT FOUND THEN RETURN; END IF; -- already credited for this payment
+
+  INSERT INTO public.wallets (user_id, balance)
+  VALUES (p_user_id, p_amount)
+  ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + p_amount, updated_at = now();
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.credit_tokens(uuid, integer, text) FROM anon, authenticated;
