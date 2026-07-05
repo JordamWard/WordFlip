@@ -1197,6 +1197,19 @@ const THEMES = [
           green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
           yellow:{bg:'linear-gradient(135deg,#c084fc,#d8b4fe)',border:'#d8b4fe',text:'#2a0a3a'},
           face:{bg:'#f3dcee',border:'#c79ec0',text:'#1a0820'}, error:{bg:'#ff5e5b',text:'#fff'} } },
+  // Bold themes — vivid, high-energy. Priced higher.
+  { id:'neonpunk', name:'Neon', price:750, bg:'linear-gradient(160deg,#0a0012 0%,#050008 100%)', title:'linear-gradient(90deg,#39ff14,#ff2e97)', swatch:['#0a0012','#39ff14','#ff2e97'],
+    pal:{ back:{bg:'linear-gradient(135deg,#14001e 0%,#0a0012 100%)',border:'#39ff1455',dot:'#2a1040'},
+          sel:{bg:'linear-gradient(135deg,#ff2e97,#ff6ac1)',border:'#ff2e97',text:'#2a0018'},
+          green:{bg:'linear-gradient(135deg,#00e05a,#39ff14)',border:'#39ff14',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#e0c020,#fff06a)',border:'#fff06a',text:'#2a2400'},
+          face:{bg:'#f0e0ff',border:'#a060c0',text:'#0a0012'}, error:{bg:'#ff2e5b',text:'#fff'} } },
+  { id:'vaporwave', name:'Vaporwave', price:750, bg:'linear-gradient(160deg,#2a0a3e 0%,#0f0526 100%)', title:'linear-gradient(90deg,#ff2e97,#00f0ff)', swatch:['#2a0a3e','#ff2e97','#00f0ff'],
+    pal:{ back:{bg:'linear-gradient(135deg,#1e0a3a 0%,#12062a 100%)',border:'#4a2a6a',dot:'#341a54'},
+          sel:{bg:'linear-gradient(135deg,#ff6ac1,#ff9fd6)',border:'#ff6ac1',text:'#3a0a2a'},
+          green:{bg:'linear-gradient(135deg,#00f0ff,#6afaff)',border:'#6afaff',text:'#042630'},
+          yellow:{bg:'linear-gradient(135deg,#ffb03f,#ffd66a)',border:'#ffd66a',text:'#2a1c00'},
+          face:{bg:'#f0dcf5',border:'#c79ec0',text:'#12062a'}, error:{bg:'#ff5e5b',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
 
@@ -1213,6 +1226,8 @@ const THEME_CHROME = {
   forest:    { top:'#0c1f17', surface:'#0a1a12', border:'#1e4030', accent:'#34d99a', accent2:'#a8e05f', textDim:'#86ac96', textMute:'#4d7361' },
   ocean:     { top:'#0a1a2f', surface:'#0a1826', border:'#1e3a5a', accent:'#4cc4f5', accent2:'#34d9e8', textDim:'#86a6c4', textMute:'#4d6d88' },
   bubblegum: { top:'#2a0f2e', surface:'#1c0a20', border:'#401f46', accent:'#f77fc0', accent2:'#b79bfc', textDim:'#bd9ac8', textMute:'#74547a' },
+  neonpunk:  { top:'#0a0012', surface:'#14001e', border:'#2e1046', accent:'#39ff14', accent2:'#ff2e97', textDim:'#b090c8', textMute:'#6a4a80' },
+  vaporwave: { top:'#2a0a3e', surface:'#1a0a30', border:'#4a2a6a', accent:'#ff2e97', accent2:'#00f0ff', textDim:'#c49ad8', textMute:'#7a5a90' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
@@ -1252,6 +1267,11 @@ const TILE_BACKS = [
   { id:'tangerine',name:'Tangerine', price:200, bg:'linear-gradient(135deg,#3a1a08,#1e0d04)', dot:'#5a3010', symbol:'●', symbolColor:'#ff9f40' },
   { id:'galaxy',   name:'Galaxy',    price:250, bg:'linear-gradient(135deg,#0a0a1e,#050510)', dot:'#1c1c40', symbol:'★', symbolColor:'#7dd3fc' },
   { id:'rosegold', name:'Rose Gold', price:250, bg:'linear-gradient(135deg,#2a1418,#180a0e)', dot:'#4a2830', symbol:'❤', symbolColor:'#f9a8d4' },
+  // Bold — high-contrast, saturated color/pattern clashes. Priced higher.
+  { id:'electric', name:'Electric',    price:400, bg:'linear-gradient(135deg,#1a3cff,#0a1e8f)', dot:'#ff2a4a', symbol:'◆', symbolColor:'#ff2a4a' },
+  { id:'neon',     name:'Neon Grid',   price:400, bg:'linear-gradient(135deg,#0a0a0a,#050505)', dot:'#39ff14', symbol:'✚', symbolColor:'#39ff14' },
+  { id:'firecracker', name:'Firecracker', price:450, bg:'linear-gradient(135deg,#d40a2a,#7a0518)', dot:'#ffd23f', symbol:'★', symbolColor:'#ffd23f' },
+  { id:'vaporwave', name:'Vaporwave',  price:450, bg:'linear-gradient(135deg,#ff2e97,#7a2eff)', dot:'#00f0ff', symbol:'▲', symbolColor:'#00f0ff' },
 ];
 const FREE_TILEBACKS = ['classic'];
 function tileBackById(id) { return TILE_BACKS.find(t => t.id === id) || TILE_BACKS[0]; }
@@ -3768,7 +3788,7 @@ function HowToPlay({ onClose }) {
     {
       emoji: "🧠",
       title: "It's a Memory Game — with Words",
-      body: "The board hides four 4-letter words across 16 face-down tiles. Each turn you flip 4 tiles to spell a word. Since they're face-down, it comes down to memory.",
+      body: "Four 4-letter words are hidden across a grid of 16 face-down tiles. The whole game is remembering where each letter is.",
       visual: (
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,margin:"14px 0"}}>
           <div style={{display:"flex",gap:4}}>
@@ -3791,7 +3811,7 @@ function HowToPlay({ onClose }) {
     {
       emoji: "🎯",
       title: "Flip Four to Guess",
-      body: "Tap 4 face-down tiles to flip them. If they spell one of the target words, it's yours. Guess wrong and they flip back — so keep track of what you've seen.",
+      body: "A turn is 4 tiles: tap to flip them one at a time. Spell one of the words and it's yours to keep. Miss, and they flip back down — so remember what you saw.",
       visual: (
         <div style={{display:"flex",gap:6,justifyContent:"center",margin:"12px 0"}}>
           {["W","O","R","D"].map((l,i)=>(
@@ -3806,7 +3826,8 @@ function HowToPlay({ onClose }) {
       body: "Spell a word in the right order (W→O→R→D) and it turns GREEN for +300 pts. Right letters, wrong order still counts — YELLOW for +100 pts.",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:8,margin:"12px 0"}}>
-          {[["🟩","+300 pts","Flip in order","var(--wf-accent)"],["🟨","+100 pts","Any order","var(--wf-accent2)"]].map(([em,pts,label,col])=>(
+          {/* Literal green/yellow so these always read correctly under any theme */}
+          {[["🟩","+300 pts","Flip in order","#2ecc71"],["🟨","+100 pts","Any order","#f1c40f"]].map(([em,pts,label,col])=>(
             <div key={label} style={{display:"flex",alignItems:"center",gap:10,background:col+"22",border:`1.5px solid ${col}`,borderRadius:10,padding:"8px 12px"}}>
               <span style={{fontSize:"1.4rem"}}>{em}</span>
               <div>
@@ -3835,9 +3856,21 @@ function HowToPlay({ onClose }) {
       ),
     },
     {
+      emoji: "👥",
+      title: "Play with Friends",
+      body: "Prefer company? Jump into Multiplayer — create a room, share the invite link, and take turns racing to find the words. Up to 4 players per game.",
+      visual: (
+        <div style={{display:"flex",gap:10,justifyContent:"center",alignItems:"center",margin:"16px 0"}}>
+          {["#00c49f","#f0b429","#ff5e5b","#9b5de5"].map((c,i)=>(
+            <div key={i} style={{width:34,height:34,borderRadius:"50%",background:c,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"0.8rem",color:"#0a1520",boxShadow:`0 0 12px ${c}66`}}>P{i+1}</div>
+          ))}
+        </div>
+      ),
+    },
+    {
       emoji: "🪙",
       title: "Earn Coins, Buy Power-ups",
-      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus new color themes. Keep a daily streak going for bonus coins!",
+      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus themes and tile backs. Keep a daily streak going for bonus coins!",
       visual: (
         <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0"}}>
           {[["💡","Hint"],["🔍","X-ray"],["🧊","Freeze"]].map(([em,label])=>(
