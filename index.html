@@ -3726,9 +3726,32 @@ function HowToPlay({ onClose }) {
   const [step, setStep] = useState(0);
   const steps = [
     {
+      emoji: "🧠",
+      title: "It's a Memory Game — with Words",
+      body: "First you glimpse the hidden words. Then the tiles flip face-down and shuffle. Your job: remember where the letters went and spell each word back from memory.",
+      visual: (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,margin:"14px 0"}}>
+          <div style={{display:"flex",gap:4}}>
+            {["C","A","T"].map((l,i)=>(
+              <div key={i} style={{width:32,height:32,borderRadius:6,background:"linear-gradient(135deg,#FFB703,#ffcf40)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"0.9rem",color:"#3d2800"}}>{l}</div>
+            ))}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",color:"var(--wf-text-mute)"}}>
+            <span style={{fontSize:"1.1rem"}}>→</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.5rem"}}>flip &amp; shuffle</span>
+          </div>
+          <div style={{display:"flex",gap:4}}>
+            {[0,1,2].map(i=>(
+              <div key={i} style={{width:32,height:32,borderRadius:6,background:"linear-gradient(135deg,#162030,#0D1B2A)",border:"1.5px solid var(--wf-border)",display:"flex",alignItems:"center",justifyContent:"center",color:"var(--wf-border)",fontSize:"0.95rem"}}>✦</div>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
       emoji: "🎯",
-      title: "Find the Words",
-      body: "A grid of face-down tiles each hide a letter. Tap 4 tiles to flip them — if they spell one of the target words, you get it!",
+      title: "Flip Four to Guess",
+      body: "Tap 4 face-down tiles to flip them. If they spell one of the target words, it's yours. Guess wrong and they flip back — so keep track of what you've seen.",
       visual: (
         <div style={{display:"flex",gap:6,justifyContent:"center",margin:"12px 0"}}>
           {["W","O","R","D"].map((l,i)=>(
@@ -3740,7 +3763,7 @@ function HowToPlay({ onClose }) {
     {
       emoji: "🟩",
       title: "Order Matters",
-      body: "Flip letters in the right order (W→O→R→D) and the word turns GREEN for +300 pts. Any order still counts — YELLOW for +100 pts.",
+      body: "Spell a word in the right order (W→O→R→D) and it turns GREEN for +300 pts. Right letters, wrong order still counts — YELLOW for +100 pts.",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:8,margin:"12px 0"}}>
           {[["🟩","+300 pts","Flip in order","var(--wf-accent)"],["🟨","+100 pts","Any order","var(--wf-accent2)"]].map(([em,pts,label,col])=>(
@@ -3756,24 +3779,9 @@ function HowToPlay({ onClose }) {
       ),
     },
     {
-      emoji: "⏳",
-      title: "Daily Challenge",
-      body: "Every day there are 4 new words. You have 16 turns to find them all. The turn counter turns red when you're down to your last 3!",
-      visual: (
-        <div style={{display:"flex",justifyContent:"center",gap:16,margin:"12px 0"}}>
-          {[[16,"var(--wf-accent)"],[8,"var(--wf-accent2)"],[3,"#FF5E5B"]].map(([n,col])=>(
-            <div key={n} style={{textAlign:"center"}}>
-              <div style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"2rem",color:col}}>{n}</div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>turns left</div>
-            </div>
-          ))}
-        </div>
-      ),
-    },
-    {
       emoji: "⭐",
-      title: "Bonus Points",
-      body: "Speed bonus: finish fast for +600 pts. Accuracy: starts at 800, drops 50 per wrong guess. Spot a hidden bonus word? That's +50 surprise pts!",
+      title: "The Daily & Bonus Points",
+      body: "The Daily Challenge is 4 fresh words in 16 guesses. Finish fast for a speed bonus, keep guesses clean for an accuracy bonus, and spot a hidden extra word for +50 surprise points.",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
           {[["⏱","Speed bonus","Up to +600 pts","#9B5DE5"],["🎯","Accuracy bonus","Up to +800 pts","#00BBF9"],["✨","Bonus word","Surprise +50 pts","var(--wf-accent2)"]].map(([em,label,pts,col])=>(
@@ -3781,6 +3789,21 @@ function HowToPlay({ onClose }) {
               <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",flex:1}}>{label}</span>
               <span style={{fontFamily:"'Fraunces',serif",color:col,fontWeight:700,fontSize:"0.8rem"}}>{pts}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      emoji: "🪙",
+      title: "Earn Coins, Buy Power-ups",
+      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus new color themes. Keep a daily streak going for bonus coins!",
+      visual: (
+        <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0"}}>
+          {[["💡","Hint"],["🔍","X-ray"],["🧊","Freeze"]].map(([em,label])=>(
+            <div key={label} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:10,padding:"10px 12px"}}>
+              <span style={{fontSize:"1.5rem"}}>{em}</span>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.62rem"}}>{label}</span>
             </div>
           ))}
         </div>
@@ -4504,7 +4527,7 @@ function WordFlip() {
         <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:theme.title,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
         {screen==="menu"&&(
           <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>flip · match · win</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>remember · flip · spell</p>
           </div>
         )}
       </div>
