@@ -977,9 +977,12 @@ function clearDailyProgress() {
 }
 
 // ─── Streak helpers (no login needed — stored per device) ─────────────────────
-// Weekly milestone payout: every 7 consecutive days pays an escalating bonus.
-// TUNABLE — week 1: 200, week 2: 400, ... capped at 1000/week.
-const streakWeekBonus = (weeks) => Math.min(200 * weeks, 1000);
+// Weekly streak milestone payout: every 7 consecutive days pays a bonus.
+// Week 1: 200, week 2: 450, week 3: 500, week 4 and every week after: 600.
+// Re-earnable: the bonus depends on your CURRENT streak length, so losing your
+// streak and climbing back from day 1 earns each milestone again. TUNABLE.
+const STREAK_WEEK_BONUS = [200, 450, 500, 600];
+const streakWeekBonus = (weeks) => STREAK_WEEK_BONUS[Math.min(Math.max(weeks, 1), 4) - 1];
 
 function getStreak() {
   try { return JSON.parse(localStorage.getItem("wf_streak")||'{"count":0,"lastDate":""}'); }
@@ -1086,9 +1089,7 @@ const ACHIEVEMENTS = [
   { id:'time_5m',     icon:'⏱️', name:'Quick Thinker', desc:'Finish a game in under 5 minutes',  tier:'Speed', reward:100 },
   { id:'time_3m',     icon:'⚡', name:'Speed Demon',    desc:'Finish a game in under 3 minutes',  tier:'Speed', reward:300 },
   { id:'time_90s',    icon:'🚀', name:'Blur',          desc:'Finish a game in under 90 seconds', tier:'Speed', reward:600 },
-  // Streak
-  { id:'streak_7',    icon:'🔥', name:'On Fire',       desc:'Reach a 7-day streak',                 tier:'Streak', reward:200 },
-  { id:'streak_30',   icon:'🌋', name:'Unstoppable',   desc:'Reach a 30-day streak',                tier:'Streak', reward:750 },
+  // (Streaks are rewarded by the re-earnable weekly milestone, not one-time badges.)
   // Leaderboard
   { id:'top10_daily', icon:'🏅', name:'Podium',        desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard', reward:150 },
   { id:'top10_all',   icon:'👑', name:'Hall of Fame',  desc:'Reach the all-time top 10',            tier:'Leaderboard', reward:400 },
@@ -1176,9 +1177,7 @@ function evaluateAchievements(ctx) {
     if (ctx.elapsed < 90000)  out.push('time_90s');
   }
 
-  // Streak
-  if (ctx.streak >= 7)  out.push('streak_7');
-  if (ctx.streak >= 30) out.push('streak_30');
+  // (Streak rewards come from the weekly milestone, not achievements.)
 
   // Game modes (play). Daily/solo here; multiplayer unlocks from its own screens.
   if (ctx.mode === 'daily') out.push('play_daily');
