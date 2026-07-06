@@ -1070,25 +1070,38 @@ function updateStreak() {
 // Rarer/harder = bigger. The Perfect Game is the jackpot; note that pulling it
 // off also stacks all_green + turns_4/8/12 + no_wrong, so the true payout is huge.
 const ACHIEVEMENTS = [
+  // Legendary — the rare, huge ones (both require NO power-ups)
+  { id:'perfect_nohints', icon:'💎', name:'Perfection',     desc:'All 4 words in order, in 4 guesses, no power-ups', tier:'Legendary', reward:10000 },
+  { id:'lucky4',          icon:'🍀', name:'Lightning Luck', desc:'All 4 words in just 4 guesses, no power-ups',      tier:'Legendary', reward:5000 },
   // Skill
-  { id:'perfect',     icon:'💎', name:'Perfect Game',  desc:'All four words in order, in exactly 4 guesses', tier:'Skill', reward:1000 },
-  { id:'all_green',   icon:'💚', name:'Flawless',      desc:'Find every word in order',            tier:'Skill', reward:250 },
-  { id:'all_yellow',  icon:'💛', name:'Scrambler',     desc:'Find every word — none in order',     tier:'Skill', reward:200 },
-  { id:'no_hints',    icon:'🧠', name:'Unassisted',    desc:'Finish a daily using no power-ups',    tier:'Skill', reward:50 },
-  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter',  desc:'Finish with zero wrong guesses',       tier:'Skill', reward:100 },
-  // Efficiency (a 4-word board needs 4 guesses minimum)
-  { id:'turns_4',     icon:'⚡', name:'Speed Demon',    desc:'Complete a board in 4 guesses',        tier:'Efficiency', reward:500 },
-  { id:'turns_8',     icon:'🏃', name:'Efficient',      desc:'Complete a board in 8 guesses or fewer',tier:'Efficiency', reward:100 },
-  { id:'turns_12',    icon:'👍', name:'Steady Hand',    desc:'Complete a board in 12 guesses or fewer',tier:'Efficiency', reward:40 },
+  { id:'all_green',   icon:'💚', name:'Flawless',     desc:'Find every word in order',           tier:'Skill', reward:250 },
+  { id:'all_yellow',  icon:'💛', name:'Scrambler',    desc:'Find every word — none in order',    tier:'Skill', reward:200 },
+  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter', desc:'Finish with zero wrong guesses',     tier:'Skill', reward:100 },
+  { id:'no_hints',    icon:'🧠', name:'Unassisted',   desc:'Finish the Daily with no power-ups', tier:'Skill', reward:75 },
+  // Efficiency — fewest guesses (a 4-word board needs 4 minimum)
+  { id:'turns_4',     icon:'🧩', name:'Master Solver', desc:'Complete a board in 4 guesses',          tier:'Efficiency', reward:500 },
+  { id:'turns_8',     icon:'✏️', name:'Sharp',         desc:'Complete a board in 8 guesses or fewer',  tier:'Efficiency', reward:100 },
+  { id:'turns_12',    icon:'📝', name:'Methodical',    desc:'Complete a board in 12 guesses or fewer', tier:'Efficiency', reward:40 },
+  // Speed — fastest time
+  { id:'time_5m',     icon:'⏱️', name:'Quick Thinker', desc:'Finish a game in under 5 minutes',  tier:'Speed', reward:100 },
+  { id:'time_3m',     icon:'⚡', name:'Speed Demon',    desc:'Finish a game in under 3 minutes',  tier:'Speed', reward:300 },
+  { id:'time_90s',    icon:'🚀', name:'Blur',          desc:'Finish a game in under 90 seconds', tier:'Speed', reward:600 },
   // Streak
-  { id:'streak_7',    icon:'🔥', name:'On Fire',        desc:'Reach a 7-day streak',                 tier:'Streak', reward:200 },
-  { id:'streak_30',   icon:'🌋', name:'Unstoppable',    desc:'Reach a 30-day streak',                tier:'Streak', reward:750 },
+  { id:'streak_7',    icon:'🔥', name:'On Fire',       desc:'Reach a 7-day streak',                 tier:'Streak', reward:200 },
+  { id:'streak_30',   icon:'🌋', name:'Unstoppable',   desc:'Reach a 30-day streak',                tier:'Streak', reward:750 },
   // Leaderboard
-  { id:'top10_daily', icon:'🏅', name:'Podium',         desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard', reward:150 },
-  { id:'top10_all',   icon:'👑', name:'Hall of Fame',   desc:'Reach the all-time top 10',            tier:'Leaderboard', reward:400 },
+  { id:'top10_daily', icon:'🏅', name:'Podium',        desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard', reward:150 },
+  { id:'top10_all',   icon:'👑', name:'Hall of Fame',  desc:'Reach the all-time top 10',            tier:'Leaderboard', reward:400 },
+  // Game Modes — try (and win) each mode
+  { id:'play_daily',  icon:'📅', name:'Daily Grind',   desc:'Play a Daily Challenge',            tier:'Game Modes', reward:25 },
+  { id:'play_solo',   icon:'🎲', name:'Solo Act',      desc:'Finish a Solo game',                tier:'Game Modes', reward:25 },
+  { id:'play_local',  icon:'🛋️', name:'Couch Co-op',   desc:'Play a local pass-and-play game',    tier:'Game Modes', reward:25 },
+  { id:'play_online', icon:'🌐', name:'Online Arena',  desc:'Play an online multiplayer game',    tier:'Game Modes', reward:50 },
+  { id:'win_online',  icon:'🏆', name:'Champion',      desc:'Win an online multiplayer game',     tier:'Game Modes', reward:150 },
   // Dedication
-  { id:'games_10',    icon:'🎲', name:'Regular',        desc:'Play 10 games',                        tier:'Dedication', reward:40 },
-  { id:'games_50',    icon:'🏆', name:'Devoted',        desc:'Play 50 games',                        tier:'Dedication', reward:150 },
+  { id:'games_10',    icon:'🎮', name:'Regular',       desc:'Play 10 games',  tier:'Dedication', reward:40 },
+  { id:'games_50',    icon:'⭐', name:'Devoted',       desc:'Play 50 games',  tier:'Dedication', reward:150 },
+  { id:'games_100',   icon:'💯', name:'Centurion',     desc:'Play 100 games', tier:'Dedication', reward:300 },
 ];
 function getAchievements() {
   try { return JSON.parse(localStorage.getItem('wf_achievements') || '{}'); } catch { return {}; }
@@ -1136,18 +1149,46 @@ function evaluateAchievements(ctx) {
   const r = ctx.wordResults || [];
   const complete = r.length > 0 && r.every(x => x === 'green' || x === 'yellow');
   const allGreen = complete && r.every(x => x === 'green');
-  if (allGreen && ctx.turns <= 4) out.push('perfect'); // the jackpot
-  if (allGreen)  out.push('all_green');
+  const noHints = (ctx.helpsUsed || 0) === 0;
+
+  // Legendary — all 4 words in 4 guesses (0 wrong by definition) with no hints.
+  // Perfect (all in order) is the 10k; the "any order" version is the 5k.
+  // Mutually exclusive so a perfect run pays the top prize, not both.
+  if (complete && r.length === 4 && ctx.turns <= 4 && noHints) {
+    out.push(allGreen ? 'perfect_nohints' : 'lucky4');
+  }
+
+  // Skill
+  if (allGreen) out.push('all_green');
   if (complete && r.every(x => x === 'yellow')) out.push('all_yellow');
-  if (complete && ctx.isDaily && ctx.helpsUsed === 0) out.push('no_hints');
   if (complete && ctx.wrongGuesses === 0) out.push('no_wrong');
+  if (complete && ctx.isDaily && noHints) out.push('no_hints');
+
+  // Efficiency (guesses)
   if (complete && ctx.turns <= 4)  out.push('turns_4');
   if (complete && ctx.turns <= 8)  out.push('turns_8');
   if (complete && ctx.turns <= 12) out.push('turns_12');
+
+  // Speed (time) — completed games only
+  if (complete && ctx.elapsed > 0) {
+    if (ctx.elapsed < 300000) out.push('time_5m');
+    if (ctx.elapsed < 180000) out.push('time_3m');
+    if (ctx.elapsed < 90000)  out.push('time_90s');
+  }
+
+  // Streak
   if (ctx.streak >= 7)  out.push('streak_7');
   if (ctx.streak >= 30) out.push('streak_30');
-  if (ctx.gamesPlayed >= 10) out.push('games_10');
-  if (ctx.gamesPlayed >= 50) out.push('games_50');
+
+  // Game modes (play). Daily/solo here; multiplayer unlocks from its own screens.
+  if (ctx.mode === 'daily') out.push('play_daily');
+  if (ctx.mode === 'solo')  out.push('play_solo');
+
+  // Dedication
+  if (ctx.gamesPlayed >= 10)  out.push('games_10');
+  if (ctx.gamesPlayed >= 50)  out.push('games_50');
+  if (ctx.gamesPlayed >= 100) out.push('games_100');
+
   return out;
 }
 
@@ -1910,6 +1951,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const foundTileIdsRef = useRef(new Set()); // always-current mirror
   const dismissTimerRef = useRef(null);    // auto-flip-back timer for a wrong guess
   const awaitingDismissRef = useRef(false); // true while a wrong guess lingers (tap to dismiss)
+  const usedHelpRef = useRef(false); // whether any power-up was used this game (for no-hint achievements)
 
   useEffect(()=>{
     if (!started) return;
@@ -1958,7 +2000,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     setTimeout(()=>onWin({
       turns:s.turns, elapsed:s.elapsed, words:s.words,
       wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
-      bonusPts:s.bonusPts, bonusWords:s.foundBonusWords, ...extraProps
+      bonusPts:s.bonusPts, bonusWords:s.foundBonusWords,
+      usedHelp:usedHelpRef.current, ...extraProps
     }), 600);
   }
 
@@ -2049,6 +2092,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     }
     if (!tid) return;
     setInvHint(addInv('wf_inv_hint', -1));
+    usedHelpRef.current = true;
     syncUseItem('hint'); // account-level consume (no-op for guests)
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setHintTileId(tid);
@@ -2064,6 +2108,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       if (foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
       if (getInv('wf_inv_xray') < 1 || helpsLeft < 1) return;
       setInvXray(addInv('wf_inv_xray', -1));
+      usedHelpRef.current = true;
       syncUseItem('xray'); // account-level consume (no-op for guests)
       if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
       setXrayTiles(new Set([tile.id]));
@@ -2833,7 +2878,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
 }
 
 // ─── Local Multiplayer ────────────────────────────────────────────────────────
-function LocalMultiScreen({ onBack, refreshWallet }) {
+function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
   const [playerCount,setPlayerCount] = useState(2);
   const [started,setStarted] = useState(false);
   const [scores,setScores] = useState([0,0]);
@@ -2933,6 +2978,7 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
           // owner). Only on natural completion — the End button pays nothing,
           // so quick-quitting can't farm coins.
           grantIfSignedIn(TOKENS.LOCAL, 'lmp-' + Date.now(), refreshWallet);
+          if (onAchievements) onAchievements(unlockAchievements(['play_local']));
         }
       },400);
     }
@@ -2979,7 +3025,7 @@ function LocalMultiScreen({ onBack, refreshWallet }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack, refreshWallet }) {
+function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
   const [codeInput, setCodeInput] = useState(() => new URLSearchParams(window.location.search).get('room') || '');
@@ -3043,8 +3089,11 @@ function OnlineScreen({ onBack, refreshWallet }) {
     if (!ps.length) return;
     const maxScore = Math.max(...ps.map(p => p.score || 0));
     const mine = ps.find(p => p.id === myId)?.score || 0;
-    const amount = (maxScore > 0 && mine >= maxScore) ? TOKENS.MP_WIN : TOKENS.MP_LOSS;
+    const won = maxScore > 0 && mine >= maxScore;
+    const amount = won ? TOKENS.MP_WIN : TOKENS.MP_LOSS;
     grantIfSignedIn(amount, 'mp-' + roomRef.current.id, refreshWallet);
+    // Mode achievements: played online, and won it (finished top).
+    if (onAchievements) onAchievements(unlockAchievements(won ? ['play_online','win_online'] : ['play_online']));
   }, [phase]);
 
   // 60-second countdown; auto-pass when it hits 0 on my turn
@@ -4800,14 +4849,19 @@ function WordFlip() {
     // Achievements (daily + solo). Evaluated from the finished game plus running
     // counters; unlock-once, and any freshly unlocked ones raise a toast.
     const gamesPlayed = bumpGamesPlayed();
+    // No-hints truth: daily counts every help used today (survives resume);
+    // solo uses this game's own flag.
+    const helpsUsed = mode==="daily" ? getDailyHelps() : (result.usedHelp ? 1 : 0);
     const earned = evaluateAchievements({
       wordResults: wordResultsArr,
       turns: result.turns,
+      elapsed: result.elapsed,
       wrongGuesses: result.wrongGuesses || 0,
-      helpsUsed: getDailyHelps(),
+      helpsUsed,
       streak: mode==="daily" ? dailyStreakCount : getLiveStreak().count,
       gamesPlayed,
       isDaily: mode==="daily",
+      mode,
     });
     showAchievements(unlockAchievements(earned));
     setScreen("win");
@@ -4962,8 +5016,8 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} /></div>}
+      {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={async ()=>{
