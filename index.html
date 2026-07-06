@@ -247,9 +247,12 @@ async function retroSubmitTodayScore(userId) {
 // ─── Token economy ────────────────────────────────────────────────────────────
 // Earning amounts (tweak freely — placeholders until the shop is priced)
 // Daily pays the most (10% of score, ~150-240); every other mode pays less.
-const TOKENS = { SIGNUP: 100, SOLO: 50, SOLO_LARGE: 100, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
-// Daily challenge pays out 10% of the score earned
+const TOKENS = { SIGNUP: 100, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
+// Daily challenge pays out 10% of the score earned.
 const dailyTokens = (score) => Math.max(0, Math.round((score || 0) * 0.1));
+// Solo pays a flat 50 base + 1% of score, so a better (or larger) game earns a
+// little more, but the rate stays low enough that unlimited solo isn't a faucet.
+const soloTokens = (score) => 50 + Math.max(0, Math.round((score || 0) * 0.01));
 
 async function fetchWallet(userId) {
   const { data, error } = await getSB().from('wallets').select('balance').eq('user_id', userId).maybeSingle();
@@ -1725,8 +1728,9 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
         animation: isFound?"tileVanish 0.5s cubic-bezier(.4,0,.2,1) 0.15s both":isHint?"hintWiggle 0.4s ease 4":"none",
         transition: isFound?"none":"transform 0.22s cubic-bezier(.4,2,.6,1)",
         transform: isFlipped?"rotateY(180deg)":"rotateY(0deg)",
-        boxShadow: isHint?"0 0 16px #00F5C4AA":"none",
+        boxShadow: isHint?"0 0 0 3px var(--wf-accent), 0 0 20px 4px var(--wf-accent)":"none",
         borderRadius:10,
+        zIndex: isHint?5:"auto",
       }}>
         <div style={{
           position:"absolute",inset:0,backfaceVisibility:"hidden",
@@ -2103,37 +2107,37 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     const unfound = words.map((_, i) => i).filter(i => !s.found.includes(i));
     if (!unfound.length) return;
     const flippedNow = flippedRef.current;
-    const flippedLetters = flippedNow.map(id => tiles.find(t => t.id === id)?.letter).filter(Boolean);
 
-    // Candidate: first unfound word whose letters contain the flipped selection
-    // as a sub-multiset. If the selection matches nothing, fall back to the
-    // first unsolved word so the hint is still useful.
-    const containsSelection = (word) => {
+    let tid = null;
+    if (!flippedNow.length) {
+      // Nothing flipped yet — point at the first letter of the first unsolved
+      // word (so you can use a hint to start hunting, not just mid-word).
+      tid = `${unfound[0]}-0`;
+    } else {
+      const flippedLetters = flippedNow.map(id => tiles.find(t => t.id === id)?.letter).filter(Boolean);
+      // Candidate: first unfound word whose letters contain the flipped selection
+      // as a sub-multiset; fall back to the first unsolved word.
+      const containsSelection = (word) => {
+        const pool = {};
+        flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
+        let unmatched = flippedLetters.length;
+        [...word].forEach(l => { if (pool[l] > 0) { pool[l]--; unmatched--; } });
+        return unmatched === 0;
+      };
+      const targetWi = unfound.find(i => containsSelection(words[i])) ?? unfound[0];
+      const word = words[targetWi];
+      // Next missing letter: walk the word in order, crossing off flipped letters.
       const pool = {};
       flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
-      let unmatched = flippedLetters.length;
-      [...word].forEach(l => { if (pool[l] > 0) { pool[l]--; unmatched--; } });
-      return unmatched === 0;
-    };
-    const targetWi = unfound.find(i => containsSelection(words[i])) ?? unfound[0];
-    const word = words[targetWi];
-
-    // Next missing letter: walk the word in order, crossing off letters the
-    // player already has flipped; the first letter not covered is the hint.
-    const pool = {};
-    flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
-    let hintPos = -1;
-    for (let p = 0; p < word.length; p++) {
-      if (pool[word[p]] > 0) pool[word[p]]--;
-      else { hintPos = p; break; }
-    }
-    if (hintPos === -1) return; // selection already covers the whole word — no hint needed
-
-    // Wiggle the target word's own tile for that letter, skipping any position
-    // that's already face-up (duplicate letters can sit at several positions).
-    let tid = null;
-    for (let q = 0; q < word.length; q++) {
-      if (word[q] === word[hintPos] && !flippedNow.includes(`${targetWi}-${q}`)) { tid = `${targetWi}-${q}`; break; }
+      let hintPos = -1;
+      for (let p = 0; p < word.length; p++) {
+        if (pool[word[p]] > 0) pool[word[p]]--;
+        else { hintPos = p; break; }
+      }
+      if (hintPos === -1) return; // selection already covers the whole word
+      for (let q = 0; q < word.length; q++) {
+        if (word[q] === word[hintPos] && !flippedNow.includes(`${targetWi}-${q}`)) { tid = `${targetWi}-${q}`; break; }
+      }
     }
     if (!tid) return;
     setInvHint(addInv('wf_inv_hint', -1));
@@ -2577,8 +2581,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
   // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
-  const soloReward = result.words.length > 4 ? TOKENS.SOLO_LARGE : TOKENS.SOLO;
-  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloReward : 0;
+  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloTokens(score) : 0;
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
@@ -4954,11 +4957,10 @@ function WordFlip() {
       dailyStreakCount = s.count;
     } else if (mode==="solo") {
       // Repeatable grant — unique reason each game so it always pays out.
-      // Large boards (9 words) pay more than small (4 words).
+      // 50 + 1% of score, so bigger/better games earn a bit more.
       if (session?.user) {
-        const soloReward = result.words.length > 4 ? TOKENS.SOLO_LARGE : TOKENS.SOLO;
         ensureFreshSession().then(() =>
-          grantTokens(soloReward, 'solo-' + Date.now()).then(refreshWallet));
+          grantTokens(soloTokens(score), 'solo-' + Date.now()).then(refreshWallet));
       }
     }
     // Achievements (daily + solo). Evaluated from the finished game plus running
@@ -4999,7 +5001,7 @@ function WordFlip() {
         *{box-sizing:border-box;} button:hover{opacity:0.85;} button:focus-visible{outline:3px solid #00F5C4;outline-offset:3px;} a:focus-visible{outline:3px solid #00F5C4;}
         .tokenPill:hover{box-shadow:0 0 12px #00F5C455;opacity:1;}
         .tokenPill:active{transform:scale(0.93);}
-        @keyframes hintWiggle{0%,100%{transform:rotate(0)}20%{transform:rotate(-6deg)}40%{transform:rotate(6deg)}60%{transform:rotate(-4deg)}80%{transform:rotate(4deg)}}
+        @keyframes hintWiggle{0%,100%{transform:rotate(0) scale(1)}15%{transform:rotate(-9deg) scale(1.1)}35%{transform:rotate(9deg) scale(1.1)}55%{transform:rotate(-6deg) scale(1.06)}75%{transform:rotate(6deg) scale(1.04)}}
         @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
         @keyframes achIn{from{opacity:0;transform:translateY(-16px) scale(0.9)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes shopPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.09);filter:drop-shadow(0 0 6px var(--wf-accent))}}
