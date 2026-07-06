@@ -329,3 +329,78 @@ DROP POLICY IF EXISTS "push_own_update" ON public.push_subscriptions;
 CREATE POLICY "push_own_update" ON public.push_subscriptions FOR UPDATE USING (auth.uid() = user_id);
 DROP POLICY IF EXISTS "push_own_delete" ON public.push_subscriptions;
 CREATE POLICY "push_own_delete" ON public.push_subscriptions FOR DELETE USING (auth.uid() = user_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 11. MEGA HINT: adds a fourth inventory item. Adds the column and teaches
+--     buy_item / use_item about 'megahint'. Safe to run on top of section 8.
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER TABLE public.inventories
+  ADD COLUMN IF NOT EXISTS megahint integer NOT NULL DEFAULT 0 CHECK (megahint >= 0);
+
+CREATE OR REPLACE FUNCTION public.buy_item(p_item text, p_price integer)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_new_balance integer;
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray','freeze','megahint') THEN RAISE EXCEPTION 'unknown item'; END IF;
+  IF p_price IS NULL OR p_price < 0 THEN RAISE EXCEPTION 'invalid price'; END IF;
+
+  IF p_price > 0 THEN
+    UPDATE public.wallets
+       SET balance = balance - p_price, updated_at = now()
+     WHERE user_id = v_uid AND balance >= p_price
+     RETURNING balance INTO v_new_balance;
+    IF v_new_balance IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+    INSERT INTO public.token_transactions (user_id, amount, reason)
+    VALUES (v_uid, -p_price, 'buy-' || p_item || '-' || gen_random_uuid());
+  END IF;
+
+  INSERT INTO public.inventories (user_id, hint, xray, freezes, megahint)
+  VALUES (v_uid,
+          CASE WHEN p_item = 'hint'     THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'xray'     THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'freeze'   THEN 1 ELSE 0 END,
+          CASE WHEN p_item = 'megahint' THEN 1 ELSE 0 END)
+  ON CONFLICT (user_id) DO UPDATE SET
+    hint     = inventories.hint     + CASE WHEN p_item = 'hint'     THEN 1 ELSE 0 END,
+    xray     = inventories.xray     + CASE WHEN p_item = 'xray'     THEN 1 ELSE 0 END,
+    freezes  = inventories.freezes  + CASE WHEN p_item = 'freeze'   THEN 1 ELSE 0 END,
+    megahint = inventories.megahint + CASE WHEN p_item = 'megahint' THEN 1 ELSE 0 END,
+    updated_at = now();
+
+  SELECT CASE p_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray WHEN 'freeze' THEN freezes ELSE megahint END
+    INTO v_count FROM public.inventories WHERE user_id = v_uid;
+  RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.use_item(p_item text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray','freeze','megahint') THEN RAISE EXCEPTION 'unknown item'; END IF;
+
+  IF p_item = 'hint' THEN
+    UPDATE public.inventories SET hint = hint - 1, updated_at = now()
+     WHERE user_id = v_uid AND hint >= 1 RETURNING hint INTO v_count;
+  ELSIF p_item = 'xray' THEN
+    UPDATE public.inventories SET xray = xray - 1, updated_at = now()
+     WHERE user_id = v_uid AND xray >= 1 RETURNING xray INTO v_count;
+  ELSIF p_item = 'freeze' THEN
+    UPDATE public.inventories SET freezes = freezes - 1, updated_at = now()
+     WHERE user_id = v_uid AND freezes >= 1 RETURNING freezes INTO v_count;
+  ELSE
+    UPDATE public.inventories SET megahint = megahint - 1, updated_at = now()
+     WHERE user_id = v_uid AND megahint >= 1 RETURNING megahint INTO v_count;
+  END IF;
+
+  IF v_count IS NULL THEN RAISE EXCEPTION 'none left'; END IF;
+  RETURN v_count;
+END;
+$$;

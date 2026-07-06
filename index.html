@@ -279,8 +279,9 @@ async function grantEarnedTokens(userId) {
 // consumable counts (purchases deduct server-side via the spend_tokens RPC,
 // so the wallet stays the single source of truth).
 const SHOP_ITEMS = [
-  { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the first unsolved word.', price:50, invKey:'wf_inv_hint' },
-  { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:30, invKey:'wf_inv_xray' },
+  { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the word you’re building.', price:25, invKey:'wf_inv_hint' },
+  { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:20, invKey:'wf_inv_xray' },
+  { key:'megahint', icon:'💥', name:'Mega Hint', desc:'Shakes every tile of one undiscovered word at once.', price:40, invKey:'wf_inv_megahint' },
   { key:'freeze', icon:'🧊', name:'Streak Freeze', desc:'Miss a day and your streak survives — one freeze is spent per skipped day.', price:100, invKey:'wf_inv_freeze' },
 ];
 function getInv(invKey) {
@@ -348,19 +349,21 @@ async function syncInventoryFromServer(userId) {
   try {
     const db = getSB();
     // Column is `freezes` (plural) — FREEZE is a reserved word in Postgres.
-    const { data, error } = await db.from('inventories').select('hint,xray,freezes').eq('user_id', userId).maybeSingle();
-    if (error) return; // table missing (migration not run) — keep local behavior
+    const { data, error } = await db.from('inventories').select('hint,xray,freezes,megahint').eq('user_id', userId).maybeSingle();
+    if (error) return; // table/column missing (migration not run) — keep local behavior
     if (!data) {
-      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray'), lf = getInv('wf_inv_freeze');
+      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray'), lf = getInv('wf_inv_freeze'), lm = getInv('wf_inv_megahint');
       for (let i = 0; i < lh; i++) await db.rpc('buy_item', { p_item:'hint', p_price:0 });
       for (let i = 0; i < lx; i++) await db.rpc('buy_item', { p_item:'xray', p_price:0 });
       for (let i = 0; i < lf; i++) await db.rpc('buy_item', { p_item:'freeze', p_price:0 });
+      for (let i = 0; i < lm; i++) await db.rpc('buy_item', { p_item:'megahint', p_price:0 });
       return; // local cache already reflects the imported counts
     }
     try {
       localStorage.setItem('wf_inv_hint', String(data.hint || 0));
       localStorage.setItem('wf_inv_xray', String(data.xray || 0));
       localStorage.setItem('wf_inv_freeze', String(data.freezes || 0));
+      localStorage.setItem('wf_inv_megahint', String(data.megahint || 0));
     } catch {}
   } catch (e) {}
 }
@@ -1958,7 +1961,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   // Shop power-ups (bought in the Token Shop, counts held per-device)
   const [invHint, setInvHint] = useState(() => getInv('wf_inv_hint'));
   const [invXray, setInvXray] = useState(() => getInv('wf_inv_xray'));
-  const [hintTileId, setHintTileId] = useState(null);   // tile currently wiggling
+  const [invMega, setInvMega] = useState(() => getInv('wf_inv_megahint'));
+  const [hintTileId, setHintTileId] = useState(null);   // single tile wiggling (Hint)
+  const [megaHintIds, setMegaHintIds] = useState([]);   // whole-word tiles wiggling (Mega Hint)
   const [xrayArmed, setXrayArmed] = useState(false);    // next tap peeks instead of flips
   const [xrayTiles, setXrayTiles] = useState(new Set()); // tiles briefly revealed
   const timerRef = useRef(null);
@@ -2119,6 +2124,27 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setHintTileId(tid);
     setTimeout(() => setHintTileId(null), 1600);
+  }
+
+  // 💥 Mega Hint: shake every tile of one undiscovered word at once — you see
+  // where all four of its letters sit, without being told what they are.
+  function useMegaHint() {
+    if (getInv('wf_inv_megahint') < 1 || helpsLeft < 1) return;
+    if (processingRef.current || hasEndedRef.current) return;
+    const s = stateRef.current;
+    const unfound = words.map((_, i) => i).filter(i => !s.found.includes(i));
+    if (!unfound.length) return;
+    // Prefer a word you haven't started building; else the first unsolved one.
+    const flippedNow = flippedRef.current;
+    const untouched = unfound.filter(wi => !flippedNow.some(id => id.startsWith(wi + '-')));
+    const targetWi = (untouched.length ? untouched : unfound)[0];
+    const ids = words[targetWi].split('').map((_, li) => `${targetWi}-${li}`);
+    setInvMega(addInv('wf_inv_megahint', -1));
+    usedHintRef.current = true;
+    syncUseItem('megahint');
+    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    setMegaHintIds(ids);
+    setTimeout(() => setMegaHintIds([]), 1800);
   }
 
   function handleTileClick(tile) {
@@ -2284,11 +2310,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
         )}
       </div>
       {/* Power-up row — only shows when the player owns items (bought in the shop) */}
-      {(invHint>0||invXray>0||xrayArmed)&&(()=>{
+      {(invHint>0||invXray>0||invMega>0||xrayArmed)&&(()=>{
         const hintOk = invHint>0 && helpsLeft>0;
         const xrayOk = invXray>0 && helpsLeft>0;
+        const megaOk = invMega>0 && helpsLeft>0;
         return (
-          <div style={{display:"flex",gap:8,justifyContent:"center",alignItems:"center",marginBottom:6}}>
+          <div style={{display:"flex",gap:8,justifyContent:"center",alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
             <button onClick={useHint} disabled={!hintOk}
               style={{...btnStyle(hintOk?"#0e2a3a":"var(--wf-surface)",hintOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${hintOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
               💡 Hint ×{invHint}
@@ -2297,6 +2324,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
               style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"var(--wf-surface)",xrayArmed?"#9B5DE5":xrayOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
               {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
             </button>
+            {invMega>0&&(
+              <button onClick={useMegaHint} disabled={!megaOk}
+                style={{...btnStyle(megaOk?"#2e1a0e":"var(--wf-surface)",megaOk?"var(--wf-accent2)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${megaOk?"#FFB70355":"var(--wf-border)"}`,borderRadius:10}}>
+                💥 Mega ×{invMega}
+              </button>
+            )}
             {isDaily&&(
               <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",color:helpsLeft>0?"var(--wf-text-mute)":"#FF5E5B"}}>
                 {helpsLeft>0?`${helpsLeft} left today`:"daily limit reached"}
@@ -2321,7 +2354,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
             foundInOrder={foundInOrderSet.has(tile.id)}
             isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
             isError={error.includes(tile.id)}
-            isHint={hintTileId===tile.id}
+            isHint={hintTileId===tile.id||megaHintIds.includes(tile.id)}
             isXray={xrayTiles.has(tile.id)}
             onClick={()=>handleTileClick(tile)}
             orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined}
