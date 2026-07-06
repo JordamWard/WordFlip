@@ -1357,6 +1357,24 @@ async function fetchOwnedTileBacks(userId) {
 }
 async function buyTileBack(id, price) { return spendTokens(price, 'tileback-' + id); }
 
+// Redeem a promo code. The code and its value live SERVER-SIDE (redeem_code
+// RPC + promo_codes table), so valid codes aren't discoverable in the client.
+// Idempotent per (user, code) — a code can only be redeemed once per account.
+async function redeemCode(code) {
+  try {
+    const { data, error } = await getSB().rpc('redeem_code', { p_code: code });
+    if (error) {
+      const m = String(error.message || '');
+      if (/already redeemed/i.test(m)) return { ok:false, msg:'You’ve already used that code.' };
+      if (/invalid code/i.test(m))    return { ok:false, msg:'That code isn’t valid.' };
+      if (/not signed in/i.test(m))   return { ok:false, msg:'Sign in to redeem a code.' };
+      if (/function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Code redemption isn’t set up yet.' };
+      return { ok:false, msg:'Couldn’t redeem — please try again.' };
+    }
+    return { ok:true, balance:data };
+  } catch (e) { return { ok:false, msg:'Couldn’t redeem — please try again.' }; }
+}
+
 // ─── Real-money coin packs (Stripe) ───────────────────────────────────────────
 // Buying coins with real money. ids + coin amounts MUST match the server-side
 // PACKS in supabase/functions/create-checkout. Prices are display-only; the
@@ -4415,6 +4433,26 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
   const [backMsg, setBackMsg] = useState(null);   // { id, text, good }
   const [buyingCoins, setBuyingCoins] = useState(null); // pack id mid-checkout
   const [coinMsg, setCoinMsg] = useState(null);
+  const [codeInput, setCodeInput] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemMsg, setRedeemMsg] = useState(null); // { text, good }
+
+  async function redeem() {
+    const code = codeInput.trim();
+    if (!code || redeeming) return;
+    if (!session?.user) { setRedeemMsg({ text:'Sign in to redeem a code.' }); return; }
+    setRedeeming(true); setRedeemMsg(null);
+    await ensureFreshSession();
+    const res = await redeemCode(code);
+    if (res.ok) {
+      setRedeemMsg({ text:'✓ Code redeemed — coins added!', good:true });
+      setCodeInput('');
+      await refreshWallet();
+    } else {
+      setRedeemMsg({ text:res.msg });
+    }
+    setRedeeming(false);
+  }
 
   async function buyCoins(packId) {
     if (buyingCoins) return;
@@ -4533,6 +4571,22 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.6rem', margin:'0 0 20px', lineHeight:1.5}}>
         Secure checkout via Stripe. Coins are added to your account after payment.
       </p>
+
+      {/* ── Redeem a code ── */}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>REDEEM A CODE</p>
+      <div style={{display:'flex', gap:8, marginBottom:6}}>
+        <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} placeholder="Enter code"
+          onKeyDown={e=>e.key==='Enter'&&redeem()}
+          style={{flex:1, padding:'10px 12px', borderRadius:10, border:'1.5px solid var(--wf-border)', background:'var(--wf-surface)', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.85rem', outline:'none'}} />
+        <button onClick={redeem} disabled={redeeming || !codeInput.trim()}
+          style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'10px 16px', fontSize:'0.8rem', flexShrink:0, border:'1.5px solid #00F5C455', opacity:(redeeming||!codeInput.trim())?0.6:1}}>
+          {redeeming?'…':'Redeem'}
+        </button>
+      </div>
+      {redeemMsg && (
+        <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'0 0 20px', color:redeemMsg.good?'#00F5C4':'var(--wf-accent2)'}}>{redeemMsg.text}</p>
+      )}
+      {!redeemMsg && <div style={{marginBottom:20}} />}
 
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>POWER-UPS</p>
 

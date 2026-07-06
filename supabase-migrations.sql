@@ -404,3 +404,60 @@ BEGIN
   RETURN v_count;
 END;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 12. PROMO CODES: redeem a code for coins. Codes + values live server-side
+--     (promo_codes table, RLS-locked so clients can't read it); redeem_code
+--     validates and credits, once per (user, code). Seeds a testing code.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Idempotency key (also created in section 9; safe if already present).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'token_transactions_user_id_reason_key') THEN
+    ALTER TABLE public.token_transactions
+      ADD CONSTRAINT token_transactions_user_id_reason_key UNIQUE (user_id, reason);
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS public.promo_codes (
+  code   text PRIMARY KEY,
+  tokens integer NOT NULL CHECK (tokens > 0),
+  active boolean NOT NULL DEFAULT true
+);
+ALTER TABLE public.promo_codes ENABLE ROW LEVEL SECURITY;
+-- No policies: clients can't read the codes. redeem_code (SECURITY DEFINER) can.
+
+-- Testing code (add more rows like this any time; codes are stored lowercase):
+INSERT INTO public.promo_codes (code, tokens) VALUES ('moneyplease', 1000)
+  ON CONFLICT (code) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.redeem_code(p_code text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_code text := lower(trim(p_code));
+  v_tokens integer;
+  v_new_balance integer;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+
+  SELECT tokens INTO v_tokens FROM public.promo_codes WHERE code = v_code AND active;
+  IF v_tokens IS NULL THEN RAISE EXCEPTION 'invalid code'; END IF;
+
+  -- Once per user per code.
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+  VALUES (v_uid, v_tokens, 'promo-' || v_code)
+  ON CONFLICT (user_id, reason) DO NOTHING;
+  IF NOT FOUND THEN RAISE EXCEPTION 'already redeemed'; END IF;
+
+  INSERT INTO public.wallets (user_id, balance) VALUES (v_uid, v_tokens)
+  ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + v_tokens, updated_at = now()
+  RETURNING balance INTO v_new_balance;
+
+  RETURN v_new_balance;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.redeem_code(text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.redeem_code(text) TO authenticated;
