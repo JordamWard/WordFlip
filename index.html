@@ -4438,7 +4438,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
   return (
     <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
-      <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
+      <button onClick={onBack} style={{...btnStyle('var(--wf-border)','var(--wf-text-dim)'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
 
       {/* Balance header — same source of truth as the menu pill */}
       <div style={{
@@ -4447,8 +4447,8 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         display:'flex', justifyContent:'space-between', alignItems:'center',
       }}>
         <div>
-          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', letterSpacing:'0.08em', marginBottom:4}}>YOUR COINS</div>
-          <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontWeight:900, fontSize:'1.8rem'}}>🪙 {balance.toLocaleString()}</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', letterSpacing:'0.08em', marginBottom:4}}>YOUR COINS</div>
+          <div style={{fontFamily:"'Fraunces',serif", color:'var(--wf-accent)', fontWeight:900, fontSize:'1.8rem'}}>🪙 {balance.toLocaleString()}</div>
         </div>
         <div style={{fontSize:'2rem'}}>🛍️</div>
       </div>
@@ -4476,14 +4476,14 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         Secure checkout via Stripe. Coins are added to your account after payment.
       </p>
 
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>POWER-UPS</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>POWER-UPS</p>
 
       {SHOP_ITEMS.map(item => {
         const canAfford = balance >= item.price;
         const isBuying = buying === item.key;
         return (
           <div key={item.key} style={{
-            background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:14,
+            background:'var(--wf-surface)', border:'1.5px solid #1e3048', borderRadius:14,
             padding:'14px 16px', marginBottom:12,
           }}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
@@ -4492,16 +4492,16 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
                 <div style={{display:'flex', alignItems:'center', gap:8}}>
                   <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.05rem'}}>{item.name}</span>
                   {inv[item.key] > 0 && (
-                    <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.65rem', fontWeight:700, background:'#00F5C422', color:'#00F5C4', borderRadius:6, padding:'2px 7px'}}>
+                    <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.65rem', fontWeight:700, background:'#00F5C422', color:'var(--wf-accent)', borderRadius:6, padding:'2px 7px'}}>
                       ×{inv[item.key]} owned
                     </span>
                   )}
                 </div>
-                <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.72rem', margin:'4px 0 0', lineHeight:1.4}}>{item.desc}</p>
+                <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.72rem', margin:'4px 0 0', lineHeight:1.4}}>{item.desc}</p>
               </div>
               <button onClick={() => buy(item)} disabled={isBuying || !canAfford}
                 style={{
-                  ...btnStyle(canAfford ? 'linear-gradient(90deg,#FFB703,#ff9f1c)' : '#1e3048', canAfford ? '#0D1B2A' : '#3a5570'),
+                  ...btnStyle(canAfford ? 'linear-gradient(90deg,#FFB703,#ff9f1c)' : 'var(--wf-border)', canAfford ? '#0D1B2A' : 'var(--wf-text-mute)'),
                   padding:'10px 14px', fontSize:'0.8rem', flexShrink:0,
                   opacity:isBuying ? 0.6 : 1, cursor:canAfford ? 'pointer' : 'default',
                 }}>
@@ -4509,7 +4509,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
               </button>
             </div>
             {msg?.key === item.key && (
-              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:msg.good ? '#00F5C4' : '#FFB703'}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:msg.good ? 'var(--wf-accent)' : 'var(--wf-accent2)'}}>
                 {msg.text}
               </p>
             )}
@@ -4522,14 +4522,14 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
       </p>
 
       {/* ── Themes ── */}
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
       {THEMES.map(t => {
         const owned = ownedThemes.has(t.id);
         const active = activeThemeId === t.id;
         const isBuying = buying === 'theme-'+t.id;
         const canAfford = balance >= t.price;
         return (
-          <div key={t.id} style={{background:'#0a1520', border:`1.5px solid ${active?'#00F5C455':'#1e3048'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
+          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               {/* Swatch preview */}
               <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
@@ -4540,21 +4540,21 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
               </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
-                {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'#3a5570', marginLeft:8}}>owned</span>}
+                {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'var(--wf-text-mute)', marginLeft:8}}>owned</span>}
               </div>
               {active ? (
-                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'#00F5C4', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
               ) : owned ? (
-                <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','#00F5C4'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
+                <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
               ) : (
                 <button onClick={() => buyThemeFlow(t)} disabled={isBuying || !canAfford}
-                  style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'#1e3048', canAfford?'#0D1B2A':'#3a5570'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
+                  style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'var(--wf-border)', canAfford?'#0D1B2A':'var(--wf-text-mute)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
                   {isBuying ? '…' : `🪙 ${t.price}`}
                 </button>
               )}
             </div>
             {themeMsg?.id === t.id && (
-              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:themeMsg.good ? '#00F5C4' : '#FFB703'}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:themeMsg.good ? 'var(--wf-accent)' : 'var(--wf-accent2)'}}>
                 {themeMsg.text}
               </p>
             )}
@@ -4596,7 +4596,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
               )}
             </div>
             {backMsg?.id === t.id && (
-              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:backMsg.good ? '#00F5C4' : '#FFB703'}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:backMsg.good ? 'var(--wf-accent)' : 'var(--wf-accent2)'}}>
                 {backMsg.text}
               </p>
             )}
