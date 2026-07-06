@@ -1,7 +1,7 @@
 // WordFlip Service Worker
 // !! Bump this version number every time you deploy a new version !!
 // This is what forces home screen installs to update automatically.
-const VERSION = "wordflip-v60";
+const VERSION = "wordflip-v61";
 const CACHE_NAME = VERSION;
 
 // Everything needed to run offline

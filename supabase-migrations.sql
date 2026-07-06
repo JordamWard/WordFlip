@@ -427,10 +427,13 @@ CREATE TABLE IF NOT EXISTS public.promo_codes (
 );
 ALTER TABLE public.promo_codes ENABLE ROW LEVEL SECURITY;
 -- No policies: clients can't read the codes. redeem_code (SECURITY DEFINER) can.
+-- `reusable` = a code that can be redeemed repeatedly (e.g. an open testing code).
+ALTER TABLE public.promo_codes
+  ADD COLUMN IF NOT EXISTS reusable boolean NOT NULL DEFAULT false;
 
--- Testing code (add more rows like this any time; codes are stored lowercase):
-INSERT INTO public.promo_codes (code, tokens) VALUES ('moneyplease', 1000)
-  ON CONFLICT (code) DO NOTHING;
+-- Testing code — open/reusable so it can be redeemed over and over:
+INSERT INTO public.promo_codes (code, tokens, reusable) VALUES ('moneyplease', 1000, true)
+  ON CONFLICT (code) DO UPDATE SET tokens = EXCLUDED.tokens, reusable = EXCLUDED.reusable;
 
 CREATE OR REPLACE FUNCTION public.redeem_code(p_code text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -438,16 +441,21 @@ DECLARE
   v_uid uuid := auth.uid();
   v_code text := lower(trim(p_code));
   v_tokens integer;
+  v_reusable boolean;
+  v_reason text;
   v_new_balance integer;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
 
-  SELECT tokens INTO v_tokens FROM public.promo_codes WHERE code = v_code AND active;
+  SELECT tokens, reusable INTO v_tokens, v_reusable FROM public.promo_codes WHERE code = v_code AND active;
   IF v_tokens IS NULL THEN RAISE EXCEPTION 'invalid code'; END IF;
 
-  -- Once per user per code.
+  -- Reusable codes get a unique reason each time (always credit); one-shot codes
+  -- use a fixed reason so the (user, reason) key blocks a second redemption.
+  v_reason := 'promo-' || v_code || CASE WHEN v_reusable THEN '-' || gen_random_uuid() ELSE '' END;
+
   INSERT INTO public.token_transactions (user_id, amount, reason)
-  VALUES (v_uid, v_tokens, 'promo-' || v_code)
+  VALUES (v_uid, v_tokens, v_reason)
   ON CONFLICT (user_id, reason) DO NOTHING;
   IF NOT FOUND THEN RAISE EXCEPTION 'already redeemed'; END IF;
 

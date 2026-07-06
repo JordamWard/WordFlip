@@ -247,7 +247,7 @@ async function retroSubmitTodayScore(userId) {
 // ─── Token economy ────────────────────────────────────────────────────────────
 // Earning amounts (tweak freely — placeholders until the shop is priced)
 // Daily pays the most (10% of score, ~150-240); every other mode pays less.
-const TOKENS = { SIGNUP: 100, SOLO: 50, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
+const TOKENS = { SIGNUP: 100, SOLO: 50, SOLO_LARGE: 100, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
 // Daily challenge pays out 10% of the score earned
 const dailyTokens = (score) => Math.max(0, Math.round((score || 0) * 0.1));
 
@@ -2577,7 +2577,8 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
   // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
-  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? TOKENS.SOLO : 0;
+  const soloReward = result.words.length > 4 ? TOKENS.SOLO_LARGE : TOKENS.SOLO;
+  const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloReward : 0;
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
@@ -4952,10 +4953,12 @@ function WordFlip() {
       });
       dailyStreakCount = s.count;
     } else if (mode==="solo") {
-      // Repeatable grant — unique reason each game so it always pays out
+      // Repeatable grant — unique reason each game so it always pays out.
+      // Large boards (9 words) pay more than small (4 words).
       if (session?.user) {
+        const soloReward = result.words.length > 4 ? TOKENS.SOLO_LARGE : TOKENS.SOLO;
         ensureFreshSession().then(() =>
-          grantTokens(TOKENS.SOLO, 'solo-' + Date.now()).then(refreshWallet));
+          grantTokens(soloReward, 'solo-' + Date.now()).then(refreshWallet));
       }
     }
     // Achievements (daily + solo). Evaluated from the finished game plus running
