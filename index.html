@@ -1079,17 +1079,24 @@ const ACHIEVEMENTS = [
   // Skill
   { id:'all_green',   icon:'💚', name:'Flawless',     desc:'Find every word in order',           tier:'Skill', reward:250 },
   { id:'all_yellow',  icon:'💛', name:'Scrambler',    desc:'Find every word — none in order',    tier:'Skill', reward:200 },
-  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter', desc:'Finish with zero wrong guesses',     tier:'Skill', reward:100 },
+  { id:'no_wrong',    icon:'🎯', name:'Sharpshooter', desc:'Finish without a single wrong guess', tier:'Skill', reward:100 },
   { id:'no_hints',    icon:'🧠', name:'Unassisted',   desc:'Finish the Daily with no power-ups', tier:'Skill', reward:75 },
   // Efficiency — fewest guesses (a 4-word board needs 4 minimum)
   { id:'turns_4',     icon:'🧩', name:'Master Solver', desc:'Complete a board in 4 guesses',          tier:'Efficiency', reward:500 },
+  { id:'turns_6',     icon:'🎯', name:'Crisp',         desc:'Complete a board in 6 guesses or fewer',  tier:'Efficiency', reward:250 },
   { id:'turns_8',     icon:'✏️', name:'Sharp',         desc:'Complete a board in 8 guesses or fewer',  tier:'Efficiency', reward:100 },
+  { id:'turns_10',    icon:'📐', name:'Economical',    desc:'Complete a board in 10 guesses or fewer', tier:'Efficiency', reward:60 },
   { id:'turns_12',    icon:'📝', name:'Methodical',    desc:'Complete a board in 12 guesses or fewer', tier:'Efficiency', reward:40 },
   // Speed — fastest time
   { id:'time_5m',     icon:'⏱️', name:'Quick Thinker', desc:'Finish a game in under 5 minutes',  tier:'Speed', reward:100 },
   { id:'time_3m',     icon:'⚡', name:'Speed Demon',    desc:'Finish a game in under 3 minutes',  tier:'Speed', reward:300 },
   { id:'time_90s',    icon:'🚀', name:'Blur',          desc:'Finish a game in under 90 seconds', tier:'Speed', reward:600 },
-  // (Streaks are rewarded by the re-earnable weekly milestone, not one-time badges.)
+  // Streak — re-earnable status badges: lit while your CURRENT streak is at least
+  // this many days, and they go dark if the streak breaks (tokens come from the
+  // weekly milestone, so these are badge-only, reward 0).
+  { id:'streak_7',    icon:'🔥', name:'On Fire',      desc:'Hold a 7-day streak',   tier:'Streak', reward:0, streakDays:7 },
+  { id:'streak_30',   icon:'🌋', name:'Unstoppable',  desc:'Hold a 30-day streak',  tier:'Streak', reward:0, streakDays:30 },
+  { id:'streak_100',  icon:'🏔️', name:'Centenarian',  desc:'Hold a 100-day streak', tier:'Streak', reward:0, streakDays:100 },
   // Leaderboard
   { id:'top10_daily', icon:'🏅', name:'Podium',        desc:'Finish top 10 on a daily leaderboard', tier:'Leaderboard', reward:150 },
   { id:'top10_all',   icon:'👑', name:'Hall of Fame',  desc:'Reach the all-time top 10',            tier:'Leaderboard', reward:400 },
@@ -1103,6 +1110,11 @@ const ACHIEVEMENTS = [
   { id:'games_10',    icon:'🎮', name:'Regular',       desc:'Play 10 games',  tier:'Dedication', reward:40 },
   { id:'games_50',    icon:'⭐', name:'Devoted',       desc:'Play 50 games',  tier:'Dedication', reward:150 },
   { id:'games_100',   icon:'💯', name:'Centurion',     desc:'Play 100 games', tier:'Dedication', reward:300 },
+  // Just for Fun — the "so bad it's impressive" hall of shame
+  { id:'butterfingers', icon:'🧈', name:'Butterfingers', desc:'Rack up 10+ wrong guesses in one game', tier:'Just for Fun', reward:50 },
+  { id:'blank_slate',   icon:'🫥', name:'Blank Slate',   desc:'Run out of turns without finding a word', tier:'Just for Fun', reward:50 },
+  { id:'scenic_route',  icon:'🐌', name:'Scenic Route',  desc:'Take over 10 minutes to finish a game',   tier:'Just for Fun', reward:40 },
+  { id:'kitchen_sink',  icon:'🧰', name:'Kitchen Sink',  desc:'Use a Hint and an X-ray in the same game', tier:'Just for Fun', reward:40 },
 ];
 function getAchievements() {
   try { return JSON.parse(localStorage.getItem('wf_achievements') || '{}'); } catch { return {}; }
@@ -1167,7 +1179,9 @@ function evaluateAchievements(ctx) {
 
   // Efficiency (guesses)
   if (complete && ctx.turns <= 4)  out.push('turns_4');
+  if (complete && ctx.turns <= 6)  out.push('turns_6');
   if (complete && ctx.turns <= 8)  out.push('turns_8');
+  if (complete && ctx.turns <= 10) out.push('turns_10');
   if (complete && ctx.turns <= 12) out.push('turns_12');
 
   // Speed (time) — completed games only
@@ -1177,7 +1191,14 @@ function evaluateAchievements(ctx) {
     if (ctx.elapsed < 90000)  out.push('time_90s');
   }
 
-  // (Streak rewards come from the weekly milestone, not achievements.)
+  // Just for Fun — the hall of shame
+  if ((ctx.wrongGuesses || 0) >= 10) out.push('butterfingers');
+  if (ctx.outOfTurns && r.length > 0 && r.every(x => x === 'missed')) out.push('blank_slate');
+  if (complete && ctx.elapsed > 600000) out.push('scenic_route');
+  if (ctx.usedHint && ctx.usedXray) out.push('kitchen_sink');
+
+  // Streak badges are evaluated dynamically from the live streak (re-earnable),
+  // not unlocked here — see AchievementsScreen.
 
   // Game modes (play). Daily/solo here; multiplayer unlocks from its own screens.
   if (ctx.mode === 'daily') out.push('play_daily');
@@ -1950,7 +1971,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const foundTileIdsRef = useRef(new Set()); // always-current mirror
   const dismissTimerRef = useRef(null);    // auto-flip-back timer for a wrong guess
   const awaitingDismissRef = useRef(false); // true while a wrong guess lingers (tap to dismiss)
-  const usedHelpRef = useRef(false); // whether any power-up was used this game (for no-hint achievements)
+  const usedHintRef = useRef(false); // hint used this game
+  const usedXrayRef = useRef(false); // x-ray used this game
 
   useEffect(()=>{
     if (!started) return;
@@ -2000,7 +2022,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       turns:s.turns, elapsed:s.elapsed, words:s.words,
       wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
       bonusPts:s.bonusPts, bonusWords:s.foundBonusWords,
-      usedHelp:usedHelpRef.current, ...extraProps
+      usedHint:usedHintRef.current, usedXray:usedXrayRef.current,
+      usedHelp:usedHintRef.current||usedXrayRef.current, ...extraProps
     }), 600);
   }
 
@@ -2091,7 +2114,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     }
     if (!tid) return;
     setInvHint(addInv('wf_inv_hint', -1));
-    usedHelpRef.current = true;
+    usedHintRef.current = true;
     syncUseItem('hint'); // account-level consume (no-op for guests)
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setHintTileId(tid);
@@ -2107,7 +2130,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       if (foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
       if (getInv('wf_inv_xray') < 1 || helpsLeft < 1) return;
       setInvXray(addInv('wf_inv_xray', -1));
-      usedHelpRef.current = true;
+      usedXrayRef.current = true;
       syncUseItem('xray'); // account-level consume (no-op for guests)
       if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
       setXrayTiles(new Set([tile.id]));
@@ -4303,7 +4326,10 @@ function AchievementToast({ ids }) {
 // ─── Achievements Screen ──────────────────────────────────────────────────────
 function AchievementsScreen({ onBack }) {
   const have = getAchievements();
-  const unlockedCount = ACHIEVEMENTS.filter(a => have[a.id]).length;
+  const liveStreak = getLiveStreak().count;
+  // Streak badges are dynamic: lit while the current streak meets the threshold.
+  const isGot = (a) => a.streakDays ? liveStreak >= a.streakDays : !!have[a.id];
+  const unlockedCount = ACHIEVEMENTS.filter(isGot).length;
   const tiers = [...new Set(ACHIEVEMENTS.map(a => a.tier))];
   return (
     <div style={{maxWidth:440,margin:"0 auto",width:"100%"}}>
@@ -4319,7 +4345,7 @@ function AchievementsScreen({ onBack }) {
         <div key={tier} style={{marginBottom:16}}>
           <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",letterSpacing:"0.1em",fontWeight:700,margin:"0 0 8px"}}>{tier.toUpperCase()}</p>
           {ACHIEVEMENTS.filter(a => a.tier === tier).map(a => {
-            const got = !!have[a.id];
+            const got = isGot(a);
             return (
               <div key={a.id} style={{
                 display:"flex",alignItems:"center",gap:12,marginBottom:8,
@@ -4857,6 +4883,8 @@ function WordFlip() {
       elapsed: result.elapsed,
       wrongGuesses: result.wrongGuesses || 0,
       helpsUsed,
+      usedHint: result.usedHint, usedXray: result.usedXray,
+      outOfTurns: result.outOfTurns,
       streak: mode==="daily" ? dailyStreakCount : getLiveStreak().count,
       gamesPlayed,
       isDaily: mode==="daily",
