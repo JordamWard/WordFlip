@@ -5072,13 +5072,9 @@ function WordFlip() {
               <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"var(--wf-accent)"}}>→</span>
             </button>
             {!session && (
-              <div style={{background:"var(--wf-surface)",border:"1.5px solid #00F5C455",borderRadius:12,padding:"14px 16px",marginTop:2}}>
-                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,margin:"0 0 4px",textAlign:"center"}}>🪙 Save your coins &amp; scores</p>
-                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"0 0 12px",textAlign:"center",lineHeight:1.5}}>Create a free account to keep the coins you earn, hold your streak, and rank on the leaderboard.</p>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>openAuth("signup")} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign Up</button>
-                  <button onClick={()=>openAuth("signin")} style={{...btnStyle("var(--wf-border)","#F5EDD6"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign In</button>
-                </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>openAuth("signup")} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),flex:1,padding:"12px",fontSize:"0.9rem",borderRadius:12}}>Sign Up</button>
+                <button onClick={()=>openAuth("signin")} style={{...btnStyle("#162030","#F5EDD6"),flex:1,padding:"12px",fontSize:"0.9rem",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>Sign In</button>
               </div>
             )}
             <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
