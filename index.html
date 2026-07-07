@@ -1510,6 +1510,26 @@ function shopHasNew() {
 }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
+// Robust share: native share sheet when available, clipboard otherwise.
+// NOTE: only `text` is passed — adding a `title` alongside it makes iOS
+// (especially installed PWAs) render a blank share sheet. Empty text is
+// guarded so we never open an empty sheet.
+function shareOrCopy(text, onDone) {
+  if (!text) return;
+  const copy = () => {
+    try { navigator.clipboard.writeText(text).then(onDone, onDone); }
+    catch (e) { onDone && onDone(); }
+  };
+  try {
+    const data = { text };
+    if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {
+      navigator.share(data).catch(copy); // user cancel also lands here — harmless
+    } else {
+      copy();
+    }
+  } catch (e) { copy(); }
+}
+
 function buildShareText(turns, ms, score, wordResults, totalWords) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -2603,11 +2623,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
 
   function handleShare() {
     const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length);
-    const shareData = { title:"WordFlip Daily", text };
-    const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
-    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-      navigator.share(shareData).catch(tryClipboard);
-    } else { tryClipboard(); }
+    shareOrCopy(text, () => { setCopied(true); setTimeout(()=>setCopied(false),2500); });
   }
 
   return (
@@ -3969,11 +3985,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth }) {
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
     const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length);
-    const shareData = { title:"WordFlip Daily", text };
-    const tryClipboard = () => navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
-    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-      navigator.share(shareData).catch(tryClipboard);
-    } else { tryClipboard(); }
+    shareOrCopy(text, () => { setCopied(true); setTimeout(()=>setCopied(false),2500); });
   }
   return (
     <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
