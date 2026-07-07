@@ -3995,12 +3995,9 @@ function DailyAlreadyDone({ onMenu, session, onAuth }) {
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
         />
       )}
-      <div style={{margin:"16px 0"}}>
-        <StreakCard />
-      </div>
       {!session&&onAuth&&(
         <div style={{
-          maxWidth:340,margin:"0 auto 16px",padding:"14px 16px",borderRadius:12,
+          maxWidth:340,margin:"16px auto",padding:"14px 16px",borderRadius:12,
           background:"linear-gradient(135deg,#0e2a3a,#1a1200)",border:"1.5px solid #FFB70366",
         }}>
           <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,margin:"0 0 4px"}}>
@@ -4015,6 +4012,9 @@ function DailyAlreadyDone({ onMenu, session, onAuth }) {
           </div>
         </div>
       )}
+      <div style={{margin:"16px 0"}}>
+        <StreakCard />
+      </div>
       <div style={{display:"flex",gap:10,justifyContent:"center"}}>
         <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
           {copied?"✓ Copied!":"📤 Share"}
