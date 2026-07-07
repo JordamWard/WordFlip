@@ -3958,7 +3958,7 @@ function StreakCard({ animate, delay = 600 }) {
 }
 
 // ─── Daily Already Done Screen ────────────────────────────────────────────────
-function DailyAlreadyDone({ onMenu, session, onSignIn }) {
+function DailyAlreadyDone({ onMenu, session, onAuth }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   // Infer bonusPts from saved total for old entries that predate the bonusPts field
@@ -3998,18 +3998,21 @@ function DailyAlreadyDone({ onMenu, session, onSignIn }) {
       <div style={{margin:"16px 0"}}>
         <StreakCard />
       </div>
-      {!session&&onSignIn&&(
-        <div onClick={onSignIn} style={{
-          margin:"12px auto 16px",padding:"12px 16px",borderRadius:12,cursor:"pointer",
-          background:"linear-gradient(135deg,#9B5DE515,#FFB70315)",border:"1.5px solid #9B5DE544",
-          display:"flex",alignItems:"center",gap:10,maxWidth:340,
+      {!session&&onAuth&&(
+        <div style={{
+          maxWidth:340,margin:"0 auto 16px",padding:"14px 16px",borderRadius:12,
+          background:"linear-gradient(135deg,#0e2a3a,#1a1200)",border:"1.5px solid #FFB70366",
         }}>
-          <span style={{fontSize:"1.2rem"}}>🏆</span>
-          <div style={{textAlign:"left"}}>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.8rem",fontWeight:700,margin:0}}>Get on the leaderboard!</p>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score globally</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,margin:"0 0 4px"}}>
+            🪙 This game earned {dailyTokens(score).toLocaleString()} coins
+          </p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"0 0 12px",lineHeight:1.5}}>
+            You're playing as a guest — sign up free to <strong style={{color:"var(--wf-accent2)"}}>claim your coins</strong> and <strong style={{color:"var(--wf-accent)"}}>land on the leaderboard</strong> before tomorrow's puzzle resets it.
+          </p>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>onAuth("signup")} style={{...btnStyle("linear-gradient(90deg,#FFB703,#ff9f1c)","#0D1B2A"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign Up &amp; Claim</button>
+            <button onClick={()=>onAuth("signin")} style={{...btnStyle("var(--wf-border)","#F5EDD6"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign In</button>
           </div>
-          <span style={{color:"#9B5DE5",fontSize:"1rem",marginLeft:"auto"}}>→</span>
         </div>
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center"}}>
@@ -5129,7 +5132,7 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} />}
+      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} session={session} onAuth={openAuth} />}
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
