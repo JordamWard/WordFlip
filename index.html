@@ -1510,20 +1510,25 @@ function shopHasNew() {
 }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
-// Robust share: native share sheet when available, clipboard otherwise.
-// NOTE: only `text` is passed — adding a `title` alongside it makes iOS
-// (especially installed PWAs) render a blank share sheet. Empty text is
-// guarded so we never open an empty sheet.
+// Robust share: native share sheet where it works, clipboard otherwise.
+// iOS home-screen PWAs have a WebKit bug where navigator.share() fails to
+// present — you get a blank/frozen screen instead of the sheet — so on an
+// installed iOS app we copy to the clipboard instead (always reliable).
+// Only `text` is passed to share (a `title` also breaks the iOS sheet).
 function shareOrCopy(text, onDone) {
   if (!text) return;
   const copy = () => {
-    try { navigator.clipboard.writeText(text).then(onDone, onDone); }
-    catch (e) { onDone && onDone(); }
+    try {
+      navigator.clipboard.writeText(text).then(() => onDone && onDone(true), () => onDone && onDone(true));
+    } catch (e) { onDone && onDone(true); }
   };
+  // navigator.standalone === true only on an iOS home-screen app.
+  const iosStandalone = typeof navigator !== 'undefined' && navigator.standalone === true;
+  if (iosStandalone) { copy(); return; }
   try {
     const data = { text };
     if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {
-      navigator.share(data).catch(copy); // user cancel also lands here — harmless
+      navigator.share(data).then(() => onDone && onDone(false), copy); // cancel → copy
     } else {
       copy();
     }
@@ -2623,7 +2628,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
 
   function handleShare() {
     const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length);
-    shareOrCopy(text, () => { setCopied(true); setTimeout(()=>setCopied(false),2500); });
+    shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
 
   return (
@@ -3985,7 +3990,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth }) {
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
     const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length);
-    shareOrCopy(text, () => { setCopied(true); setTimeout(()=>setCopied(false),2500); });
+    shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
     <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
