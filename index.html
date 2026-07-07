@@ -1877,6 +1877,11 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
       <FoundWordBanner words={words} wordResults={{}} />
       {/* Empty flash message area — same height as real board */}
       <div style={{height:28,marginBottom:4}} />
+      {/* Reserve the power-up row's space (if owned) so the board doesn't jump
+          down when play begins after the reveal. Matches the real row's height. */}
+      {(getInv('wf_inv_hint')>0||getInv('wf_inv_xray')>0||getInv('wf_inv_megahint')>0)&&(
+        <div style={{minHeight:28,marginBottom:6}} />
+      )}
       {/* Tile board — same container as real game board */}
       <div style={{
         padding:"clamp(4px,2vw,12px)",
@@ -2331,30 +2336,33 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
           </span>
         )}
       </div>
-      {/* Power-up row — only shows when the player owns items (bought in the shop) */}
+      {/* Power-up row — only shows when the player owns items (bought in the shop).
+          Compact + fixed-ish height; the reveal reserves the same space so the
+          board doesn't jump when play begins. */}
       {(invHint>0||invXray>0||invMega>0||xrayArmed)&&(()=>{
         const hintOk = invHint>0 && helpsLeft>0;
         const xrayOk = invXray>0 && helpsLeft>0;
         const megaOk = invMega>0 && helpsLeft>0;
+        const chip = (extra) => ({padding:"4px 9px",fontSize:"0.68rem",borderRadius:9,...extra});
         return (
-          <div style={{display:"flex",gap:8,justifyContent:"center",alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+          <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",minHeight:28,marginBottom:6}}>
             <button onClick={useHint} disabled={!hintOk}
-              style={{...btnStyle(hintOk?"#0e2a3a":"var(--wf-surface)",hintOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${hintOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
-              💡 Hint ×{invHint}
+              style={{...btnStyle(hintOk?"#0e2a3a":"var(--wf-surface)",hintOk?"var(--wf-accent)":"#2a4060"),...chip({border:`1.5px solid ${hintOk?"#00F5C455":"var(--wf-border)"}`})}}>
+              💡 ×{invHint}
             </button>
             <button onClick={()=>setXrayArmed(a=>!a)} disabled={!xrayOk&&!xrayArmed}
-              style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"var(--wf-surface)",xrayArmed?"#9B5DE5":xrayOk?"var(--wf-accent)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"var(--wf-border)"}`,borderRadius:10}}>
-              {xrayArmed?"🔍 Tap a tile…":`🔍 X-ray ×${invXray}`}
+              style={{...btnStyle(xrayArmed?"#2a1a3e":xrayOk?"#0e2a3a":"var(--wf-surface)",xrayArmed?"#9B5DE5":xrayOk?"var(--wf-accent)":"#2a4060"),...chip({border:`1.5px solid ${xrayArmed?"#9B5DE5":xrayOk?"#00F5C455":"var(--wf-border)"}`})}}>
+              {xrayArmed?"🔍 tap a tile…":`🔍 ×${invXray}`}
             </button>
             {invMega>0&&(
               <button onClick={useMegaHint} disabled={!megaOk}
-                style={{...btnStyle(megaOk?"#2e1a0e":"var(--wf-surface)",megaOk?"var(--wf-accent2)":"#2a4060"),padding:"6px 12px",fontSize:"0.72rem",border:`1.5px solid ${megaOk?"#FFB70355":"var(--wf-border)"}`,borderRadius:10}}>
-                💥 Mega ×{invMega}
+                style={{...btnStyle(megaOk?"#2e1a0e":"var(--wf-surface)",megaOk?"var(--wf-accent2)":"#2a4060"),...chip({border:`1.5px solid ${megaOk?"#FFB70355":"var(--wf-border)"}`})}}>
+                💥 ×{invMega}
               </button>
             )}
             {isDaily&&(
-              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",color:helpsLeft>0?"var(--wf-text-mute)":"#FF5E5B"}}>
-                {helpsLeft>0?`${helpsLeft} left today`:"daily limit reached"}
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",color:helpsLeft>0?"var(--wf-text-mute)":"#FF5E5B"}}>
+                {helpsLeft>0?`${helpsLeft} left`:"limit reached"}
               </span>
             )}
           </div>
@@ -4155,8 +4163,8 @@ function HowToPlay({ onClose }) {
 }
 
 // ─── Auth Screens ─────────────────────────────────────────────────────────────
-function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone }) {
-  const [mode, setMode] = useState("signin");
+function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone, initialMode }) {
+  const [mode, setMode] = useState(initialMode === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
@@ -4799,6 +4807,8 @@ function WordFlip() {
   const [screen,setScreen] = useState(() =>
     new URLSearchParams(window.location.search).get('room') ? "multi-online" : "menu");
   const [soloLarge,setSoloLarge] = useState(false);
+  const [authMode,setAuthMode] = useState("signin");
+  const openAuth = (m) => { setAuthMode(m || "signin"); setScreen("auth"); };
   const [winResult,setWinResult] = useState(null);
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
@@ -5061,6 +5071,16 @@ function WordFlip() {
             <button onClick={()=>setScreen("multi-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #00F5C444",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"var(--wf-accent)"}}>→</span>
             </button>
+            {!session && (
+              <div style={{background:"var(--wf-surface)",border:"1.5px solid #00F5C455",borderRadius:12,padding:"14px 16px",marginTop:2}}>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,margin:"0 0 4px",textAlign:"center"}}>🪙 Save your coins &amp; scores</p>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"0 0 12px",textAlign:"center",lineHeight:1.5}}>Create a free account to keep the coins you earn, hold your streak, and rank on the leaderboard.</p>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>openAuth("signup")} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign Up</button>
+                  <button onClick={()=>openAuth("signin")} style={{...btnStyle("var(--wf-border)","#F5EDD6"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign In</button>
+                </div>
+              </div>
+            )}
             <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
               <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏆 Scores {getPersonalBest()>0?`· ${getPersonalBest().toLocaleString()}`:""}
@@ -5118,20 +5138,31 @@ function WordFlip() {
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
           <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} />
-          {winMode==="daily"&&!session&&(
-            <div onClick={()=>setScreen("auth")} style={{
-              maxWidth:380,margin:"12px auto 0",padding:"12px 16px",borderRadius:12,cursor:"pointer",
-              background:"linear-gradient(135deg,#9B5DE515,#FFB70315)",border:"1.5px solid #9B5DE544",
-              display:"flex",alignItems:"center",gap:10,
-            }}>
-              <span style={{fontSize:"1.2rem"}}>🏆</span>
-              <div>
-                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.8rem",fontWeight:700,margin:0}}>Get on the leaderboard!</p>
-                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"2px 0 0"}}>Sign in to submit your score and compete globally</p>
+          {!session && (winMode==="daily"||winMode==="solo") && (()=>{
+            const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
+            const wscore = scoreCalc(winResult.elapsed, wr, winResult.wrongGuesses, winResult.bonusPts||0);
+            const daily = winMode==="daily";
+            const wouldEarn = daily ? dailyTokens(wscore)+(winStreakBonus||0) : soloTokens(wscore);
+            return (
+              <div style={{
+                maxWidth:380,margin:"14px auto 0",padding:"14px 16px",borderRadius:12,
+                background:"linear-gradient(135deg,#0e2a3a,#1a1200)",border:"1.5px solid #FFB70366",
+              }}>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,margin:"0 0 4px",textAlign:"center"}}>
+                  🪙 {daily ? `This game earned ${wouldEarn.toLocaleString()} coins` : `A game like this is worth ${wouldEarn.toLocaleString()} coins`}
+                </p>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",margin:"0 0 12px",textAlign:"center",lineHeight:1.5}}>
+                  {daily
+                    ? <>You're playing as a guest — sign up free to <strong style={{color:"var(--wf-accent2)"}}>claim your coins</strong> and <strong style={{color:"var(--wf-accent)"}}>land on the leaderboard</strong>.</>
+                    : <>Sign up free to <strong style={{color:"var(--wf-accent2)"}}>start earning coins</strong> for the shop &amp; power-ups.</>}
+                </p>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>openAuth("signup")} style={{...btnStyle("linear-gradient(90deg,#FFB703,#ff9f1c)","#0D1B2A"),flex:1,padding:"10px",fontSize:"0.85rem"}}>{daily?"Sign Up & Claim":"Sign Up Free"}</button>
+                  <button onClick={()=>openAuth("signin")} style={{...btnStyle("var(--wf-border)","#F5EDD6"),flex:1,padding:"10px",fontSize:"0.85rem"}}>Sign In</button>
+                </div>
               </div>
-              <span style={{color:"#9B5DE5",fontSize:"1rem",marginLeft:"auto"}}>→</span>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -5139,7 +5170,7 @@ function WordFlip() {
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
-      {screen==="auth"&&<AuthScreen onBack={()=>setScreen("menu")} onAuth={async ()=>{
+      {screen==="auth"&&<AuthScreen initialMode={authMode} onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
         const s = await authGetSession();
         if (s?.user) retroSubmitTodayScore(s.user.id);
