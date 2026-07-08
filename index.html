@@ -1510,29 +1510,24 @@ function shopHasNew() {
 }
 
 // ─── Share helper ─────────────────────────────────────────────────────────────
-// Robust share: native share sheet where it works, clipboard otherwise.
-// iOS home-screen PWAs have a WebKit bug where navigator.share() fails to
-// present — you get a blank/frozen screen instead of the sheet — so on an
-// installed iOS app we copy to the clipboard instead (always reliable).
-// Only `text` is passed to share (a `title` also breaks the iOS sheet).
+// Share: always copy to the clipboard (guaranteed to work everywhere) AND
+// attempt the native share sheet where supported. So even if iOS's known
+// standalone-PWA bug leaves the share sheet blank, the result is already on
+// the clipboard to paste. Only `text` is passed (a `title` breaks the iOS sheet).
 function shareOrCopy(text, onDone) {
   if (!text) return;
-  const copy = () => {
-    try {
-      navigator.clipboard.writeText(text).then(() => onDone && onDone(true), () => onDone && onDone(true));
-    } catch (e) { onDone && onDone(true); }
-  };
-  // navigator.standalone === true only on an iOS home-screen app.
-  const iosStandalone = typeof navigator !== 'undefined' && navigator.standalone === true;
-  if (iosStandalone) { copy(); return; }
+  // Try the native sheet first, while the user activation is freshest.
   try {
     const data = { text };
     if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {
-      navigator.share(data).then(() => onDone && onDone(false), copy); // cancel → copy
-    } else {
-      copy();
+      navigator.share(data).catch(() => {}); // cancelled / unsupported — ignore
     }
-  } catch (e) { copy(); }
+  } catch (e) {}
+  // Always copy too.
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+  } catch (e) {}
+  onDone && onDone(true);
 }
 
 function buildShareText(turns, ms, score, wordResults, totalWords) {
