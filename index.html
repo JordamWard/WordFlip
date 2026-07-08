@@ -4038,11 +4038,27 @@ function DailyNine({ onBack, onSolve, signedIn }) {
   const placed = new Set(slots.filter(x=>x!=null));
   const letterOf = (id)=> tiles.find(t=>t.id===id)?.letter || "";
 
-  function placeTile(id) {
-    if (solved || placed.has(id)) return;
+  // Glide animation: a floating clone that flies from the tapped grid tile to
+  // its answer slot. `arriving` hides the destination letter mid-flight so you
+  // don't see it twice.
+  const slotRefs = useRef([]);
+  const [fly, setFly] = useState(null);
+  const [flyGo, setFlyGo] = useState(false);
+  const [arriving, setArriving] = useState(-1);
+
+  function placeTile(id, e) {
+    if (solved || placed.has(id) || fly) return;
     const i = slots.indexOf(null);
     if (i === -1) return;
     const next = slots.slice(); next[i] = id; setSlots(next); setWrong(false);
+    // Measure start (tapped tile) and end (destination slot) for the glide.
+    const fromR = e && e.currentTarget && e.currentTarget.getBoundingClientRect();
+    const toEl = slotRefs.current[i];
+    const toR = toEl && toEl.getBoundingClientRect();
+    if (fromR && toR) {
+      setArriving(i);
+      setFly({ letter: letterOf(id), x0:fromR.left, y0:fromR.top, x1:toR.left, y1:toR.top, w1:toR.width, h1:toR.height });
+    }
   }
   function removeSlot(i) {
     if (solved || slots[i]==null) return;
@@ -4073,6 +4089,15 @@ function DailyNine({ onBack, onSolve, signedIn }) {
     }
   }, [slots]); // eslint-disable-line
 
+  // Kick off the glide on the next frame (from start pos → slot pos), then clear.
+  useEffect(()=>{
+    if (!fly) return;
+    setFlyGo(false);
+    const raf = requestAnimationFrame(()=> requestAnimationFrame(()=> setFlyGo(true)));
+    const done = setTimeout(()=>{ setFly(null); setFlyGo(false); setArriving(-1); }, 300);
+    return ()=>{ cancelAnimationFrame(raf); clearTimeout(done); };
+  }, [fly]);
+
   return (
     <div style={{width:"100%",maxWidth:400,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Back</button>
@@ -4085,18 +4110,25 @@ function DailyNine({ onBack, onSolve, signedIn }) {
       </div>
 
       {/* Answer row */}
-      <div style={{display:"flex",gap:4,justifyContent:"center",marginBottom:22,flexWrap:"nowrap"}}>
-        {slots.map((id,i)=>(
-          <div key={i} onClick={()=>removeSlot(i)} style={{
-            width:34,height:44,borderRadius:7,cursor:id!=null&&!solved?"pointer":"default",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.05rem",
-            background: solved ? "linear-gradient(135deg,#00c49f,#00F5C4)" : id!=null ? "#F5EDD6" : "transparent",
-            color: solved ? "#0a2e24" : "#0D1B2A",
-            border: solved ? "2px solid #00F5C4" : wrong ? "2px solid #ff5a5a" : id!=null ? "2px solid #c8bca0" : "2px dashed var(--wf-border)",
-            transition:"border-color 0.15s, background 0.2s",
-          }}>{id!=null?letterOf(id):""}</div>
-        ))}
+      <div style={{display:"flex",gap:4,justifyContent:"center",marginBottom:22,flexWrap:"nowrap",
+        animation: wrong ? "nineShake 0.5s ease" : "none"}}>
+        {slots.map((id,i)=>{
+          const hidden = arriving===i; // letter is mid-flight; keep the slot empty-looking
+          return (
+            <div key={i} ref={el=>slotRefs.current[i]=el} onClick={()=>removeSlot(i)} style={{
+              width:34,height:44,borderRadius:7,cursor:id!=null&&!solved?"pointer":"default",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.05rem",
+              background: solved ? "linear-gradient(135deg,#00c49f,#00F5C4)" : (id!=null&&!hidden) ? "linear-gradient(135deg,#FFB703,#ffcf40)" : "transparent",
+              color: solved ? "#0a2e24" : "#3d2800",
+              border: solved ? "2px solid #00F5C4" : wrong ? "2px solid #ff5a5a" : (id!=null&&!hidden) ? "2px solid #ffcf40" : "2px dashed var(--wf-border)",
+              transition:"border-color 0.15s, background 0.2s",
+              // Stadium wave: each solved letter hops in sequence, left → right.
+              animation: solved ? "nineWave 0.9s ease" : "none",
+              animationDelay: solved ? `${i*0.07}s` : "0s",
+            }}>{(id!=null&&!hidden)?letterOf(id):""}</div>
+          );
+        })}
       </div>
 
       {/* Letter grid (3×3) */}
@@ -4104,7 +4136,7 @@ function DailyNine({ onBack, onSolve, signedIn }) {
         {tiles.map(t=>{
           const used = placed.has(t.id);
           return (
-            <div key={t.id} onClick={()=>placeTile(t.id)} style={{
+            <div key={t.id} onClick={(e)=>placeTile(t.id, e)} style={{
               width:60,height:60,borderRadius:10,
               display:"flex",alignItems:"center",justifyContent:"center",
               fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.5rem",
@@ -4135,6 +4167,20 @@ function DailyNine({ onBack, onSolve, signedIn }) {
           </button>
           <button onClick={clearAll} style={{...btnStyle("var(--wf-border)","#F5EDD6"),padding:"9px 14px",fontSize:"0.78rem"}}>Clear</button>
         </div>
+      )}
+
+      {/* Flying letter clone: glides from the tapped grid tile into its slot. */}
+      {fly && (
+        <div style={{
+          position:"fixed",left:0,top:0,zIndex:60,pointerEvents:"none",
+          width:fly.w1,height:fly.h1,borderRadius:7,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.05rem",
+          background:"linear-gradient(135deg,#FFB703,#ffcf40)",color:"#3d2800",
+          border:"2px solid #ffcf40",
+          transform:`translate(${flyGo?fly.x1:fly.x0}px, ${flyGo?fly.y1:fly.y0}px)`,
+          transition:"transform 0.26s cubic-bezier(.2,.75,.3,1)",
+        }}>{fly.letter}</div>
       )}
     </div>
   );
@@ -5207,6 +5253,8 @@ function WordFlip() {
         @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
         @keyframes achIn{from{opacity:0;transform:translateY(-16px) scale(0.9)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes shopPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.09);filter:drop-shadow(0 0 6px var(--wf-accent))}}
+        @keyframes nineShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-8px)}30%{transform:translateX(7px)}45%{transform:translateX(-6px)}60%{transform:translateX(5px)}75%{transform:translateX(-3px)}90%{transform:translateX(2px)}}
+        @keyframes nineWave{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-14px)}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
