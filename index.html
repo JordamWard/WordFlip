@@ -1438,7 +1438,7 @@ async function startCoinPurchase(packId) {
 // Web push works on Android + desktop, and on iOS 16.4+ ONLY for a PWA added to
 // the home screen. Set VAPID_PUBLIC_KEY (and the matching private key in the
 // send-reminders edge function) to turn it on — see NOTIFICATIONS_SETUP.md.
-const VAPID_PUBLIC_KEY = ''; // <-- your VAPID public key (base64url); empty = feature hidden
+const VAPID_PUBLIC_KEY = 'BLjSCATF0ka97EErUjD15dsBDI-q8-DP1YMjf1eyv-fZo4yKZNAjXkEibhzGNMQOt4nYzmHlwPwFzrO-A2YFvXA'; // VAPID public key (base64url); empty = feature hidden
 function notifSupported() {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
