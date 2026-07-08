@@ -4374,7 +4374,7 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone, initialMode }) 
 function AchievementToast({ ids }) {
   if (!ids || !ids.length) return null;
   return (
-    <div style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",zIndex:100,
+    <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:"50%",transform:"translateX(-50%)",zIndex:100,
       display:"flex",flexDirection:"column",gap:8,width:"min(340px,92vw)"}}>
       {ids.map((id, i) => {
         const a = achById(id); if (!a) return null;
