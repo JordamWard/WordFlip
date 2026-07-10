@@ -1361,6 +1361,14 @@ const TILE_BACKS = [
   { id:'neon',     name:'Neon Grid',   price:400, bg:'linear-gradient(135deg,#0a0a0a,#050505)', dot:'#39ff14', symbol:'✚', symbolColor:'#39ff14' },
   { id:'firecracker', name:'Firecracker', price:450, bg:'linear-gradient(135deg,#d40a2a,#7a0518)', dot:'#ffd23f', symbol:'★', symbolColor:'#ffd23f' },
   { id:'vaporwave', name:'Vaporwave',  price:450, bg:'linear-gradient(135deg,#ff2e97,#7a2eff)', dot:'#00f0ff', symbol:'▲', symbolColor:'#00f0ff' },
+  // Theme companions — each mirrors an earnable theme's palette (its dark
+  // gradient + accent) so the face-down card belongs to that theme. Reward-only
+  // (price 0, not in FREE_TILEBACKS → unlocked via the Rewards ladder, not sold).
+  { id:'starlight', name:'Starlight', price:0, bg:'linear-gradient(135deg,#0c1018,#05070d)', dot:'#2a3550', symbol:'✦', symbolColor:'#cdd8ee' }, // Midnight
+  { id:'canopy',    name:'Canopy',    price:0, bg:'linear-gradient(135deg,#123024,#08160f)', dot:'#1e4030', symbol:'❋', symbolColor:'#a8e05f' }, // Forest
+  { id:'tide',      name:'Tide',      price:0, bg:'linear-gradient(135deg,#0e2137,#081426)', dot:'#1e3a5a', symbol:'≈', symbolColor:'#38bdf8' }, // Ocean
+  { id:'afterglow', name:'Afterglow', price:0, bg:'linear-gradient(135deg,#3a1c33,#25122a)', dot:'#5a3450', symbol:'✷', symbolColor:'#ff9f6b' }, // Sunset
+  { id:'blossom',   name:'Blossom',   price:0, bg:'linear-gradient(135deg,#38143c,#220a28)', dot:'#5e2a62', symbol:'❀', symbolColor:'#f9a8d4' }, // Bubblegum
 ];
 const FREE_TILEBACKS = ['classic'];
 function tileBackById(id) { return TILE_BACKS.find(t => t.id === id) || TILE_BACKS[0]; }
@@ -1393,20 +1401,36 @@ function addCareerPoints(n) {
   try { localStorage.setItem('wf_career', String(next)); } catch (e) {}
   return next;
 }
+// Account-level sync (section 13). Both fail soft to null so the app keeps
+// working on local points alone if the SQL hasn't been applied yet.
+async function fetchCareerRemote(userId) {
+  try {
+    const { data, error } = await getSB().from('player_progress').select('career_points').eq('user_id', userId).maybeSingle();
+    if (error) return null;
+    return data ? Number(data.career_points) : 0;
+  } catch (e) { return null; }
+}
+async function addCareerRemote(amount) {
+  try {
+    const { data, error } = await getSB().rpc('add_career_points', { p_amount: Math.max(0, Math.round(amount||0)) });
+    if (error) return null;
+    return data == null ? null : Number(data);
+  } catch (e) { return null; }
+}
 // Each entry unlocks a theme or tile back once your career total reaches
 // `points`. Themes are immediately followed by their matching back. Thresholds
 // are tunable placeholders.
 const REWARD_LADDER = [
   { points:3000,   type:'theme', key:'midnight'  },
-  { points:6000,   type:'back',  key:'amethyst'  },
+  { points:6000,   type:'back',  key:'starlight' }, // matches Midnight
   { points:12000,  type:'theme', key:'forest'    },
-  { points:18000,  type:'back',  key:'emerald'   },
+  { points:18000,  type:'back',  key:'canopy'    }, // matches Forest
   { points:27000,  type:'theme', key:'ocean'     },
-  { points:36000,  type:'back',  key:'galaxy'    },
+  { points:36000,  type:'back',  key:'tide'      }, // matches Ocean
   { points:50000,  type:'theme', key:'sunset'    },
-  { points:65000,  type:'back',  key:'tangerine' },
+  { points:65000,  type:'back',  key:'afterglow' }, // matches Sunset
   { points:85000,  type:'theme', key:'bubblegum' },
-  { points:110000, type:'back',  key:'rosegold'  },
+  { points:110000, type:'back',  key:'blossom'   }, // matches Bubblegum
 ];
 // Cosmetics that are reward-only (earned by playing, NOT buyable in the shop).
 const REWARD_THEME_IDS = new Set(REWARD_LADDER.filter(r=>r.type==='theme').map(r=>r.key));
@@ -5272,6 +5296,24 @@ function WordFlip() {
       syncInventoryFromServer(session.user.id); // power-ups follow the account
       fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
       fetchOwnedTileBacks(session.user.id).then(setOwnedTileBacks); // tile backs too
+      // Career points follow the account: migrate any guest-earned points once,
+      // then treat the server total as the source of truth. Fails soft to local
+      // if section 13 hasn't been applied yet.
+      (async () => {
+        const uid = session.user.id;
+        const server = await fetchCareerRemote(uid);
+        if (server == null) return; // table/RPC not there yet — stay local-only
+        const local = getCareerPoints();
+        const migKey = 'wf_career_migrated_' + uid;
+        let total = server;
+        if (!localStorage.getItem(migKey) && local > server) {
+          const merged = await addCareerRemote(local - server); // one-time guest → account
+          if (merged != null) total = merged;
+        }
+        try { localStorage.setItem(migKey, '1'); } catch (e) {}
+        try { localStorage.setItem('wf_career', String(total)); } catch (e) {}
+        setCareer(total);
+      })();
       // Reconcile achievement rewards: pays any unlocked-but-unpaid badges
       // (e.g. earned while signed out, or a grant that failed earlier).
       ensureFreshSession().then(() => grantAchievementRewards(Object.keys(getAchievements())).then(refreshWallet));
@@ -5325,10 +5367,17 @@ function WordFlip() {
     // toast for any cosmetic milestone this game just crossed.
     {
       const before = getCareerPoints();
-      const after = addCareerPoints(score);
+      const after = addCareerPoints(score); // optimistic local update
       setCareer(after);
       const crossed = REWARD_LADDER.filter(r => before < r.points && after >= r.points);
       if (crossed.length) showRewardToast(crossed);
+      // Sync to the account; the authoritative server total wins if it differs
+      // (e.g. points earned on another device). Fails soft to the local total.
+      if (session?.user) {
+        ensureFreshSession().then(() => addCareerRemote(score)).then(total => {
+          if (total != null) { try { localStorage.setItem('wf_career', String(total)); } catch (e) {} setCareer(total); }
+        });
+      }
     }
     if (mode==="daily") {
       saveDailyBest(score);

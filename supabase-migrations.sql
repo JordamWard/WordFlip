@@ -469,3 +469,51 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.redeem_code(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.redeem_code(text) TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 13. CAREER POINTS: account-level progression for the Rewards track. A running
+--     lifetime-score total that unlocks cosmetics by playing. Stored per user so
+--     it follows the account across devices. add_career_points increments it and
+--     returns the new total; clients read their own row directly (RLS-scoped).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.player_progress (
+  user_id       uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  career_points bigint NOT NULL DEFAULT 0,
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.player_progress ENABLE ROW LEVEL SECURITY;
+
+-- Each user may read (and only read) their own progress row. Writes go only
+-- through the SECURITY DEFINER function below, so points can't be forged.
+DROP POLICY IF EXISTS "read own progress" ON public.player_progress;
+CREATE POLICY "read own progress" ON public.player_progress
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION public.add_career_points(p_amount integer)
+RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_total bigint;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+
+  -- Non-positive amounts are a no-op that just returns the current total (lets
+  -- the client use this as a "get my total" call too).
+  IF p_amount IS NULL OR p_amount <= 0 THEN
+    SELECT career_points INTO v_total FROM public.player_progress WHERE user_id = v_uid;
+    RETURN COALESCE(v_total, 0);
+  END IF;
+
+  INSERT INTO public.player_progress (user_id, career_points)
+  VALUES (v_uid, p_amount)
+  ON CONFLICT (user_id) DO UPDATE
+    SET career_points = player_progress.career_points + p_amount, updated_at = now()
+  RETURNING career_points INTO v_total;
+
+  RETURN v_total;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.add_career_points(integer) FROM anon;
+GRANT EXECUTE ON FUNCTION public.add_career_points(integer) TO authenticated;
