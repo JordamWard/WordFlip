@@ -1382,6 +1382,36 @@ async function fetchOwnedTileBacks(userId) {
 }
 async function buyTileBack(id, price) { return spendTokens(price, 'tileback-' + id); }
 
+// ─── Rewards / career progression ─────────────────────────────────────────────
+// Earn cosmetics by PLAYING (not by spending coins): your cumulative score
+// across every mode climbs a ladder of milestones that alternate a theme, then
+// its matching tile back a little later. Client-side v1 — the career total and
+// unlocks live in localStorage (per device); can sync to the account later.
+function getCareerPoints() { try { return parseInt(localStorage.getItem('wf_career')||'0',10) || 0; } catch { return 0; } }
+function addCareerPoints(n) {
+  const next = getCareerPoints() + Math.max(0, Math.round(n||0));
+  try { localStorage.setItem('wf_career', String(next)); } catch (e) {}
+  return next;
+}
+// Each entry unlocks a theme or tile back once your career total reaches
+// `points`. Themes are immediately followed by their matching back. Thresholds
+// are tunable placeholders.
+const REWARD_LADDER = [
+  { points:3000,   type:'theme', key:'midnight'  },
+  { points:6000,   type:'back',  key:'amethyst'  },
+  { points:12000,  type:'theme', key:'forest'    },
+  { points:18000,  type:'back',  key:'emerald'   },
+  { points:27000,  type:'theme', key:'ocean'     },
+  { points:36000,  type:'back',  key:'galaxy'    },
+  { points:50000,  type:'theme', key:'sunset'    },
+  { points:65000,  type:'back',  key:'tangerine' },
+  { points:85000,  type:'theme', key:'bubblegum' },
+  { points:110000, type:'back',  key:'rosegold'  },
+];
+// Cosmetics that are reward-only (earned by playing, NOT buyable in the shop).
+const REWARD_THEME_IDS = new Set(REWARD_LADDER.filter(r=>r.type==='theme').map(r=>r.key));
+const REWARD_BACK_IDS  = new Set(REWARD_LADDER.filter(r=>r.type==='back').map(r=>r.key));
+
 // Redeem a promo code. The code and its value live SERVER-SIDE (redeem_code
 // RPC + promo_codes table), so valid codes aren't discoverable in the client.
 // Idempotent per (user, code) — a code can only be redeemed once per account.
@@ -1516,8 +1546,8 @@ async function disableNotifications() {
 function shopCatalogIds() {
   return [
     ...SHOP_ITEMS.map(i => i.key),
-    ...THEMES.filter(t => t.price > 0).map(t => 'theme-' + t.id),
-    ...TILE_BACKS.filter(t => t.price > 0).map(t => 'back-' + t.id),
+    ...THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id)).map(t => 'theme-' + t.id),
+    ...TILE_BACKS.filter(t => t.price > 0 && !REWARD_BACK_IDS.has(t.id)).map(t => 'back-' + t.id),
   ];
 }
 function getSeenShopItems() {
@@ -4617,6 +4647,128 @@ function AchievementToast({ ids }) {
   );
 }
 
+// A small preview of a reward cosmetic — a theme swatch or a tile-back mini.
+function RewardPreview({ entry, size = 44 }) {
+  if (entry.type === 'theme') {
+    const t = themeById(entry.key);
+    return (
+      <div style={{width:size, height:size, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+        <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
+          <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
+          <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
+        </div>
+      </div>
+    );
+  }
+  const b = tileBackById(entry.key);
+  const prev = b.themed ? activeTileBack() : { bg:b.bg, dot:b.dot, symbol:b.symbol, symbolColor:b.symbolColor };
+  return (
+    <div style={{width:size, height:size, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
+      backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
+      <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
+    </div>
+  );
+}
+
+// ─── Reward-unlocked toast (mirrors AchievementToast, sits a touch lower) ──────
+function RewardToast({ entries }) {
+  if (!entries || !entries.length) return null;
+  return (
+    <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:"50%",transform:"translateX(-50%)",zIndex:99,
+      display:"flex",flexDirection:"column",gap:8,width:"min(340px,92vw)"}}>
+      {entries.map((e, i) => {
+        const name = e.type==='theme' ? themeById(e.key).name : tileBackById(e.key).name;
+        return (
+          <div key={e.key} style={{
+            display:"flex",alignItems:"center",gap:12,
+            background:"linear-gradient(135deg,#1a1230,#0a1520)",
+            border:"1.5px solid var(--wf-accent2)",borderRadius:12,padding:"10px 14px",
+            boxShadow:"0 8px 28px #00000088",
+            animation:`achIn 0.45s cubic-bezier(.2,1.4,.4,1) ${i*0.12}s both`,
+          }}>
+            <RewardPreview entry={e} size={40} />
+            <div style={{textAlign:"left",flex:1}}>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>🎁 REWARD UNLOCKED</div>
+              <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{name} {e.type==='theme'?'theme':'tile back'}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Rewards Screen — the "earn by playing" progression ladder ────────────────
+function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onApplyTheme, onApplyTileBack }) {
+  const nextIdx = REWARD_LADDER.findIndex(r => career < r.points); // first locked (-1 = all done)
+  const unlockedCount = nextIdx === -1 ? REWARD_LADDER.length : nextIdx;
+  return (
+    <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
+      <div style={{textAlign:"center", marginBottom:18}}>
+        <div style={{fontSize:"2.2rem"}}>🎁</div>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"4px 0 4px"}}>Rewards</h2>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0,lineHeight:1.5}}>
+          Earn themes &amp; tile backs just by playing — every point you score counts.
+        </p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.9rem",fontWeight:800,margin:"10px 0 0"}}>
+          {career.toLocaleString()} career points
+        </p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",margin:"2px 0 0"}}>
+          {unlockedCount} of {REWARD_LADDER.length} unlocked
+        </p>
+      </div>
+      {REWARD_LADDER.map((entry, idx) => {
+        const unlocked = career >= entry.points;
+        const isNext = idx === nextIdx;
+        const name = entry.type==='theme' ? themeById(entry.key).name : tileBackById(entry.key).name;
+        const active = entry.type==='theme' ? activeThemeId===entry.key : activeTileBackId===entry.key;
+        const pct = Math.min(100, Math.round(career / entry.points * 100));
+        return (
+          <div key={entry.key} style={{
+            background:'var(--wf-surface)',
+            border:`1.5px solid ${active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
+            borderRadius:14, padding:'12px 14px', marginBottom:12, opacity: unlocked||isNext ? 1 : 0.55,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <div style={{filter: unlocked ? 'none' : 'grayscale(0.7)', position:'relative'}}>
+                <RewardPreview entry={entry} />
+                {!unlocked && <span style={{position:'absolute',top:-4,right:-4,fontSize:'0.85rem'}}>🔒</span>}
+              </div>
+              <div style={{flex:1, textAlign:'left'}}>
+                <div style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.0rem'}}>
+                  {name} <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-text-mute)',fontSize:'0.6rem',fontWeight:400}}>{entry.type==='theme'?'THEME':'TILE BACK'}</span>
+                </div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.68rem', marginTop:2}}>
+                  {entry.points.toLocaleString()} pts
+                </div>
+              </div>
+              {active ? (
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+              ) : unlocked ? (
+                <button onClick={() => entry.type==='theme' ? onApplyTheme(entry.key) : onApplyTileBack(entry.key)}
+                  style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
+              ) : (
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', color:'var(--wf-text-mute)', flexShrink:0}}>{Math.max(0,entry.points-career).toLocaleString()} to go</span>
+              )}
+            </div>
+            {isNext && (
+              <div style={{marginTop:10, height:7, borderRadius:4, background:'var(--wf-border)', overflow:'hidden'}}>
+                <div style={{width:`${pct}%`, height:'100%', background:'linear-gradient(90deg,#FFB703,#ff9f1c)', transition:'width 0.4s'}} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', textAlign:'center', margin:'6px 0 20px', lineHeight:1.5}}>
+        Bolder themes &amp; backs live in the 🛍️ Shop for coins.
+      </p>
+    </div>
+  );
+}
+
 // ─── Achievements Screen ──────────────────────────────────────────────────────
 function AchievementsScreen({ onBack }) {
   const have = getAchievements();
@@ -4878,7 +5030,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
       {/* ── Themes ── */}
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
-      {THEMES.map(t => {
+      {THEMES.filter(t => !REWARD_THEME_IDS.has(t.id)).map(t => {
         const owned = ownedThemes.has(t.id);
         const active = activeThemeId === t.id;
         const isBuying = buying === 'theme-'+t.id;
@@ -4919,7 +5071,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
       {/* ── Tile Backs ── */}
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>TILE BACKS</p>
-      {TILE_BACKS.map(t => {
+      {TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id)).map(t => {
         const owned = ownedTileBacks.has(t.id);
         const active = activeTileBackId === t.id;
         const isBuying = buying === 'back-'+t.id;
@@ -5055,6 +5207,15 @@ function WordFlip() {
       ensureFreshSession().then(() => grantAchievementRewards(ids).then(refreshWallet));
     }
   }
+  // Career progression (earn cosmetics by playing). Local total; reward-unlock
+  // toasts fire when a game pushes the total past a ladder milestone.
+  const [career,setCareer] = useState(()=>getCareerPoints());
+  const [rewardToast,setRewardToast] = useState([]);
+  function showRewardToast(entries) {
+    if (!entries || !entries.length) return;
+    setRewardToast(entries);
+    setTimeout(() => setRewardToast([]), 4800);
+  }
   // Cosmetic theme (accent + background). Selection is local; ownership is
   // account-level (derived from token_transactions).
   const [activeThemeId,setActiveThemeIdState] = useState(()=>getActiveThemeId());
@@ -5160,6 +5321,15 @@ function WordFlip() {
     let dailyStreakCount = 0;
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
+    // Career progression: every point counts toward the rewards ladder. Fire a
+    // toast for any cosmetic milestone this game just crossed.
+    {
+      const before = getCareerPoints();
+      const after = addCareerPoints(score);
+      setCareer(after);
+      const crossed = REWARD_LADDER.filter(r => before < r.points && after >= r.points);
+      if (crossed.length) showRewardToast(crossed);
+    }
     if (mode==="daily") {
       saveDailyBest(score);
       setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0,bonusWords:result.bonusWords||[]});
@@ -5261,6 +5431,7 @@ function WordFlip() {
       `}</style>
       <Fireworks active={fireworks} />
       <AchievementToast ids={achToast} />
+      <RewardToast entries={rewardToast} />
       {purchaseMsg && (
         <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:"50%",transform:"translateX(-50%)",zIndex:100,
           background:"linear-gradient(135deg,#12253a,#0a1520)",border:"1.5px solid var(--wf-accent2)",borderRadius:12,
@@ -5325,6 +5496,9 @@ function WordFlip() {
               </button>
               <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏅 Achievements
+              </button>
+              <button onClick={()=>setScreen("rewards")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+                🎁 Rewards
               </button>
               {session && (
                 <button onClick={()=>setScreen("shop")} style={{
@@ -5411,6 +5585,7 @@ function WordFlip() {
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
+      {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} /></div>}
       {screen==="auth"&&<AuthScreen initialMode={authMode} onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
         const s = await authGetSession();
