@@ -4220,6 +4220,14 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
         />
       )}
+      {/* Share sits right under the score so it's easy to find (matches the
+          win screen); the bonus + streak cards follow below. */}
+      <div style={{display:"flex",gap:10,justifyContent:"center",margin:"16px 0"}}>
+        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
+          {copied?"✓ Copied!":"📤 Share"}
+        </button>
+        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
+      </div>
       {!session&&onAuth&&(
         <div style={{
           maxWidth:340,margin:"16px auto",padding:"14px 16px",borderRadius:12,
@@ -4240,12 +4248,6 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
       {onNine && <DailyNineCard onPlay={onNine} signedIn={!!session} />}
       <div style={{margin:"16px 0"}}>
         <StreakCard />
-      </div>
-      <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
-          {copied?"✓ Copied!":"📤 Share"}
-        </button>
-        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
       </div>
     </div>
   );
