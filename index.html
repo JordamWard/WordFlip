@@ -1435,6 +1435,13 @@ const REWARD_LADDER = [
 // Cosmetics that are reward-only (earned by playing, NOT buyable in the shop).
 const REWARD_THEME_IDS = new Set(REWARD_LADDER.filter(r=>r.type==='theme').map(r=>r.key));
 const REWARD_BACK_IDS  = new Set(REWARD_LADDER.filter(r=>r.type==='back').map(r=>r.key));
+// "Seen" tracking so the menu button can glow and freshly-earned rewards can
+// pop when you open the Rewards screen after unlocking them.
+function unlockedRewardKeys(career) { return REWARD_LADDER.filter(r => career >= r.points).map(r => r.key); }
+function getSeenRewards() { try { return new Set(JSON.parse(localStorage.getItem('wf_rewards_seen')||'[]')); } catch (e) { return new Set(); } }
+function markRewardsSeen(keys) { try { const s = getSeenRewards(); keys.forEach(k=>s.add(k)); localStorage.setItem('wf_rewards_seen', JSON.stringify([...s])); } catch (e) {} }
+function newRewardKeys(career) { const seen = getSeenRewards(); return unlockedRewardKeys(career).filter(k => !seen.has(k)); }
+function rewardsHasNew(career) { return newRewardKeys(career).length > 0; }
 
 // Redeem a promo code. The code and its value live SERVER-SIDE (redeem_code
 // RPC + promo_codes table), so valid codes aren't discoverable in the client.
@@ -4256,6 +4263,9 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   }
   return (
     <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:6}}>
+        <button onClick={onMenu} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
+      </div>
       <div style={{fontSize:"3rem",marginBottom:12}}>✅</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.8rem",margin:"0 0 8px"}}>Already Played!</h2>
       <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.85rem",marginBottom:16}}>
@@ -4299,10 +4309,10 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           </div>
         </div>
       )}
-      {onNine && <DailyNineCard onPlay={onNine} signedIn={!!session} />}
       <div style={{margin:"16px 0"}}>
         <StreakCard />
       </div>
+      {onNine && <DailyNineCard onPlay={onNine} signedIn={!!session} />}
     </div>
   );
 }
@@ -4728,6 +4738,11 @@ function RewardToast({ entries }) {
 function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onApplyTheme, onApplyTileBack }) {
   const nextIdx = REWARD_LADDER.findIndex(r => career < r.points); // first locked (-1 = all done)
   const unlockedCount = nextIdx === -1 ? REWARD_LADDER.length : nextIdx;
+  // Capture which rewards are freshly unlocked (earned but not yet seen) so we
+  // can pop them in celebration — captured once at mount, before we mark seen.
+  const [freshKeys] = useState(()=> new Set(newRewardKeys(career)));
+  const freshOrder = REWARD_LADDER.filter(r => freshKeys.has(r.key)).map(r => r.key);
+  useEffect(()=>{ markRewardsSeen(unlockedRewardKeys(career)); }, []); // clear the "new" glow
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
@@ -4750,11 +4765,13 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
         const name = entry.type==='theme' ? themeById(entry.key).name : tileBackById(entry.key).name;
         const active = entry.type==='theme' ? activeThemeId===entry.key : activeTileBackId===entry.key;
         const pct = Math.min(100, Math.round(career / entry.points * 100));
+        const fresh = freshKeys.has(entry.key);
         return (
           <div key={entry.key} style={{
             background:'var(--wf-surface)',
-            border:`1.5px solid ${active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
+            border:`1.5px solid ${fresh?'var(--wf-accent2)':active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
             borderRadius:14, padding:'12px 14px', marginBottom:12, opacity: unlocked||isNext ? 1 : 0.55,
+            animation: fresh ? `rewardPop 0.85s ease ${0.25 + freshOrder.indexOf(entry.key)*0.18}s both` : 'none',
           }}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               <div style={{filter: unlocked ? 'none' : 'grayscale(0.7)', position:'relative'}}>
@@ -4764,6 +4781,7 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
               <div style={{flex:1, textAlign:'left'}}>
                 <div style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.0rem'}}>
                   {name} <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-text-mute)',fontSize:'0.6rem',fontWeight:400}}>{entry.type==='theme'?'THEME':'TILE BACK'}</span>
+                  {fresh && <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-accent2)',fontSize:'0.58rem',fontWeight:800,marginLeft:6,letterSpacing:'0.08em'}}>✨ NEW</span>}
                 </div>
                 <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.68rem', marginTop:2}}>
                   {entry.points.toLocaleString()} pts
@@ -5240,6 +5258,9 @@ function WordFlip() {
     setRewardToast(entries);
     setTimeout(() => setRewardToast([]), 4800);
   }
+  // Does the Rewards button deserve a glow? (Unlocked-but-unseen rewards exist.)
+  // Recomputed each render; opening the Rewards screen marks them seen.
+  const rewardsNew = rewardsHasNew(career);
   // Cosmetic theme (accent + background). Selection is local; ownership is
   // account-level (derived from token_transactions).
   const [activeThemeId,setActiveThemeIdState] = useState(()=>getActiveThemeId());
@@ -5476,6 +5497,7 @@ function WordFlip() {
         @keyframes shopPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.09);filter:drop-shadow(0 0 6px var(--wf-accent))}}
         @keyframes nineShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-8px)}30%{transform:translateX(7px)}45%{transform:translateX(-6px)}60%{transform:translateX(5px)}75%{transform:translateX(-3px)}90%{transform:translateX(2px)}}
         @keyframes nineWave{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-14px)}}
+        @keyframes rewardPop{0%{transform:scale(0.82);box-shadow:0 0 0 transparent}45%{transform:scale(1.08);box-shadow:0 0 26px var(--wf-accent2)}72%{transform:scale(0.98)}100%{transform:scale(1);box-shadow:0 0 0 transparent}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
@@ -5546,8 +5568,13 @@ function WordFlip() {
               <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
                 🏅 Achievements
               </button>
-              <button onClick={()=>setScreen("rewards")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-                🎁 Rewards
+              <button onClick={()=>setScreen("rewards")} style={{
+                ...btnStyle("transparent", rewardsNew?"var(--wf-accent)":"var(--wf-text-dim)"),
+                padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline",
+                fontWeight: rewardsNew?800:700,
+                animation: rewardsNew?"shopPulse 1.5s ease-in-out infinite":"none",
+              }}>
+                🎁 Rewards{rewardsNew?" ✨":""}
               </button>
               {session && (
                 <button onClick={()=>setScreen("shop")} style={{
@@ -5601,7 +5628,6 @@ function WordFlip() {
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
           <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} />
-          {winMode==="daily" && <div style={{maxWidth:380,margin:"0 auto"}}><DailyNineCard onPlay={()=>setScreen("daily-nine")} signedIn={!!session} /></div>}
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
             const wscore = scoreCalc(winResult.elapsed, wr, winResult.wrongGuesses, winResult.bonusPts||0);
@@ -5627,6 +5653,7 @@ function WordFlip() {
               </div>
             );
           })()}
+          {winMode==="daily" && <div style={{maxWidth:380,margin:"14px auto 0"}}><DailyNineCard onPlay={()=>setScreen("daily-nine")} signedIn={!!session} /></div>}
         </div>
       )}
 
