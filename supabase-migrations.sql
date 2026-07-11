@@ -517,3 +517,13 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.add_career_points(integer) FROM anon;
 GRANT EXECUTE ON FUNCTION public.add_career_points(integer) TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 14. NO-HINTS BADGE: record power-ups used per daily score so the leaderboard
+--     can flag clean (no-hint) runs. Nullable with NO default on purpose — old
+--     rows stay NULL (unknown → no badge); new rows record the real count and
+--     earn the badge only when helps = 0.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE public.daily_scores
+  ADD COLUMN IF NOT EXISTS helps integer;

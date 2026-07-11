@@ -162,11 +162,12 @@ async function authCheckUsername(username) {
 }
 
 // ─── Leaderboard helpers ──────────────────────────────────────────────────────
-async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGuesses, blocks) {
+async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGuesses, blocks, helps) {
   // ignoreDuplicates: the FIRST score of the day wins. Replaying the daily on a
   // second browser (before it syncs) can no longer overwrite the real score.
   const { error } = await getSB().from('daily_scores').upsert({
     user_id: userId, score, day_key: dayKey, turns, elapsed, wrong_guesses: wrongGuesses, blocks,
+    helps: helps == null ? null : helps, // power-ups used; 0 = clean run (earns the "no hints" badge)
   }, { onConflict: 'user_id,day_key', ignoreDuplicates: true });
   if (error) console.error("Score submit error:", error);
 }
@@ -174,7 +175,7 @@ async function submitDailyScore(userId, score, dayKey, turns, elapsed, wrongGues
 async function fetchLeaderboard(mode, dayKey) {
   let query = getSB()
     .from('daily_scores')
-    .select('user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, profiles(username)')
+    .select('user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, helps, created_at, profiles(username)')
     .order('score', { ascending: false })
     .limit(50);
   if (mode === 'daily') {
@@ -188,7 +189,7 @@ async function fetchLeaderboard(mode, dayKey) {
 async function fetchMyScores(userId) {
   const { data, error } = await getSB()
     .from('daily_scores')
-    .select('score, day_key, turns, elapsed, wrong_guesses, blocks, created_at')
+    .select('score, day_key, turns, elapsed, wrong_guesses, blocks, helps, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) { console.error("My scores fetch error:", error); return []; }
@@ -241,7 +242,7 @@ async function retroSubmitTodayScore(userId) {
     const r = done?.wordResults?.[i];
     return r==="green" ? "🟩" : r==="yellow" ? "🟨" : "🟥";
   }).join("");
-  await submitDailyScore(userId, done.score, dk, done.turns, done.elapsed, done.wrongGuesses||0, blocks);
+  await submitDailyScore(userId, done.score, dk, done.turns, done.elapsed, done.wrongGuesses||0, blocks, getDailyHelps());
 }
 
 // ─── Token economy ────────────────────────────────────────────────────────────
@@ -2845,6 +2846,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
           elapsed: r.elapsed,
           blocks: r.blocks,
           wrongGuesses: r.wrong_guesses || 0,
+          helps: r.helps,
         }));
         setMyScores(mapped);
         setMyLoading(false);
@@ -2949,6 +2951,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                     <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>
                       {entry.turns} guess{entry.turns!==1?"es":""} · {formatTime(entry.elapsed)}
                       {entry.outOfTurns ? " · ran out" : ""}
+                      {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
                     </div>
                   </div>
                   {/* Score */}
@@ -3043,6 +3046,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                       {entry.turns != null ? `${entry.turns} guess${entry.turns!==1?"es":""}` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
                       {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
+                      {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
                     </div>
                   </div>
                   <div style={{textAlign:"right"}}>
@@ -5420,7 +5424,7 @@ function WordFlip() {
         // Refresh the token first so a day-old session's expired JWT doesn't
         // cause the write to be silently rejected (it would only land on next sign-in).
         ensureFreshSession().then(() => {
-          submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks);
+          submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks, getDailyHelps());
           grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
           // Weekly streak milestone: pay when the streak crosses a multiple of
           // 7. Uses week-boundary crossing (not exact %7) so a Streak Freeze
