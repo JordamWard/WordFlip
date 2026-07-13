@@ -3300,6 +3300,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
   const [errMsg, setErrMsg] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
   const [fromInvite, setFromInvite] = useState(!!(new URLSearchParams(window.location.search).get('room')));
+  const [isPublic, setIsPublic] = useState(false);      // list this room in the open-games lobby
+  const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
+  const [browseBusy, setBrowseBusy] = useState(false);
 
   const myId = useRef(getMyPlayerId()).current;
   const channelRef = useRef(null);
@@ -3531,6 +3534,36 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     setPhase('join'); phaseRef.current = 'join';
   }
 
+  // Load open (public + waiting) rooms for the lobby. Fails soft to [] if the
+  // is_public column isn't there yet (feature stays dormant until the SQL runs).
+  async function loadPublicRooms() {
+    setBrowseBusy(true);
+    try {
+      await ensureFreshSession();
+      const db = getSB();
+      const { data, error } = await db.from('rooms')
+        .select('id, code, created_at, is_public, players(name, turn_order)')
+        .eq('status', 'waiting').eq('is_public', true)
+        .order('created_at', { ascending: false }).limit(20);
+      if (error) { setPublicRooms([]); }
+      else {
+        const list = (data || [])
+          .map(r => ({ id:r.id, code:r.code, players:(r.players || []) }))
+          .filter(r => r.players.length < 4); // only joinable rooms
+        setPublicRooms(list);
+      }
+    } catch (e) { setPublicRooms([]); }
+    setBrowseBusy(false);
+  }
+
+  // While browsing, refresh the open-rooms list every few seconds.
+  useEffect(() => {
+    if (phase !== 'browse') return;
+    loadPublicRooms();
+    const iv = setInterval(loadPublicRooms, 5000);
+    return () => clearInterval(iv);
+  }, [phase]); // eslint-disable-line
+
   async function createRoom() {
     if (!playerName.trim()) { setErrMsg('Enter your name first'); return; }
     setBusy(true); setErrMsg('');
@@ -3553,6 +3586,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
         .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 },
                  { onConflict: 'id' });
       if (pe) throw pe;
+      // Mark public in a separate step so a missing is_public column can't break
+      // room creation (feature is dormant until the SQL is applied).
+      if (isPublic) { try { await db.from('rooms').update({ is_public: true }).eq('id', r.id); r.is_public = true; } catch (e) {} }
       setRoom(r); roomRef.current = r;
       setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
       playersRef.current = [{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }];
@@ -3567,9 +3603,11 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     setBusy(false);
   }
 
-  async function joinRoom() {
-    if (!playerName.trim()) { setErrMsg('Enter your name first'); return; }
-    const code = codeInput.trim().toUpperCase();
+  async function joinRoom(codeArg) {
+    if (!playerName.trim()) { setErrMsg('Enter your name first'); setPhase('join'); phaseRef.current='join'; return; }
+    // codeArg is a string when joining from the lobby list; onClick passes an
+    // event object, so fall back to the typed code unless it's a real string.
+    const code = ((typeof codeArg === 'string' && codeArg) ? codeArg : codeInput).trim().toUpperCase();
     if (code.length < 2) { setErrMsg('Enter a room code'); return; }
     setBusy(true); setErrMsg('');
     localStorage.setItem('wf_online_name', playerName.trim());
@@ -3777,8 +3815,20 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
         onKeyDown={e => e.key==='Enter' && (fromInvite && codeInput ? joinRoom() : createRoom())} />
       {!fromInvite && (
         <button onClick={createRoom} disabled={busy}
-          style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:12, opacity:busy?0.6:1}}>
+          style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:8, opacity:busy?0.6:1}}>
           {busy?'Creating...':'✦ Create Room'}
+        </button>
+      )}
+      {!fromInvite && (
+        <label style={{display:'flex', alignItems:'center', justifyContent:'center', gap:8, marginBottom:14, cursor:'pointer', fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.72rem'}}>
+          <input type="checkbox" checked={isPublic} onChange={e=>setIsPublic(e.target.checked)} style={{width:15, height:15, accentColor:'#00F5C4'}} />
+          🌐 Public — let anyone find &amp; join this room
+        </label>
+      )}
+      {!fromInvite && (
+        <button onClick={()=>{ setPhase('browse'); phaseRef.current='browse'; }} disabled={busy}
+          style={{...btnStyle('#1e3048','#F5EDD6'), width:'100%', padding:'12px', marginBottom:12, opacity:busy?0.6:1}}>
+          🔍 Find an open game
         </button>
       )}
       <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:12}}>
@@ -3800,6 +3850,43 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     </div>
   );
 
+  // ─── BROWSE (open rooms lobby) ────────────────────────────────────────────────
+  if (phase === 'browse') return (
+    <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
+      <button onClick={()=>{ setErrMsg(''); setPhase('join'); phaseRef.current='join'; }} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:18, fontSize:'0.8rem'}}>← Back</button>
+      <div style={{fontSize:'2rem', marginBottom:8}}>🔍</div>
+      <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 6px'}}>Open Games</h2>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 16px'}}>Join a room someone left open to the public.</p>
+      {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
+      <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
+        style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}} />
+      {publicRooms === null ? (
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.8rem'}}>Loading…</p>
+      ) : publicRooms.length === 0 ? (
+        <div style={{background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:12, padding:'18px 16px', fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', lineHeight:1.6}}>
+          No open games right now.<br/>Create a room and tick <strong style={{color:'#00F5C4'}}>Public</strong> so others can find you.
+        </div>
+      ) : (
+        publicRooms.map(r => {
+          const host = r.players.find(p => p.turn_order === 0) || r.players[0];
+          const hostName = host?.name || 'Someone';
+          return (
+            <div key={r.id} style={{display:'flex', alignItems:'center', gap:10, background:'#0a1520', borderRadius:12, padding:'12px 14px', marginBottom:8, border:'1.5px solid #1e3048'}}>
+              <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.85rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>🎮 {hostName}'s room</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.66rem', marginTop:2}}>{r.players.length}/4 players · {r.code}</div>
+              </div>
+              <button onClick={()=>joinRoom(r.code)} disabled={busy} style={{...btnStyle('#00F5C4','#0a2e24'), padding:'9px 16px', fontSize:'0.8rem', flexShrink:0, opacity:busy?0.6:1}}>Join</button>
+            </div>
+          );
+        })
+      )}
+      <button onClick={loadPublicRooms} disabled={browseBusy} style={{...btnStyle('transparent','#3a5570'), marginTop:10, fontSize:'0.72rem', border:'none', textDecoration:'underline', opacity:browseBusy?0.6:1}}>
+        {browseBusy ? 'Refreshing…' : '↻ Refresh'}
+      </button>
+    </div>
+  );
+
   // ─── LOBBY ────────────────────────────────────────────────────────────────────
   if (phase === 'lobby') return (
     <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
@@ -3807,6 +3894,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
         <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'0 0 6px', letterSpacing:'0.08em'}}>ROOM CODE</p>
         <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontSize:'2.4rem', fontWeight:900, letterSpacing:'0.22em'}}>{room?.code}</div>
         <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'6px 0 0'}}>Share with friends to join</p>
+        {room?.is_public && <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#00F5C4', fontSize:'0.66rem', margin:'6px 0 0'}}>🌐 Listed in Open Games</p>}
       </div>
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', margin:'0 0 8px'}}>Players ({players.length}/4)</p>
       {sortedPlayers.map((p, i) => (

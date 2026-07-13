@@ -527,3 +527,13 @@ GRANT EXECUTE ON FUNCTION public.add_career_points(integer) TO authenticated;
 
 ALTER TABLE public.daily_scores
   ADD COLUMN IF NOT EXISTS helps integer;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 15. OPEN ROOMS LOBBY: mark an online room "public" so it shows up in the
+--     "Find an open game" list. Private rooms (default) stay code-only.
+--     (rooms SELECT is already public — join-by-code reads arbitrary rooms — so
+--     no policy change is needed for the lobby to list waiting public rooms.)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE public.rooms
+  ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAULT false;
