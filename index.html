@@ -4886,28 +4886,18 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
 }
 
 // ─── Inventory Screen — everything you've unlocked or bought ──────────────────
-// Collapsible: three headers you tap to reveal that category's contents.
+// Three tabs (Power-ups / Themes / Tile Backs); opens on Power-ups.
 function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes, ownedTileBacks, career, onApplyTheme, onApplyTileBack, onShop }) {
   const rewardSet = new Set(unlockedRewardKeys(career));
   const myThemes = THEMES.filter(t => FREE_THEMES.includes(t.id) || ownedThemes.has(t.id) || (REWARD_THEME_IDS.has(t.id) && rewardSet.has(t.id)));
   const myBacks  = TILE_BACKS.filter(t => FREE_TILEBACKS.includes(t.id) || ownedTileBacks.has(t.id) || (REWARD_BACK_IDS.has(t.id) && rewardSet.has(t.id)));
   const powerups = SHOP_ITEMS.map(it => ({ ...it, count: getInv(it.invKey) }));
-  const powerupTotal = powerups.reduce((s,p)=>s+p.count,0);
-  const [open, setOpen] = useState({ powerups:false, themes:false, backs:false });
-  const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
-
-  const header = (id, icon, label, count) => (
-    <button onClick={()=>toggle(id)} style={{
-      width:'100%', display:'flex', alignItems:'center', gap:12, cursor:'pointer',
-      background:'var(--wf-surface)', border:`1.5px solid ${open[id]?'var(--wf-accent2)':'var(--wf-border)'}`,
-      borderRadius:14, padding:'14px 16px', marginBottom:10,
-    }}>
-      <span style={{fontSize:'1.4rem', flexShrink:0}}>{icon}</span>
-      <span style={{flex:1, textAlign:'left', fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.08rem'}}>{label}</span>
-      <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem'}}>{count}</span>
-      <span style={{color:'var(--wf-text-dim)', fontSize:'0.85rem', display:'inline-block', transform: open[id]?'rotate(90deg)':'none', transition:'transform 0.2s'}}>▸</span>
-    </button>
-  );
+  const [tab, setTab] = useState('powerups');
+  const TABS = [
+    { id:'powerups', icon:'⚡', label:'Power-ups' },
+    { id:'themes',   icon:'🎨', label:'Themes' },
+    { id:'backs',    icon:'🀄', label:'Tiles' },
+  ];
 
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
@@ -4916,14 +4906,32 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
         <div style={{fontSize:"2.2rem"}}>🎒</div>
         <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"4px 0 4px"}}>Inventory</h2>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0}}>
-          Tap a section to see what you've unlocked or bought.
+          Everything you've unlocked or bought.
         </p>
       </div>
 
+      {/* Tab bar */}
+      <div style={{display:'flex', gap:6, marginBottom:16}}>
+        {TABS.map(t => {
+          const on = tab === t.id;
+          return (
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{
+              flex:1, padding:'9px 4px', borderRadius:12, cursor:'pointer',
+              background: on ? 'var(--wf-surface)' : 'transparent',
+              border: `1.5px solid ${on ? 'var(--wf-accent2)' : 'var(--wf-border)'}`,
+              color: on ? '#F5EDD6' : 'var(--wf-text-dim)',
+              fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', fontWeight:700,
+            }}>
+              <div style={{fontSize:'1.15rem', marginBottom:2}}>{t.icon}</div>
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Power-ups */}
-      {header('powerups', '⚡', 'Power-ups', `${powerupTotal}`)}
-      {open.powerups && (
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14}}>
+      {tab==='powerups' && (
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
           {powerups.map(p => (
             <div key={p.key} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, opacity:p.count>0?1:0.55}}>
               <span style={{fontSize:'1.4rem', flexShrink:0}}>{p.icon}</span>
@@ -4937,9 +4945,8 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
       )}
 
       {/* Themes */}
-      {header('themes', '🎨', 'Themes', myThemes.length)}
-      {open.themes && (
-        <div style={{marginBottom:14}}>
+      {tab==='themes' && (
+        <div>
           {myThemes.map(t => {
             const active = activeThemeId === t.id;
             return (
@@ -4963,9 +4970,8 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
       )}
 
       {/* Tile backs */}
-      {header('backs', '🀄', 'Tile Backs', myBacks.length)}
-      {open.backs && (
-        <div style={{marginBottom:14}}>
+      {tab==='backs' && (
+        <div>
           {myBacks.map(t => {
             const active = activeTileBackId === t.id;
             const prev = tileBackPreview(t);
@@ -4989,7 +4995,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
       )}
 
       {onShop && (
-        <button onClick={onShop} style={{...btnStyle("var(--wf-border)","#F5EDD6"), width:'100%', padding:'11px', marginTop:6, marginBottom:20, fontSize:'0.85rem'}}>
+        <button onClick={onShop} style={{...btnStyle("var(--wf-border)","#F5EDD6"), width:'100%', padding:'11px', marginTop:16, marginBottom:20, fontSize:'0.85rem'}}>
           🛍️ Get more in the Shop
         </button>
       )}
