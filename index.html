@@ -1564,6 +1564,9 @@ const BUNDLES = [
   { id:'vaporwave', name:'Vaporwave Pack', price:'$2.99', themeKey:'vaporwave', backKey:'vaporwave',  blurb:'Vaporwave theme + Vaporwave tiles' },
 ];
 function bundleById(id) { return BUNDLES.find(b => b.id === id); }
+// Cosmetics that live ONLY in a bundle (real money) — excluded from the coin shop.
+const BUNDLE_THEME_IDS = new Set(BUNDLES.map(b => b.themeKey));
+const BUNDLE_BACK_IDS  = new Set(BUNDLES.map(b => b.backKey));
 // Same platform rules as coins: native shells must use their own billing.
 async function purchaseBundle(bundleId) {
   const platform = getPlatform();
@@ -1643,8 +1646,8 @@ async function disableNotifications() {
 function shopCatalogIds() {
   return [
     ...SHOP_ITEMS.map(i => i.key),
-    ...THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id)).map(t => 'theme-' + t.id),
-    ...TILE_BACKS.filter(t => t.price > 0 && !REWARD_BACK_IDS.has(t.id)).map(t => 'back-' + t.id),
+    ...THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id)).map(t => 'theme-' + t.id),
+    ...TILE_BACKS.filter(t => t.price > 0 && !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id)).map(t => 'back-' + t.id),
   ];
 }
 function getSeenShopItems() {
@@ -5196,7 +5199,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
             backgroundOrigin:'border-box', backgroundClip:'padding-box, border-box',
             boxShadow:'0 6px 22px #00000055',
           }}>
-            <span style={{position:'absolute', top:-9, left:14, background:'linear-gradient(90deg,var(--wf-accent2),var(--wf-accent))', color:'#0D1B2A', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.55rem', fontWeight:800, padding:'3px 9px', borderRadius:8, letterSpacing:'0.06em'}}>BUNDLE ✦ SAVE</span>
+            <span style={{position:'absolute', top:-9, left:14, background:'linear-gradient(90deg,var(--wf-accent2),var(--wf-accent))', color:'#0D1B2A', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.55rem', fontWeight:800, padding:'3px 9px', borderRadius:8, letterSpacing:'0.06em'}}>✦ EXCLUSIVE</span>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               {/* paired preview: theme swatch + matching icon */}
               <div style={{display:'flex', flexShrink:0}}>
@@ -5228,7 +5231,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         );
       })}
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.6rem', margin:'0 0 20px', lineHeight:1.5}}>
-        Bundles unlock the theme <strong>and</strong> its matching tiles — cheaper than buying each with coins.
+        Each bundle unlocks the theme <strong>and</strong> its matching tiles — exclusive, not sold for coins.
       </p>
 
       {/* ── Get Coins (real money) ── */}
@@ -5315,9 +5318,10 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         Power-ups are used during a game — look for the 💡 and 🔍 buttons above the board.
       </p>
 
-      {/* ── Themes ── */}
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
-      {THEMES.filter(t => !REWARD_THEME_IDS.has(t.id)).map(t => {
+      {/* ── Themes (coin-buyable only; most are earned or bundle-exclusive) ── */}
+      {THEMES.some(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id)) &&
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>}
+      {THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id)).map(t => {
         const owned = ownedThemes.has(t.id);
         const active = activeThemeId === t.id;
         const isBuying = buying === 'theme-'+t.id;
@@ -5358,7 +5362,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
       {/* ── Tile Backs ── */}
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>TILE BACKS</p>
-      {TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id)).map(t => {
+      {TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id)).map(t => {
         const owned = ownedTileBacks.has(t.id);
         const active = activeTileBackId === t.id;
         const isBuying = buying === 'back-'+t.id;
