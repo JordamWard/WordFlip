@@ -1377,11 +1377,14 @@ function getActiveTileBackId() { try { return localStorage.getItem('wf_tileback'
 function setActiveTileBackId(id) { try { localStorage.setItem('wf_tileback', id); } catch {} }
 // Resolve the current back's visual. Themed backs borrow the theme palette so
 // "Classic" always matches; fixed backs bring their own colors.
-function activeTileBack() {
-  const b = tileBackById(getActiveTileBackId());
+// Resolve any given back's visual (for previews). Themed backs (Classic) borrow
+// the current theme palette; fixed backs bring their own colors.
+function tileBackPreview(b) {
+  if (!b) return { bg:'#162030', dot:'#2a4060', border:'#2a4060', symbol:'✦', symbolColor:'#2a4060' };
   if (b.themed) { const P = activePalette(); return { bg:P.back.bg, dot:P.back.dot, border:P.back.border, symbol:b.symbol || '✦', symbolColor:P.back.dot }; }
   return { bg:b.bg, dot:b.dot, border:b.border || b.dot, symbol:b.symbol, symbolColor:b.symbolColor };
 }
+function activeTileBack() { return tileBackPreview(tileBackById(getActiveTileBackId())); }
 async function fetchOwnedTileBacks(userId) {
   try {
     const { data } = await getSB().from('token_transactions').select('reason').eq('user_id', userId).like('reason', 'tileback-%');
@@ -4698,8 +4701,7 @@ function RewardPreview({ entry, size = 44 }) {
       </div>
     );
   }
-  const b = tileBackById(entry.key);
-  const prev = b.themed ? activeTileBack() : { bg:b.bg, dot:b.dot, symbol:b.symbol, symbolColor:b.symbolColor };
+  const prev = tileBackPreview(tileBackById(entry.key));
   return (
     <div style={{width:size, height:size, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060',
       display:'flex', alignItems:'center', justifyContent:'center',
@@ -4768,7 +4770,10 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
         const isNext = idx === nextIdx;
         const name = entry.type==='theme' ? themeById(entry.key).name : tileBackById(entry.key).name;
         const active = entry.type==='theme' ? activeThemeId===entry.key : activeTileBackId===entry.key;
-        const pct = Math.min(100, Math.round(career / entry.points * 100));
+        // Progress fills from the PREVIOUS milestone to this one (not from zero),
+        // so finishing one reward doesn't leave the next looking ¾ done.
+        const prevPoints = idx > 0 ? REWARD_LADDER[idx-1].points : 0;
+        const pct = Math.max(0, Math.min(100, Math.round((career - prevPoints) / (entry.points - prevPoints) * 100)));
         const fresh = freshKeys.has(entry.key);
         return (
           <div key={entry.key} style={{
@@ -4811,6 +4816,93 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', textAlign:'center', margin:'6px 0 20px', lineHeight:1.5}}>
         Bolder themes &amp; backs live in the 🛍️ Shop for coins.
       </p>
+    </div>
+  );
+}
+
+// ─── Inventory Screen — everything you've unlocked or bought ──────────────────
+function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes, ownedTileBacks, career, onApplyTheme, onApplyTileBack, onShop }) {
+  const rewardSet = new Set(unlockedRewardKeys(career));
+  const myThemes = THEMES.filter(t => FREE_THEMES.includes(t.id) || ownedThemes.has(t.id) || (REWARD_THEME_IDS.has(t.id) && rewardSet.has(t.id)));
+  const myBacks  = TILE_BACKS.filter(t => FREE_TILEBACKS.includes(t.id) || ownedTileBacks.has(t.id) || (REWARD_BACK_IDS.has(t.id) && rewardSet.has(t.id)));
+  const powerups = SHOP_ITEMS.map(it => ({ ...it, count: getInv(it.invKey) }));
+  const Label = ({children}) => (
+    <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'20px 0 10px', letterSpacing:'0.08em'}}>{children}</p>
+  );
+  return (
+    <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
+      <div style={{textAlign:"center", marginBottom:6}}>
+        <div style={{fontSize:"2.2rem"}}>🎒</div>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"4px 0 4px"}}>Inventory</h2>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0}}>
+          Everything you've unlocked or bought.
+        </p>
+      </div>
+
+      {/* Power-ups */}
+      <Label>POWER-UPS</Label>
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+        {powerups.map(p => (
+          <div key={p.key} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, opacity:p.count>0?1:0.55}}>
+            <span style={{fontSize:'1.4rem', flexShrink:0}}>{p.icon}</span>
+            <div style={{flex:1, textAlign:'left', minWidth:0}}>
+              <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{p.name}</div>
+              <div style={{fontFamily:"'JetBrains Mono',monospace", color:p.count>0?'var(--wf-accent)':'var(--wf-text-mute)', fontSize:'0.68rem'}}>{p.count>0?`×${p.count} owned`:'none'}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Themes */}
+      <Label>THEMES · {myThemes.length}</Label>
+      {myThemes.map(t => {
+        const active = activeThemeId === t.id;
+        return (
+          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
+            <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+              <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
+                <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
+                <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
+              </div>
+            </div>
+            <div style={{flex:1, textAlign:'left'}}>
+              <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+            </div>
+            {active
+              ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+              : <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
+          </div>
+        );
+      })}
+
+      {/* Tile backs */}
+      <Label>TILE BACKS · {myBacks.length}</Label>
+      {myBacks.map(t => {
+        const active = activeTileBackId === t.id;
+        const prev = tileBackPreview(t);
+        return (
+          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
+            <div style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', display:'flex', alignItems:'center', justifyContent:'center',
+              backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
+              backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
+              <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
+            </div>
+            <div style={{flex:1, textAlign:'left'}}>
+              <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+            </div>
+            {active
+              ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+              : <button onClick={() => onApplyTileBack(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
+          </div>
+        );
+      })}
+
+      {onShop && (
+        <button onClick={onShop} style={{...btnStyle("var(--wf-border)","#F5EDD6"), width:'100%', padding:'11px', marginTop:14, marginBottom:20, fontSize:'0.85rem'}}>
+          🛍️ Get more in the Shop
+        </button>
+      )}
     </div>
   );
 }
@@ -5122,7 +5214,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         const active = activeTileBackId === t.id;
         const isBuying = buying === 'back-'+t.id;
         const canAfford = balance >= t.price;
-        const prev = t.themed ? activeTileBack() : { bg:t.bg, dot:t.dot, symbol:t.symbol, symbolColor:t.symbolColor };
+        const prev = tileBackPreview(t);
         return (
           <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
@@ -5580,6 +5672,9 @@ function WordFlip() {
               }}>
                 🎁 Rewards{rewardsNew?" ✨":""}
               </button>
+              <button onClick={()=>setScreen("inventory")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
+                🎒 Inventory
+              </button>
               {session && (
                 <button onClick={()=>setScreen("shop")} style={{
                   ...btnStyle("transparent", shopHasNew()?"var(--wf-accent)":"var(--wf-text-dim)"),
@@ -5666,6 +5761,7 @@ function WordFlip() {
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} /></div>}
+      {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}
       {screen==="auth"&&<AuthScreen initialMode={authMode} onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
         const s = await authGetSession();
