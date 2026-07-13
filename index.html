@@ -1566,7 +1566,9 @@ const BUNDLES = [
 function bundleById(id) { return BUNDLES.find(b => b.id === id); }
 // Cosmetics that live ONLY in a bundle (real money) — excluded from the coin shop.
 const BUNDLE_THEME_IDS = new Set(BUNDLES.map(b => b.themeKey));
-const BUNDLE_BACK_IDS  = new Set(BUNDLES.map(b => b.backKey));
+// A few bundle backs are ALSO sold for coins (still granted by the bundle too).
+const COIN_BUYABLE_BACKS = new Set(['neonpulse']);
+const BUNDLE_BACK_IDS  = new Set(BUNDLES.map(b => b.backKey).filter(id => !COIN_BUYABLE_BACKS.has(id)));
 // Same platform rules as coins: native shells must use their own billing.
 async function purchaseBundle(bundleId) {
   const platform = getPlatform();
@@ -4893,6 +4895,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
   const myBacks  = TILE_BACKS.filter(t => FREE_TILEBACKS.includes(t.id) || ownedTileBacks.has(t.id) || (REWARD_BACK_IDS.has(t.id) && rewardSet.has(t.id)));
   const powerups = SHOP_ITEMS.map(it => ({ ...it, count: getInv(it.invKey) }));
   const [tab, setTab] = useState('powerups');
+  const [preview, setPreview] = useState(null); // { themeId, backId } combo preview
   const TABS = [
     { id:'powerups', icon:'⚡', label:'Power-ups' },
     { id:'themes',   icon:'🎨', label:'Themes' },
@@ -4901,6 +4904,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
 
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
+      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={onApplyTheme} onApplyTileBack={onApplyTileBack} onClose={()=>setPreview(null)} />}
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
       <div style={{textAlign:"center", marginBottom:16}}>
         <div style={{fontSize:"2.2rem"}}>🎒</div>
@@ -4951,11 +4955,12 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
             const active = activeThemeId === t.id;
             return (
               <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
-                <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+                <div onClick={()=>setPreview({themeId:t.id, backId:activeTileBackId})} title="Tap to preview" style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden', cursor:'pointer'}}>
                   <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
                   </div>
+                  <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
                 </div>
                 <div style={{flex:1, textAlign:'left'}}>
                   <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
@@ -4977,10 +4982,11 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
             const prev = tileBackPreview(t);
             return (
               <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
-                <div style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', display:'flex', alignItems:'center', justifyContent:'center',
+                <div onClick={()=>setPreview({themeId:activeThemeId, backId:t.id})} title="Tap to preview" style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', position:'relative', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
                   backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
                   backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
                   <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
+                  <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
                 </div>
                 <div style={{flex:1, textAlign:'left'}}>
                   <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
@@ -5050,6 +5056,49 @@ function AchievementsScreen({ onBack }) {
   );
 }
 
+// ─── Combo preview — see how a tile back looks against a theme ────────────────
+// A mini board: 4 face-down tiles (the back) + a row of in-play tiles (the
+// theme palette), painted on the theme's background so you can judge the "jive".
+function ComboPreview({ themeId, backId, activeThemeId, activeTileBackId, onApplyTheme, onApplyTileBack, onClose }) {
+  const th = themeById(themeId);
+  const b = tileBackById(backId);
+  const P = th.pal;
+  // Resolve the back against THIS theme's palette (matters for the themed Classic).
+  const bk = b.themed
+    ? { bg:P.back.bg, dot:P.back.dot, border:P.back.border, symbol:b.symbol||'✦', symbolColor:P.back.dot }
+    : { bg:b.bg, dot:b.dot, border:b.border||b.dot, symbol:b.symbol, symbolColor:b.symbolColor };
+  const faceDown = (i) => (
+    <div key={'d'+i} style={{width:48,height:48,borderRadius:9,border:`2px solid ${bk.border}`,display:'flex',alignItems:'center',justifyContent:'center',
+      backgroundImage:`radial-gradient(circle at 30% 30%, ${bk.dot} 1.5px, transparent 1.5px),radial-gradient(circle at 70% 70%, ${bk.dot} 1.5px, transparent 1.5px),${bk.bg}`,
+      backgroundSize:'12px 12px, 12px 12px, 100% 100%'}}>
+      <span style={{color:bk.symbolColor,fontSize:'1.3rem',fontWeight:900}}>{bk.symbol}</span>
+    </div>
+  );
+  const revealed = (st, letter) => (
+    <div key={letter} style={{width:48,height:48,borderRadius:9,background:st.bg,border:`2px solid ${st.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:'1.3rem',color:st.text}}>{letter}</div>
+  );
+  return (
+    <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:200,background:'#000b',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{maxWidth:340,width:'100%',borderRadius:18,overflow:'hidden',border:'1.5px solid var(--wf-border)',boxShadow:'0 10px 40px #000a'}}>
+        <div style={{background:th.bg,padding:'22px 18px'}}>
+          <div style={{textAlign:'center',fontFamily:"'Fraunces',serif",fontWeight:800,fontSize:'1.05rem',marginBottom:14,
+            background:th.title,WebkitBackgroundClip:'text',backgroundClip:'text',color:'transparent'}}>{th.name} + {b.name}</div>
+          <div style={{display:'flex',gap:8,justifyContent:'center',marginBottom:8}}>{[0,1,2,3].map(faceDown)}</div>
+          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+            {revealed(P.sel,'W')}{revealed(P.green,'O')}{revealed(P.yellow,'R')}{revealed(P.face,'D')}
+          </div>
+          <div style={{textAlign:'center',fontFamily:"'JetBrains Mono',monospace",fontSize:'0.58rem',color:P.face.bg,opacity:0.75,marginTop:12,letterSpacing:'0.06em'}}>FACE-DOWN · IN PLAY</div>
+        </div>
+        <div style={{background:'var(--wf-surface)',padding:'12px',display:'flex',gap:8}}>
+          {backId!==activeTileBackId && onApplyTileBack && <button onClick={()=>{onApplyTileBack(backId);onClose();}} style={{...btnStyle('#0e2a3a','var(--wf-accent)'),flex:1,padding:'10px',fontSize:'0.78rem',border:'1.5px solid #00F5C455'}}>Use tiles</button>}
+          {themeId!==activeThemeId && onApplyTheme && <button onClick={()=>{onApplyTheme(themeId);onClose();}} style={{...btnStyle('#0e2a3a','var(--wf-accent)'),flex:1,padding:'10px',fontSize:'0.78rem',border:'1.5px solid #00F5C455'}}>Use theme</button>}
+          <button onClick={onClose} style={{...btnStyle('var(--wf-border)','#F5EDD6'),flex:1,padding:'10px',fontSize:'0.78rem'}}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ownedThemes, onApplyTheme, onOwnTheme, activeTileBackId, ownedTileBacks, onApplyTileBack, onOwnTileBack }) {
   const [inv, setInv] = useState(() => {
     const m = {};
@@ -5064,6 +5113,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
   const [coinMsg, setCoinMsg] = useState(null);
   const [buyingBundle, setBuyingBundle] = useState(null); // bundle id mid-checkout
   const [bundleMsg, setBundleMsg] = useState(null);       // { id, text }
+  const [preview, setPreview] = useState(null);           // { themeId, backId } combo preview
   const [codeInput, setCodeInput] = useState('');
   const [redeeming, setRedeeming] = useState(false);
   const [redeemMsg, setRedeemMsg] = useState(null); // { text, good }
@@ -5175,6 +5225,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
   return (
     <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
+      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={onApplyTheme} onApplyTileBack={onApplyTileBack} onClose={()=>setPreview(null)} />}
       <button onClick={onBack} style={{...btnStyle('var(--wf-border)','var(--wf-text-dim)'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
 
       {/* Balance header — same source of truth as the menu pill */}
@@ -5335,12 +5386,13 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         return (
           <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
-              {/* Swatch preview */}
-              <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+              {/* Swatch preview — tap to preview against your active tiles */}
+              <div onClick={()=>setPreview({themeId:t.id, backId:activeTileBackId})} title="Tap to preview" style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden', cursor:'pointer'}}>
                 <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
                   <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
                   <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
                 </div>
+                <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
               </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
@@ -5377,12 +5429,13 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         return (
           <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
-              {/* Mini tile-back preview */}
-              <div style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060',
+              {/* Mini tile-back preview — tap to preview against your active theme */}
+              <div onClick={()=>setPreview({themeId:activeThemeId, backId:t.id})} title="Tap to preview" style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', position:'relative', cursor:'pointer',
                 display:'flex', alignItems:'center', justifyContent:'center',
                 backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
                 backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
                 <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
+                <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
               </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
