@@ -1300,6 +1300,26 @@ const THEMES = [
           green:{bg:'linear-gradient(135deg,#00f0ff,#6afaff)',border:'#6afaff',text:'#042630'},
           yellow:{bg:'linear-gradient(135deg,#ffb03f,#ffd66a)',border:'#ffd66a',text:'#2a1c00'},
           face:{bg:'#f0dcf5',border:'#c79ec0',text:'#12062a'}, error:{bg:'#ff5e5b',text:'#fff'} } },
+  // Reward-only themes (price 0 → earned on the Rewards ladder, not sold). Each
+  // pairs with a matching companion tile back of the same name.
+  { id:'aurora', name:'Aurora', price:0, bg:'linear-gradient(160deg,#04130f 0%,#020a12 100%)', title:'linear-gradient(90deg,#5eead4,#a78bfa)', swatch:['#04130f','#5eead4','#a78bfa'],
+    pal:{ back:{bg:'linear-gradient(135deg,#0a1f1a 0%,#04130f 100%)',border:'#1e4a44',dot:'#123830'},
+          sel:{bg:'linear-gradient(135deg,#f0b429,#ffd166)',border:'#ffd166',text:'#2a1c00'},
+          green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#b8983a,#e6c766)',border:'#e6c766',text:'#241c00'},
+          face:{bg:'#dcefe8',border:'#9cc4b8',text:'#04130f'}, error:{bg:'#ff6b6b',text:'#fff'} } },
+  { id:'crimson', name:'Crimson', price:0, bg:'linear-gradient(160deg,#1c0608 0%,#0f0304 100%)', title:'linear-gradient(90deg,#ff7a92,#ffb37a)', swatch:['#1c0608','#ff7a92','#ffb37a'],
+    pal:{ back:{bg:'linear-gradient(135deg,#2a0a10 0%,#14050a 100%)',border:'#5a2030',dot:'#3a1420'},
+          sel:{bg:'linear-gradient(135deg,#ffb37a,#ffd0a3)',border:'#ffb37a',text:'#3a1400'},
+          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#e0a020,#ffcf5e)',border:'#ffcf5e',text:'#2a1c00'},
+          face:{bg:'#f3dce0',border:'#c99ea6',text:'#14050a'}, error:{bg:'#ff2e5b',text:'#fff'} } },
+  { id:'royal', name:'Royal', price:0, bg:'linear-gradient(160deg,#160a2e 0%,#0a0518 100%)', title:'linear-gradient(90deg,#c4a2ff,#ffd75e)', swatch:['#160a2e','#c4a2ff','#ffd75e'],
+    pal:{ back:{bg:'linear-gradient(135deg,#221040 0%,#120826 100%)',border:'#3e2668',dot:'#2a1a4e'},
+          sel:{bg:'linear-gradient(135deg,#ffd75e,#ffe89a)',border:'#ffd75e',text:'#2a2000'},
+          green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#c9a800,#f0c94a)',border:'#f0c94a',text:'#2a2000'},
+          face:{bg:'#e8dcf5',border:'#b49ccc',text:'#120826'}, error:{bg:'#ff6b6b',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
 
@@ -1318,6 +1338,9 @@ const THEME_CHROME = {
   bubblegum: { top:'#2a0f2e', surface:'#1c0a20', border:'#401f46', accent:'#f77fc0', accent2:'#b79bfc', textDim:'#bd9ac8', textMute:'#74547a' },
   neonpunk:  { top:'#0a0012', surface:'#14001e', border:'#2e1046', accent:'#39ff14', accent2:'#ff2e97', textDim:'#b090c8', textMute:'#6a4a80' },
   vaporwave: { top:'#2a0a3e', surface:'#1a0a30', border:'#4a2a6a', accent:'#ff2e97', accent2:'#00f0ff', textDim:'#c49ad8', textMute:'#7a5a90' },
+  aurora:    { top:'#04130f', surface:'#08150f', border:'#1c4038', accent:'#5eead4', accent2:'#a78bfa', textDim:'#7fb3a6', textMute:'#4a7368' },
+  crimson:   { top:'#1c0608', surface:'#160508', border:'#4a1c28', accent:'#ff7a92', accent2:'#ffb37a', textDim:'#c497a0', textMute:'#7a5560' },
+  royal:     { top:'#160a2e', surface:'#120826', border:'#33205a', accent:'#c4a2ff', accent2:'#ffd75e', textDim:'#a595c4', textMute:'#5f5080' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
@@ -1370,6 +1393,9 @@ const TILE_BACKS = [
   { id:'tide',      name:'Tide',      price:0, bg:'linear-gradient(135deg,#0e2137,#081426)', dot:'#1e3a5a', symbol:'≈', symbolColor:'#38bdf8' }, // Ocean
   { id:'afterglow', name:'Afterglow', price:0, bg:'linear-gradient(135deg,#3a1c33,#25122a)', dot:'#5a3450', symbol:'✷', symbolColor:'#ff9f6b' }, // Sunset
   { id:'blossom',   name:'Blossom',   price:0, bg:'linear-gradient(135deg,#38143c,#220a28)', dot:'#5e2a62', symbol:'❀', symbolColor:'#f9a8d4' }, // Bubblegum
+  { id:'aurora',    name:'Aurora',    price:0, bg:'linear-gradient(135deg,#0a1f1a,#04130f)', dot:'#1e4a44', symbol:'❋', symbolColor:'#a78bfa' }, // Aurora
+  { id:'crimson',   name:'Crimson',   price:0, bg:'linear-gradient(135deg,#2a0a10,#14050a)', dot:'#5a2030', symbol:'◆', symbolColor:'#ff7a92' }, // Crimson
+  { id:'royal',     name:'Royal',     price:0, bg:'linear-gradient(135deg,#221040,#120826)', dot:'#3e2668', symbol:'♛', symbolColor:'#ffd75e' }, // Royal
 ];
 const FREE_TILEBACKS = ['classic'];
 function tileBackById(id) { return TILE_BACKS.find(t => t.id === id) || TILE_BACKS[0]; }
@@ -1435,6 +1461,12 @@ const REWARD_LADDER = [
   { points:65000,  type:'back',  key:'afterglow' }, // matches Sunset
   { points:85000,  type:'theme', key:'bubblegum' },
   { points:110000, type:'back',  key:'blossom'   }, // matches Bubblegum
+  { points:140000, type:'theme', key:'aurora'    },
+  { points:170000, type:'back',  key:'aurora'    }, // matches Aurora
+  { points:210000, type:'theme', key:'crimson'   },
+  { points:250000, type:'back',  key:'crimson'   }, // matches Crimson
+  { points:300000, type:'theme', key:'royal'     },
+  { points:360000, type:'back',  key:'royal'     }, // matches Royal
 ];
 // Cosmetics that are reward-only (earned by playing, NOT buyable in the shop).
 const REWARD_THEME_IDS = new Set(REWARD_LADDER.filter(r=>r.type==='theme').map(r=>r.key));
