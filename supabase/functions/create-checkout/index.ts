@@ -22,6 +22,14 @@ const PACKS: Record<string, { tokens: number; amount: number; name: string }> = 
   coins_10000: { tokens: 10000, amount: 899, name: '10,000 Coins' },
 };
 
+// Cosmetic bundles: a theme + its matching tile back, granted together after
+// payment. amount is in cents. Keep ids/theme/back in sync with the client's
+// BUNDLES. The webhook grants BOTH cosmetics (theme-<id> + tileback-<id>).
+const BUNDLES: Record<string, { amount: number; name: string; theme: string; back: string }> = {
+  neon:      { amount: 299, name: 'Neon Pack',      theme: 'neonpunk',  back: 'neonpulse' },
+  vaporwave: { amount: 299, name: 'Vaporwave Pack', theme: 'vaporwave', back: 'vaporwave' },
+};
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -41,12 +49,31 @@ Deno.serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: 'not signed in' }, 401);
 
-    const { packId } = await req.json().catch(() => ({}));
-    const pack = PACKS[packId];
-    if (!pack) return json({ error: 'unknown pack' }, 400);
-
+    const { packId, bundleId } = await req.json().catch(() => ({}));
     const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, { apiVersion: '2024-06-20' });
     const appUrl = Deno.env.get('APP_URL') || 'https://wordflipgame.netlify.app';
+
+    // Cosmetic bundle checkout — metadata tells the webhook which two cosmetics
+    // to grant (no coins involved).
+    if (bundleId) {
+      const b = BUNDLES[bundleId];
+      if (!b) return json({ error: 'unknown bundle' }, 400);
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: [{
+          price_data: { currency: 'usd', product_data: { name: b.name }, unit_amount: b.amount },
+          quantity: 1,
+        }],
+        success_url: `${appUrl}/?purchase=success`,
+        cancel_url: `${appUrl}/?purchase=cancel`,
+        metadata: { user_id: user.id, bundle: bundleId, theme: b.theme, back: b.back },
+      });
+      return json({ url: session.url }, 200);
+    }
+
+    // Coin pack checkout.
+    const pack = PACKS[packId];
+    if (!pack) return json({ error: 'unknown pack' }, 400);
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',

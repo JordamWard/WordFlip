@@ -1385,6 +1385,7 @@ const TILE_BACKS = [
   { id:'neon',     name:'Neon Grid',   price:400, bg:'linear-gradient(135deg,#0a0a0a,#050505)', dot:'#39ff14', symbol:'✚', symbolColor:'#39ff14' },
   { id:'firecracker', name:'Firecracker', price:450, bg:'linear-gradient(135deg,#d40a2a,#7a0518)', dot:'#ffd23f', symbol:'★', symbolColor:'#ffd23f' },
   { id:'vaporwave', name:'Vaporwave',  price:450, bg:'linear-gradient(135deg,#ff2e97,#7a2eff)', dot:'#00f0ff', symbol:'▲', symbolColor:'#00f0ff' },
+  { id:'neonpulse', name:'Neon Pulse', price:400, bg:'linear-gradient(135deg,#1a0026,#0a0012)', dot:'#3a0f3a', symbol:'◆', symbolColor:'#39ff14' }, // companion to the Neon theme
   // Theme companions — each mirrors an earnable theme's palette (its dark
   // gradient + accent) so the face-down card belongs to that theme. Reward-only
   // (price 0, not in FREE_TILEBACKS → unlocked via the Rewards ladder, not sold).
@@ -1549,6 +1550,35 @@ async function startCoinPurchase(packId) {
     return { ok:true };
   } catch (e) {
     console.error('startCoinPurchase:', e);
+    return { ok:false, msg:'Couldn’t start checkout — please try again.' };
+  }
+}
+
+// ─── Real-money cosmetic bundles (Stripe) ─────────────────────────────────────
+// A bundle = a theme + its matching tile back, bought together for real money.
+// ids MUST match the server-side BUNDLES in supabase/functions/create-checkout;
+// the webhook grants BOTH cosmetics (theme-<id> + tileback-<id>) after payment.
+// Until Stripe is configured the purchase fails soft ("not available yet").
+const BUNDLES = [
+  { id:'neon',      name:'Neon Pack',      price:'$2.99', themeKey:'neonpunk',  backKey:'neonpulse', blurb:'Neon theme + Neon Pulse tiles' },
+  { id:'vaporwave', name:'Vaporwave Pack', price:'$2.99', themeKey:'vaporwave', backKey:'vaporwave',  blurb:'Vaporwave theme + Vaporwave tiles' },
+];
+function bundleById(id) { return BUNDLES.find(b => b.id === id); }
+// Same platform rules as coins: native shells must use their own billing.
+async function purchaseBundle(bundleId) {
+  const platform = getPlatform();
+  if (platform === 'ios')     return { ok:false, msg:'Bundles arrive with the App Store version.' };
+  if (platform === 'android') return { ok:false, msg:'Bundles arrive with the Play Store version.' };
+  try {
+    const { data, error } = await getSB().functions.invoke('create-checkout', { body: { bundleId } });
+    if (error || !data?.url) {
+      console.error('create-checkout(bundle):', error || data);
+      return { ok:false, msg:'Bundles can’t be purchased just yet — check back soon!' };
+    }
+    window.location.href = data.url;
+    return { ok:true };
+  } catch (e) {
+    console.error('purchaseBundle:', e);
     return { ok:false, msg:'Couldn’t start checkout — please try again.' };
   }
 }
@@ -4853,85 +4883,110 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
 }
 
 // ─── Inventory Screen — everything you've unlocked or bought ──────────────────
+// Collapsible: three headers you tap to reveal that category's contents.
 function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes, ownedTileBacks, career, onApplyTheme, onApplyTileBack, onShop }) {
   const rewardSet = new Set(unlockedRewardKeys(career));
   const myThemes = THEMES.filter(t => FREE_THEMES.includes(t.id) || ownedThemes.has(t.id) || (REWARD_THEME_IDS.has(t.id) && rewardSet.has(t.id)));
   const myBacks  = TILE_BACKS.filter(t => FREE_TILEBACKS.includes(t.id) || ownedTileBacks.has(t.id) || (REWARD_BACK_IDS.has(t.id) && rewardSet.has(t.id)));
   const powerups = SHOP_ITEMS.map(it => ({ ...it, count: getInv(it.invKey) }));
-  const Label = ({children}) => (
-    <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'20px 0 10px', letterSpacing:'0.08em'}}>{children}</p>
+  const powerupTotal = powerups.reduce((s,p)=>s+p.count,0);
+  const [open, setOpen] = useState({ powerups:false, themes:false, backs:false });
+  const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
+
+  const header = (id, icon, label, count) => (
+    <button onClick={()=>toggle(id)} style={{
+      width:'100%', display:'flex', alignItems:'center', gap:12, cursor:'pointer',
+      background:'var(--wf-surface)', border:`1.5px solid ${open[id]?'var(--wf-accent2)':'var(--wf-border)'}`,
+      borderRadius:14, padding:'14px 16px', marginBottom:10,
+    }}>
+      <span style={{fontSize:'1.4rem', flexShrink:0}}>{icon}</span>
+      <span style={{flex:1, textAlign:'left', fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.08rem'}}>{label}</span>
+      <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem'}}>{count}</span>
+      <span style={{color:'var(--wf-text-dim)', fontSize:'0.85rem', display:'inline-block', transform: open[id]?'rotate(90deg)':'none', transition:'transform 0.2s'}}>▸</span>
+    </button>
   );
+
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
-      <div style={{textAlign:"center", marginBottom:6}}>
+      <div style={{textAlign:"center", marginBottom:16}}>
         <div style={{fontSize:"2.2rem"}}>🎒</div>
         <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"4px 0 4px"}}>Inventory</h2>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0}}>
-          Everything you've unlocked or bought.
+          Tap a section to see what you've unlocked or bought.
         </p>
       </div>
 
       {/* Power-ups */}
-      <Label>POWER-UPS</Label>
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-        {powerups.map(p => (
-          <div key={p.key} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, opacity:p.count>0?1:0.55}}>
-            <span style={{fontSize:'1.4rem', flexShrink:0}}>{p.icon}</span>
-            <div style={{flex:1, textAlign:'left', minWidth:0}}>
-              <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{p.name}</div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace", color:p.count>0?'var(--wf-accent)':'var(--wf-text-mute)', fontSize:'0.68rem'}}>{p.count>0?`×${p.count} owned`:'none'}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Themes */}
-      <Label>THEMES · {myThemes.length}</Label>
-      {myThemes.map(t => {
-        const active = activeThemeId === t.id;
-        return (
-          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
-            <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
-              <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
-                <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
-                <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
+      {header('powerups', '⚡', 'Power-ups', `${powerupTotal}`)}
+      {open.powerups && (
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14}}>
+          {powerups.map(p => (
+            <div key={p.key} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, opacity:p.count>0?1:0.55}}>
+              <span style={{fontSize:'1.4rem', flexShrink:0}}>{p.icon}</span>
+              <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{p.name}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:p.count>0?'var(--wf-accent)':'var(--wf-text-mute)', fontSize:'0.68rem'}}>{p.count>0?`×${p.count} owned`:'none'}</div>
               </div>
             </div>
-            <div style={{flex:1, textAlign:'left'}}>
-              <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
-            </div>
-            {active
-              ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
-              : <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
-          </div>
-        );
-      })}
+          ))}
+        </div>
+      )}
+
+      {/* Themes */}
+      {header('themes', '🎨', 'Themes', myThemes.length)}
+      {open.themes && (
+        <div style={{marginBottom:14}}>
+          {myThemes.map(t => {
+            const active = activeThemeId === t.id;
+            return (
+              <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
+                <div style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+                  <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
+                    <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
+                    <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
+                  </div>
+                </div>
+                <div style={{flex:1, textAlign:'left'}}>
+                  <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+                </div>
+                {active
+                  ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+                  : <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Tile backs */}
-      <Label>TILE BACKS · {myBacks.length}</Label>
-      {myBacks.map(t => {
-        const active = activeTileBackId === t.id;
-        const prev = tileBackPreview(t);
-        return (
-          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
-            <div style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', display:'flex', alignItems:'center', justifyContent:'center',
-              backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
-              backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
-              <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
-            </div>
-            <div style={{flex:1, textAlign:'left'}}>
-              <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
-            </div>
-            {active
-              ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
-              : <button onClick={() => onApplyTileBack(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
-          </div>
-        );
-      })}
+      {header('backs', '🀄', 'Tile Backs', myBacks.length)}
+      {open.backs && (
+        <div style={{marginBottom:14}}>
+          {myBacks.map(t => {
+            const active = activeTileBackId === t.id;
+            const prev = tileBackPreview(t);
+            return (
+              <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:12}}>
+                <div style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', display:'flex', alignItems:'center', justifyContent:'center',
+                  backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
+                  backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
+                  <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
+                </div>
+                <div style={{flex:1, textAlign:'left'}}>
+                  <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+                </div>
+                {active
+                  ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
+                  : <button onClick={() => onApplyTileBack(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {onShop && (
-        <button onClick={onShop} style={{...btnStyle("var(--wf-border)","#F5EDD6"), width:'100%', padding:'11px', marginTop:14, marginBottom:20, fontSize:'0.85rem'}}>
+        <button onClick={onShop} style={{...btnStyle("var(--wf-border)","#F5EDD6"), width:'100%', padding:'11px', marginTop:6, marginBottom:20, fontSize:'0.85rem'}}>
           🛍️ Get more in the Shop
         </button>
       )}
@@ -4998,6 +5053,8 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
   const [backMsg, setBackMsg] = useState(null);   // { id, text, good }
   const [buyingCoins, setBuyingCoins] = useState(null); // pack id mid-checkout
   const [coinMsg, setCoinMsg] = useState(null);
+  const [buyingBundle, setBuyingBundle] = useState(null); // bundle id mid-checkout
+  const [bundleMsg, setBundleMsg] = useState(null);       // { id, text }
   const [codeInput, setCodeInput] = useState('');
   const [redeeming, setRedeeming] = useState(false);
   const [redeemMsg, setRedeemMsg] = useState(null); // { text, good }
@@ -5027,6 +5084,16 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     const res = await purchaseCoins(packId); // platform-aware (web=Stripe, native=IAP)
     if (!res.ok) { setCoinMsg(res.msg); setBuyingCoins(null); }
     // On success the browser redirects to Stripe, so no need to reset state.
+  }
+
+  async function buyBundle(b) {
+    if (buyingBundle) return;
+    if (!session?.user) { setBundleMsg({ id:b.id, text:'Sign in to buy a bundle.' }); return; }
+    setBuyingBundle(b.id); setBundleMsg(null);
+    await ensureFreshSession();
+    const res = await purchaseBundle(b.id);
+    if (!res.ok) { setBundleMsg({ id:b.id, text:res.msg }); setBuyingBundle(null); }
+    // On success the browser redirects to Stripe.
   }
 
   async function buyTileBackFlow(t) {
@@ -5113,6 +5180,56 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         </div>
         <div style={{fontSize:'2rem'}}>🛍️</div>
       </div>
+
+      {/* ── Featured bundles (real money) — theme + matching icon together ── */}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-accent2)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em', fontWeight:800}}>✦ FEATURED BUNDLES</p>
+      {BUNDLES.map(b => {
+        const th = themeById(b.themeKey);
+        const bk = tileBackPreview(tileBackById(b.backKey));
+        const busy = buyingBundle === b.id;
+        return (
+          <div key={b.id} style={{
+            position:'relative', borderRadius:16, padding:'14px', marginBottom:12,
+            background:'linear-gradient(135deg,#1a1030,#0e2a3a)',
+            border:'1.5px solid transparent',
+            backgroundImage:'linear-gradient(135deg,#1a1030,#0e2a3a), linear-gradient(120deg,var(--wf-accent2),var(--wf-accent))',
+            backgroundOrigin:'border-box', backgroundClip:'padding-box, border-box',
+            boxShadow:'0 6px 22px #00000055',
+          }}>
+            <span style={{position:'absolute', top:-9, left:14, background:'linear-gradient(90deg,var(--wf-accent2),var(--wf-accent))', color:'#0D1B2A', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.55rem', fontWeight:800, padding:'3px 9px', borderRadius:8, letterSpacing:'0.06em'}}>BUNDLE ✦ SAVE</span>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              {/* paired preview: theme swatch + matching icon */}
+              <div style={{display:'flex', flexShrink:0}}>
+                <div style={{width:46, height:46, borderRadius:10, background:th.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden'}}>
+                  <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
+                    <span style={{width:9, height:9, borderRadius:'50%', background:th.swatch[1]}} />
+                    <span style={{width:9, height:9, borderRadius:'50%', background:th.swatch[2]}} />
+                  </div>
+                </div>
+                <div style={{width:46, height:46, borderRadius:10, marginLeft:-12, border:'1.5px solid #2a4060', display:'flex', alignItems:'center', justifyContent:'center',
+                  backgroundImage:`radial-gradient(circle at 30% 30%, ${bk.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${bk.dot} 1px, transparent 1px),${bk.bg}`,
+                  backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
+                  <span style={{color:bk.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{bk.symbol}</span>
+                </div>
+              </div>
+              <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                <div style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.05rem'}}>{b.name}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.66rem', marginTop:2}}>{b.blurb}</div>
+              </div>
+              <button onClick={() => buyBundle(b)} disabled={busy}
+                style={{...btnStyle('linear-gradient(90deg,#FFB703,#ff9f1c)','#0D1B2A'), padding:'10px 14px', fontSize:'0.82rem', flexShrink:0, opacity:busy?0.6:1, fontWeight:800}}>
+                {busy ? '…' : b.price}
+              </button>
+            </div>
+            {bundleMsg?.id === b.id && (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', margin:'10px 0 0', color:'var(--wf-accent2)'}}>{bundleMsg.text}</p>
+            )}
+          </div>
+        );
+      })}
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.6rem', margin:'0 0 20px', lineHeight:1.5}}>
+        Bundles unlock the theme <strong>and</strong> its matching tiles — cheaper than buying each with coins.
+      </p>
 
       {/* ── Get Coins (real money) ── */}
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>GET COINS</p>

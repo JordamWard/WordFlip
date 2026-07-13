@@ -36,13 +36,39 @@ Deno.serve(async (req) => {
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object as Stripe.Checkout.Session;
     const userId = s.metadata?.user_id;
+    // Service-role client — bypasses RLS to grant coins or cosmetics.
+    const admin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Cosmetic bundle: grant the theme + tile back as ownership rows (amount 0,
+    // idempotent on (user_id, reason) so re-delivery can't double-grant). These
+    // are the SAME reasons fetchOwnedThemes/fetchOwnedTileBacks read back.
+    const bundle = s.metadata?.bundle;
+    if (userId && bundle) {
+      const theme = s.metadata?.theme;
+      const back = s.metadata?.back;
+      const rows: { user_id: string; amount: number; reason: string }[] = [];
+      if (theme) rows.push({ user_id: userId, amount: 0, reason: 'theme-' + theme });
+      if (back)  rows.push({ user_id: userId, amount: 0, reason: 'tileback-' + back });
+      if (rows.length) {
+        const { error } = await admin
+          .from('token_transactions')
+          .upsert(rows, { onConflict: 'user_id,reason', ignoreDuplicates: true });
+        if (error) {
+          console.error('bundle grant failed:', error);
+          return new Response('grant failed', { status: 500 }); // Stripe will retry
+        }
+      }
+      return new Response(JSON.stringify({ received: true }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Coin pack: credit the wallet via the locked-down RPC.
     const tokens = parseInt(s.metadata?.tokens || '0', 10);
     if (userId && tokens > 0) {
-      // Service-role client — bypasses RLS to call the locked-down credit RPC.
-      const admin = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      );
       const { error } = await admin.rpc('credit_tokens', {
         p_user_id: userId,
         p_amount: tokens,

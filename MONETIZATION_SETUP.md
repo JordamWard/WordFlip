@@ -70,3 +70,18 @@ Defined in **two places that must match**:
 - Client display: `TOKEN_PACKS` in `index.html`
 - Server truth: `PACKS` in `supabase/functions/create-checkout/index.ts`
 Change amounts/coins there (the server value is what's actually charged).
+
+## Cosmetic bundles (theme + matching icon)
+Featured "bundles" (e.g. Neon Pack, Vaporwave Pack) sell a theme + its matching
+tile back together for real money. They ride the SAME Stripe setup as coins —
+**no extra Stripe products to create.** Once the steps above are done, bundles
+work automatically.
+
+- Client display: `BUNDLES` in `index.html`
+- Server truth: `BUNDLES` in `supabase/functions/create-checkout/index.ts`
+  (each bundle's `amount` in cents + which `theme`/`back` it grants)
+- On payment, `stripe-webhook` grants both cosmetics as ownership rows
+  (`theme-<id>` + `tileback-<id>`) — the same rows the shop reads for "owned".
+
+Until Stripe is configured, the bundle buttons simply say the purchase isn't
+available yet (they fail soft, exactly like the coin packs).
