@@ -7,21 +7,42 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. UNIQUE constraint so upsert on daily_scores(user_id, day_key) works
 -- ─────────────────────────────────────────────────────────────────────────────
-ALTER TABLE daily_scores
-  ADD CONSTRAINT IF NOT EXISTS daily_scores_user_id_day_key_key
-  UNIQUE (user_id, day_key);
+-- (Postgres has no ADD CONSTRAINT IF NOT EXISTS — guard with a DO block so
+-- this file stays re-runnable top to bottom.)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'daily_scores_user_id_day_key_key') THEN
+    ALTER TABLE public.daily_scores
+      ADD CONSTRAINT daily_scores_user_id_day_key_key UNIQUE (user_id, day_key);
+  END IF;
+END $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. Trigger: auto-create profile row when a new user signs up
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Hardened: the email-prefix fallback is sanitized to satisfy the profiles
+-- username CHECK (^[a-zA-Z0-9_]{3,20}$). Without this, an email like
+-- "john.doe@x.com" (dot) or "jo@x.com" (too short) would violate the CHECK and
+-- — because this trigger runs during signup — abort the signup itself. The app
+-- always sends a clean username; this protects non-app account creation paths.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_username text;
 BEGIN
+  v_username := COALESCE(NULLIF(NEW.raw_user_meta_data->>'username', ''), split_part(NEW.email, '@', 1));
+  -- Strip disallowed chars, pad short names, cap at 20 to satisfy the CHECK.
+  v_username := left(regexp_replace(v_username, '[^a-zA-Z0-9_]', '', 'g'), 20);
+  IF length(v_username) < 3 THEN v_username := rpad(coalesce(v_username,'p'), 3, '0'); END IF;
+  -- If the (deterministic) name is taken by someone else, salt it to stay unique.
+  IF EXISTS (SELECT 1 FROM public.profiles WHERE username = v_username AND id <> NEW.id) THEN
+    v_username := left(v_username, 14) || '_' || substr(md5(NEW.id::text), 1, 5);
+  END IF;
   INSERT INTO public.profiles (id, username, display_name)
   VALUES (
     NEW.id,
-    COALESCE(NULLIF(NEW.raw_user_meta_data->>'username', ''), split_part(NEW.email, '@', 1)),
-    COALESCE(NULLIF(NEW.raw_user_meta_data->>'display_name', ''), split_part(NEW.email, '@', 1))
+    v_username,
+    COALESCE(NULLIF(NEW.raw_user_meta_data->>'display_name', ''), v_username)
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;

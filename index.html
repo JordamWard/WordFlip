@@ -3702,6 +3702,10 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       const { data, error } = await db.from('rooms')
         .select('id, code, created_at, is_public, players(name, turn_order)')
         .eq('status', 'waiting').eq('is_public', true)
+        // Only rooms created recently — abandoned rooms stay 'waiting' forever
+        // (a host only auto-closes their OWN stale rooms), so without this the
+        // lobby fills with dead rooms nobody is hosting anymore.
+        .gte('created_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false }).limit(20);
       if (error) { setPublicRooms([]); }
       else {
