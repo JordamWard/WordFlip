@@ -286,6 +286,7 @@ const SHOP_ITEMS = [
   { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the word you’re building.', price:100, invKey:'wf_inv_hint' },
   { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:80, invKey:'wf_inv_xray' },
   { key:'megahint', icon:'💥', name:'Mega Hint', desc:'Shakes every tile of one undiscovered word at once.', price:300, invKey:'wf_inv_megahint' },
+  { key:'undo', icon:'↩️', name:'Undo', desc:'Take back your last flipped tile — fix a mistap without ending your turn.', price:40, invKey:'wf_inv_undo' },
   { key:'freeze', icon:'🧊', name:'Streak Freeze', desc:'Miss a day and your streak survives — one freeze is spent per skipped day.', price:100, invKey:'wf_inv_freeze' },
 ];
 function getInv(invKey) {
@@ -361,6 +362,8 @@ async function syncInventoryFromServer(userId) {
       for (let i = 0; i < lx; i++) await db.rpc('buy_item', { p_item:'xray', p_price:0 });
       for (let i = 0; i < lf; i++) await db.rpc('buy_item', { p_item:'freeze', p_price:0 });
       for (let i = 0; i < lm; i++) await db.rpc('buy_item', { p_item:'megahint', p_price:0 });
+      // Undo import, best-effort — the column/RPC may not exist yet (section 17).
+      try { const lu = getInv('wf_inv_undo'); for (let i = 0; i < lu; i++) await db.rpc('buy_item', { p_item:'undo', p_price:0 }); } catch (e) {}
       return; // local cache already reflects the imported counts
     }
     try {
@@ -369,6 +372,12 @@ async function syncInventoryFromServer(userId) {
       localStorage.setItem('wf_inv_freeze', String(data.freezes || 0));
       localStorage.setItem('wf_inv_megahint', String(data.megahint || 0));
     } catch {}
+    // Undo is a separate query so a missing `undo` column can't break the sync
+    // above (feature stays dormant until section 17 runs).
+    try {
+      const { data: ud } = await db.from('inventories').select('undo').eq('user_id', userId).maybeSingle();
+      if (ud && ud.undo != null) localStorage.setItem('wf_inv_undo', String(ud.undo));
+    } catch (e) {}
   } catch (e) {}
 }
 
@@ -2206,6 +2215,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
   const [invHint, setInvHint] = useState(() => getInv('wf_inv_hint'));
   const [invXray, setInvXray] = useState(() => getInv('wf_inv_xray'));
   const [invMega, setInvMega] = useState(() => getInv('wf_inv_megahint'));
+  const [invUndo, setInvUndo] = useState(() => getInv('wf_inv_undo'));
   const [hintTileId, setHintTileId] = useState(null);   // single tile wiggling (Hint)
   const [megaHintIds, setMegaHintIds] = useState([]);   // whole-word tiles wiggling (Mega Hint)
   const [xrayArmed, setXrayArmed] = useState(false);    // next tap peeks instead of flips
@@ -2358,6 +2368,20 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
     setMegaHintIds(ids);
     setTimeout(() => setMegaHintIds([]), 1800);
+  }
+
+  // ↩️ Undo: take back your last flipped tile (fix a mistap). Doesn't reveal
+  // anything, so it doesn't count against the daily help limit.
+  function useUndo() {
+    if (getInv('wf_inv_undo') < 1) return;
+    if (processingRef.current || hasEndedRef.current) return;
+    const cur = flippedRef.current;
+    if (!cur.length) return;
+    const next = cur.slice(0, -1);
+    flippedRef.current = next;
+    setFlipped([...next]);
+    setInvUndo(addInv('wf_inv_undo', -1));
+    syncUseItem('undo'); // account-level consume (no-op for guests)
   }
 
   function handleTileClick(tile) {
@@ -2525,10 +2549,11 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
       {/* Power-up row — only shows when the player owns items (bought in the shop).
           Compact + fixed-ish height; the reveal reserves the same space so the
           board doesn't jump when play begins. */}
-      {(invHint>0||invXray>0||invMega>0||xrayArmed)&&(()=>{
+      {(invHint>0||invXray>0||invMega>0||invUndo>0||xrayArmed)&&(()=>{
         const hintOk = invHint>0 && helpsLeft>0;
         const xrayOk = invXray>0 && helpsLeft>0;
         const megaOk = invMega>0 && helpsLeft>0;
+        const undoOk = invUndo>0 && flipped.length>0 && flipped.length<4; // fix a mistap; not a "help"
         const chip = (extra) => ({padding:"4px 9px",fontSize:"0.68rem",borderRadius:9,...extra});
         return (
           <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",minHeight:28,marginBottom:6}}>
@@ -2544,6 +2569,12 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
               <button onClick={useMegaHint} disabled={!megaOk}
                 style={{...btnStyle(megaOk?"#2e1a0e":"var(--wf-surface)",megaOk?"var(--wf-accent2)":"#2a4060"),...chip({border:`1.5px solid ${megaOk?"#FFB70355":"var(--wf-border)"}`})}}>
                 💥 ×{invMega}
+              </button>
+            )}
+            {invUndo>0&&(
+              <button onClick={useUndo} disabled={!undoOk}
+                style={{...btnStyle(undoOk?"#0e2a3a":"var(--wf-surface)",undoOk?"var(--wf-accent)":"#2a4060"),...chip({border:`1.5px solid ${undoOk?"#00F5C455":"var(--wf-border)"}`})}}>
+                ↩️ ×{invUndo}
               </button>
             )}
             {isDaily&&(
