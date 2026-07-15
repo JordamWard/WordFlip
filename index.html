@@ -1329,6 +1329,31 @@ const THEMES = [
           green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
           yellow:{bg:'linear-gradient(135deg,#c9a800,#f0c94a)',border:'#f0c94a',text:'#2a2000'},
           face:{bg:'#e8dcf5',border:'#b49ccc',text:'#120826'}, error:{bg:'#ff6b6b',text:'#fff'} } },
+  // Shop themes matched to the coin-shop icon packs (buy the theme + its tiles).
+  { id:'firecracker', name:'Firecracker', price:750, bg:'linear-gradient(160deg,#1e0308 0%,#0f0206 100%)', title:'linear-gradient(90deg,#ffd23f,#ff3b5b)', swatch:['#1e0308','#ffd23f','#ff3b5b'],
+    pal:{ back:{bg:'linear-gradient(135deg,#3a0510,#1e0308)',border:'#7a0518',dot:'#5a1020'},
+          sel:{bg:'linear-gradient(135deg,#ff6b3d,#ff9f6b)',border:'#ff9f6b',text:'#2a0800'},
+          green:{bg:'linear-gradient(135deg,#22d3ee,#67e8f9)',border:'#67e8f9',text:'#042630'},
+          yellow:{bg:'linear-gradient(135deg,#ffd23f,#ffe680)',border:'#ffd23f',text:'#2a1c00'},
+          face:{bg:'#ffe4e0',border:'#e0a0a0',text:'#1e0308'}, error:{bg:'#ff2e5b',text:'#fff'} } },
+  { id:'electric', name:'Electric', price:700, bg:'linear-gradient(160deg,#050a2e 0%,#02051a 100%)', title:'linear-gradient(90deg,#4d7cff,#ff2a4a)', swatch:['#050a2e','#4d7cff','#ff2a4a'],
+    pal:{ back:{bg:'linear-gradient(135deg,#0a1240,#050a26)',border:'#1e3aaa',dot:'#1a2a70'},
+          sel:{bg:'linear-gradient(135deg,#4d7cff,#8aa8ff)',border:'#8aa8ff',text:'#04122a'},
+          green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#f0c020,#ffe066)',border:'#ffe066',text:'#2a2000'},
+          face:{bg:'#dce6ff',border:'#9cb0e0',text:'#050a26'}, error:{bg:'#ff2a4a',text:'#fff'} } },
+  { id:'ruby', name:'Ruby', price:500, bg:'linear-gradient(160deg,#2a0512 0%,#16030a 100%)', title:'linear-gradient(90deg,#ff5e8a,#ffb0c4)', swatch:['#2a0512','#ff5e8a','#ffb0c4'],
+    pal:{ back:{bg:'linear-gradient(135deg,#3a0a1a,#1e0510)',border:'#5a1028',dot:'#5a1028'},
+          sel:{bg:'linear-gradient(135deg,#ff8fab,#ffc0d0)',border:'#ff8fab',text:'#2a0512'},
+          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#f0c020,#ffe066)',border:'#ffe066',text:'#2a2000'},
+          face:{bg:'#ffdce6',border:'#d0a0b0',text:'#16030a'}, error:{bg:'#ff2e5b',text:'#fff'} } },
+  { id:'galaxy', name:'Galaxy', price:550, bg:'linear-gradient(160deg,#08081e 0%,#040410 100%)', title:'linear-gradient(90deg,#7dd3fc,#c4a2ff)', swatch:['#08081e','#7dd3fc','#c4a2ff'],
+    pal:{ back:{bg:'linear-gradient(135deg,#0a0a24,#050512)',border:'#1c1c40',dot:'#1c1c40'},
+          sel:{bg:'linear-gradient(135deg,#c4a2ff,#ddc9ff)',border:'#c4a2ff',text:'#12082a'},
+          green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#e0b020,#ffd75e)',border:'#ffd75e',text:'#2a1c00'},
+          face:{bg:'#dfe4f5',border:'#a0a8cc',text:'#040410'}, error:{bg:'#ff6b6b',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
 
@@ -1350,6 +1375,10 @@ const THEME_CHROME = {
   aurora:    { top:'#04130f', surface:'#08150f', border:'#1c4038', accent:'#5eead4', accent2:'#a78bfa', textDim:'#7fb3a6', textMute:'#4a7368' },
   crimson:   { top:'#1c0608', surface:'#160508', border:'#4a1c28', accent:'#ff7a92', accent2:'#ffb37a', textDim:'#c497a0', textMute:'#7a5560' },
   royal:     { top:'#160a2e', surface:'#120826', border:'#33205a', accent:'#c4a2ff', accent2:'#ffd75e', textDim:'#a595c4', textMute:'#5f5080' },
+  firecracker:{ top:'#1e0308', surface:'#1e0510', border:'#5a1020', accent:'#ffd23f', accent2:'#ff5e7a', textDim:'#c497a0', textMute:'#7a5560' },
+  electric:  { top:'#050a2e', surface:'#08102e', border:'#1e3aaa', accent:'#5b86ff', accent2:'#ff5e6e', textDim:'#8fa0d8', textMute:'#4d5d90' },
+  ruby:      { top:'#2a0512', surface:'#1e0510', border:'#5a1830', accent:'#ff7aa0', accent2:'#ffb0c4', textDim:'#c898a8', textMute:'#7a5060' },
+  galaxy:    { top:'#08081e', surface:'#0a0a20', border:'#242452', accent:'#8fd0fc', accent2:'#c4a2ff', textDim:'#9098c4', textMute:'#4d5080' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
