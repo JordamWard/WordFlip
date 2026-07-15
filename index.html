@@ -283,9 +283,9 @@ async function grantEarnedTokens(userId) {
 // consumable counts (purchases deduct server-side via the spend_tokens RPC,
 // so the wallet stays the single source of truth).
 const SHOP_ITEMS = [
-  { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the word you’re building.', price:50, invKey:'wf_inv_hint' },
-  { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:40, invKey:'wf_inv_xray' },
-  { key:'megahint', icon:'💥', name:'Mega Hint', desc:'Shakes every tile of one undiscovered word at once.', price:80, invKey:'wf_inv_megahint' },
+  { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the word you’re building.', price:100, invKey:'wf_inv_hint' },
+  { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:80, invKey:'wf_inv_xray' },
+  { key:'megahint', icon:'💥', name:'Mega Hint', desc:'Shakes every tile of one undiscovered word at once.', price:300, invKey:'wf_inv_megahint' },
   { key:'freeze', icon:'🧊', name:'Streak Freeze', desc:'Miss a day and your streak survives — one freeze is spent per skipped day.', price:100, invKey:'wf_inv_freeze' },
 ];
 function getInv(invKey) {
