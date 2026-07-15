@@ -1451,34 +1451,77 @@ async function addCareerRemote(amount) {
 // Each entry unlocks a theme or tile back once your career total reaches
 // `points`. Themes are immediately followed by their matching back. Thresholds
 // are tunable placeholders.
+// Each entry unlocks a theme, tile back, OR a batch of power-ups at a career
+// total. Every entry has a unique `id` (identity for React keys / seen / claim);
+// themes/backs carry a `key` (the cosmetic id), power-ups carry `item`+`amount`.
 const REWARD_LADDER = [
-  { points:3000,   type:'theme', key:'midnight'  },
-  { points:6000,   type:'back',  key:'starlight' }, // matches Midnight
-  { points:12000,  type:'theme', key:'forest'    },
-  { points:18000,  type:'back',  key:'canopy'    }, // matches Forest
-  { points:27000,  type:'theme', key:'ocean'     },
-  { points:36000,  type:'back',  key:'tide'      }, // matches Ocean
-  { points:50000,  type:'theme', key:'sunset'    },
-  { points:65000,  type:'back',  key:'afterglow' }, // matches Sunset
-  { points:85000,  type:'theme', key:'bubblegum' },
-  { points:110000, type:'back',  key:'blossom'   }, // matches Bubblegum
-  { points:140000, type:'theme', key:'aurora'    },
-  { points:170000, type:'back',  key:'aurora'    }, // matches Aurora
-  { points:210000, type:'theme', key:'crimson'   },
-  { points:250000, type:'back',  key:'crimson'   }, // matches Crimson
-  { points:300000, type:'theme', key:'royal'     },
-  { points:360000, type:'back',  key:'royal'     }, // matches Royal
+  { id:'t-midnight',  points:3000,   type:'theme',   key:'midnight'  },
+  { id:'p-hint1',     points:4500,   type:'powerup', item:'hint',     amount:2 },
+  { id:'b-starlight', points:6000,   type:'back',    key:'starlight' }, // matches Midnight
+  { id:'t-forest',    points:12000,  type:'theme',   key:'forest'    },
+  { id:'p-xray1',     points:15000,  type:'powerup', item:'xray',     amount:2 },
+  { id:'b-canopy',    points:18000,  type:'back',    key:'canopy'    }, // matches Forest
+  { id:'t-ocean',     points:27000,  type:'theme',   key:'ocean'     },
+  { id:'p-hint2',     points:32000,  type:'powerup', item:'hint',     amount:3 },
+  { id:'b-tide',      points:36000,  type:'back',    key:'tide'      }, // matches Ocean
+  { id:'t-sunset',    points:50000,  type:'theme',   key:'sunset'    },
+  { id:'p-mega1',     points:58000,  type:'powerup', item:'megahint', amount:1 },
+  { id:'b-afterglow', points:65000,  type:'back',    key:'afterglow' }, // matches Sunset
+  { id:'t-bubblegum', points:85000,  type:'theme',   key:'bubblegum' },
+  { id:'p-xray2',     points:97000,  type:'powerup', item:'xray',     amount:3 },
+  { id:'b-blossom',   points:110000, type:'back',    key:'blossom'   }, // matches Bubblegum
+  { id:'t-aurora',    points:140000, type:'theme',   key:'aurora'    },
+  { id:'b-aurora',    points:170000, type:'back',    key:'aurora'    }, // matches Aurora
+  { id:'p-hint3',     points:195000, type:'powerup', item:'hint',     amount:3 },
+  { id:'t-crimson',   points:210000, type:'theme',   key:'crimson'   },
+  { id:'b-crimson',   points:250000, type:'back',    key:'crimson'   }, // matches Crimson
+  { id:'p-mega2',     points:280000, type:'powerup', item:'megahint', amount:2 },
+  { id:'t-royal',     points:300000, type:'theme',   key:'royal'     },
+  { id:'b-royal',     points:360000, type:'back',    key:'royal'     }, // matches Royal
 ];
 // Cosmetics that are reward-only (earned by playing, NOT buyable in the shop).
 const REWARD_THEME_IDS = new Set(REWARD_LADDER.filter(r=>r.type==='theme').map(r=>r.key));
 const REWARD_BACK_IDS  = new Set(REWARD_LADDER.filter(r=>r.type==='back').map(r=>r.key));
-// "Seen" tracking so the menu button can glow and freshly-earned rewards can
-// pop when you open the Rewards screen after unlocking them.
-function unlockedRewardKeys(career) { return REWARD_LADDER.filter(r => career >= r.points).map(r => r.key); }
+// Which milestone IDs are reached at a given career total (for seen/glow).
+function unlockedRewardIds(career) { return REWARD_LADDER.filter(r => career >= r.points).map(r => r.id); }
+// Which reward-only cosmetic KEYS are unlocked (for the inventory owned-check).
+function unlockedRewardCosmeticKeys(career) { return REWARD_LADDER.filter(r => career >= r.points && (r.type==='theme'||r.type==='back')).map(r => r.key); }
 function getSeenRewards() { try { return new Set(JSON.parse(localStorage.getItem('wf_rewards_seen')||'[]')); } catch (e) { return new Set(); } }
-function markRewardsSeen(keys) { try { const s = getSeenRewards(); keys.forEach(k=>s.add(k)); localStorage.setItem('wf_rewards_seen', JSON.stringify([...s])); } catch (e) {} }
-function newRewardKeys(career) { const seen = getSeenRewards(); return unlockedRewardKeys(career).filter(k => !seen.has(k)); }
-function rewardsHasNew(career) { return newRewardKeys(career).length > 0; }
+function markRewardsSeen(ids) { try { const s = getSeenRewards(); ids.forEach(k=>s.add(k)); localStorage.setItem('wf_rewards_seen', JSON.stringify([...s])); } catch (e) {} }
+function newRewardIds(career) { const seen = getSeenRewards(); return unlockedRewardIds(career).filter(id => !seen.has(id)); }
+function rewardsHasNew(career) { return newRewardIds(career).length > 0; }
+
+// ─── Power-up rewards: grant the consumables from the ladder, once each ───────
+// Guarded by a local "claimed" set; signed-in grants go to the account via
+// buy_item(price 0) so they survive the account sync. hint/xray/megahint only.
+function getClaimedRewards() { try { return new Set(JSON.parse(localStorage.getItem('wf_rewards_claimed')||'[]')); } catch (e) { return new Set(); } }
+function markRewardClaimed(id) { try { const s = getClaimedRewards(); s.add(id); localStorage.setItem('wf_rewards_claimed', JSON.stringify([...s])); } catch (e) {} }
+function unmarkRewardClaimed(id) { try { const s = getClaimedRewards(); s.delete(id); localStorage.setItem('wf_rewards_claimed', JSON.stringify([...s])); } catch (e) {} }
+async function claimPowerupReward(entry, signedIn) {
+  if (getClaimedRewards().has(entry.id)) return;
+  const it = SHOP_ITEMS.find(s => s.key === entry.item);
+  if (!it) return;
+  markRewardClaimed(entry.id); // optimistic guard against a double-fire this session
+  if (signedIn) {
+    try {
+      await ensureFreshSession();
+      const db = getSB();
+      let last = getInv(it.invKey);
+      for (let i = 0; i < entry.amount; i++) {
+        const { data, error } = await db.rpc('buy_item', { p_item: entry.item, p_price: 0 });
+        if (error) throw error;
+        if (data != null) last = data;
+      }
+      try { localStorage.setItem(it.invKey, String(last)); } catch (e) {}
+    } catch (e) { unmarkRewardClaimed(entry.id); } // failed → allow a retry later
+  } else {
+    addInv(it.invKey, entry.amount); // guests earn locally; imported to the account on sign-up
+  }
+}
+// Grant every power-up reward the player has earned but not yet claimed.
+function claimEarnedPowerups(signedIn, career) {
+  REWARD_LADDER.forEach(r => { if (r.type === 'powerup' && career >= r.points) claimPowerupReward(r, signedIn); });
+}
 
 // Redeem a promo code. The code and its value live SERVER-SIDE (redeem_code
 // RPC + promo_codes table), so valid codes aren't discoverable in the client.
@@ -4965,6 +5008,14 @@ function AchievementToast({ ids }) {
 
 // A small preview of a reward cosmetic — a theme swatch or a tile-back mini.
 function RewardPreview({ entry, size = 44 }) {
+  if (entry.type === 'powerup') {
+    const it = SHOP_ITEMS.find(s => s.key === entry.item);
+    return (
+      <div style={{width:size, height:size, borderRadius:10, flexShrink:0, background:'linear-gradient(135deg,#1a1030,#0e2a3a)', border:'1.5px solid var(--wf-border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:size*0.5}}>
+        {it?.icon || '⚡'}
+      </div>
+    );
+  }
   if (entry.type === 'theme') {
     const t = themeById(entry.key);
     return (
@@ -4994,9 +5045,11 @@ function RewardToast({ entries }) {
     <div style={{position:"fixed",top:"calc(12px + env(safe-area-inset-top))",left:"50%",transform:"translateX(-50%)",zIndex:99,
       display:"flex",flexDirection:"column",gap:8,width:"min(340px,92vw)"}}>
       {entries.map((e, i) => {
-        const name = e.type==='theme' ? themeById(e.key).name : tileBackById(e.key).name;
+        const puItem = e.type==='powerup' ? SHOP_ITEMS.find(s=>s.key===e.item) : null;
+        const label = e.type==='powerup' ? `×${e.amount} ${puItem?.name || e.item}`
+          : `${(e.type==='theme' ? themeById(e.key).name : tileBackById(e.key).name)} ${e.type==='theme'?'theme':'tile back'}`;
         return (
-          <div key={e.key} style={{
+          <div key={e.id} style={{
             display:"flex",alignItems:"center",gap:12,
             background:"linear-gradient(135deg,#1a1230,#0a1520)",
             border:"1.5px solid var(--wf-accent2)",borderRadius:12,padding:"10px 14px",
@@ -5006,7 +5059,7 @@ function RewardToast({ entries }) {
             <RewardPreview entry={e} size={40} />
             <div style={{textAlign:"left",flex:1}}>
               <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.6rem",fontWeight:700,letterSpacing:"0.1em"}}>🎁 REWARD UNLOCKED</div>
-              <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{name} {e.type==='theme'?'theme':'tile back'}</div>
+              <div style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontWeight:700,fontSize:"0.95rem"}}>{label}</div>
             </div>
           </div>
         );
@@ -5021,9 +5074,9 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
   const unlockedCount = nextIdx === -1 ? REWARD_LADDER.length : nextIdx;
   // Capture which rewards are freshly unlocked (earned but not yet seen) so we
   // can pop them in celebration — captured once at mount, before we mark seen.
-  const [freshKeys] = useState(()=> new Set(newRewardKeys(career)));
-  const freshOrder = REWARD_LADDER.filter(r => freshKeys.has(r.key)).map(r => r.key);
-  useEffect(()=>{ markRewardsSeen(unlockedRewardKeys(career)); }, []); // clear the "new" glow
+  const [freshKeys] = useState(()=> new Set(newRewardIds(career)));
+  const freshOrder = REWARD_LADDER.filter(r => freshKeys.has(r.id)).map(r => r.id);
+  useEffect(()=>{ markRewardsSeen(unlockedRewardIds(career)); }, []); // clear the "new" glow
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
@@ -5031,7 +5084,7 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
         <div style={{fontSize:"2.2rem"}}>🎁</div>
         <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.6rem",margin:"4px 0 4px"}}>Rewards</h2>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0,lineHeight:1.5}}>
-          Earn themes &amp; tile backs just by playing — every point you score counts.
+          Earn themes, tile backs &amp; power-ups just by playing — every point you score counts.
         </p>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.9rem",fontWeight:800,margin:"10px 0 0"}}>
           {career.toLocaleString()} career points
@@ -5043,19 +5096,23 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
       {REWARD_LADDER.map((entry, idx) => {
         const unlocked = career >= entry.points;
         const isNext = idx === nextIdx;
-        const name = entry.type==='theme' ? themeById(entry.key).name : tileBackById(entry.key).name;
-        const active = entry.type==='theme' ? activeThemeId===entry.key : activeTileBackId===entry.key;
+        const isPU = entry.type === 'powerup';
+        const puItem = isPU ? SHOP_ITEMS.find(s=>s.key===entry.item) : null;
+        const name = isPU ? `×${entry.amount} ${puItem?.name || entry.item}`
+          : entry.type==='theme' ? themeById(entry.key).name : tileBackById(entry.key).name;
+        const typeLabel = isPU ? 'POWER-UP' : entry.type==='theme' ? 'THEME' : 'TILE BACK';
+        const active = !isPU && (entry.type==='theme' ? activeThemeId===entry.key : activeTileBackId===entry.key);
         // Progress fills from the PREVIOUS milestone to this one (not from zero),
         // so finishing one reward doesn't leave the next looking ¾ done.
         const prevPoints = idx > 0 ? REWARD_LADDER[idx-1].points : 0;
         const pct = Math.max(0, Math.min(100, Math.round((career - prevPoints) / (entry.points - prevPoints) * 100)));
-        const fresh = freshKeys.has(entry.key);
+        const fresh = freshKeys.has(entry.id);
         return (
-          <div key={entry.key} style={{
+          <div key={entry.id} style={{
             background:'var(--wf-surface)',
             border:`1.5px solid ${fresh?'var(--wf-accent2)':active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
             borderRadius:14, padding:'12px 14px', marginBottom:12, opacity: unlocked||isNext ? 1 : 0.55,
-            animation: fresh ? `rewardPop 0.85s ease ${0.25 + freshOrder.indexOf(entry.key)*0.18}s both` : 'none',
+            animation: fresh ? `rewardPop 0.85s ease ${0.25 + Math.max(0,freshOrder.indexOf(entry.id))*0.18}s both` : 'none',
           }}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               <div style={{filter: unlocked ? 'none' : 'grayscale(0.7)', position:'relative'}}>
@@ -5064,14 +5121,18 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
               </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <div style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.0rem'}}>
-                  {name} <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-text-mute)',fontSize:'0.6rem',fontWeight:400}}>{entry.type==='theme'?'THEME':'TILE BACK'}</span>
+                  {name} <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-text-mute)',fontSize:'0.6rem',fontWeight:400}}>{typeLabel}</span>
                   {fresh && <span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-accent2)',fontSize:'0.58rem',fontWeight:800,marginLeft:6,letterSpacing:'0.08em'}}>✨ NEW</span>}
                 </div>
                 <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.68rem', marginTop:2}}>
                   {entry.points.toLocaleString()} pts
                 </div>
               </div>
-              {active ? (
+              {isPU ? (
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', fontWeight:700, color: unlocked?'var(--wf-accent)':'var(--wf-text-mute)', padding:'8px 10px', flexShrink:0}}>
+                  {unlocked ? '✓ Earned' : `${Math.max(0,entry.points-career).toLocaleString()} to go`}
+                </span>
+              ) : active ? (
                 <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
               ) : unlocked ? (
                 <button onClick={() => entry.type==='theme' ? onApplyTheme(entry.key) : onApplyTileBack(entry.key)}
@@ -5098,12 +5159,16 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
 // ─── Inventory Screen — everything you've unlocked or bought ──────────────────
 // Three tabs (Power-ups / Themes / Tile Backs); opens on Power-ups.
 function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes, ownedTileBacks, career, onApplyTheme, onApplyTileBack, onShop }) {
-  const rewardSet = new Set(unlockedRewardKeys(career));
+  const rewardSet = new Set(unlockedRewardCosmeticKeys(career));
   const myThemes = THEMES.filter(t => FREE_THEMES.includes(t.id) || ownedThemes.has(t.id) || (REWARD_THEME_IDS.has(t.id) && rewardSet.has(t.id)));
   const myBacks  = TILE_BACKS.filter(t => FREE_TILEBACKS.includes(t.id) || ownedTileBacks.has(t.id) || (REWARD_BACK_IDS.has(t.id) && rewardSet.has(t.id)));
   const powerups = SHOP_ITEMS.map(it => ({ ...it, count: getInv(it.invKey) }));
   const [tab, setTab] = useState('powerups');
   const [preview, setPreview] = useState(null); // { themeId, backId } combo preview
+  const [puOpen, setPuOpen] = useState(null);   // which power-up's blurb is expanded
+  const previewHint = (
+    <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', margin:'0 0 12px', textAlign:'center'}}>Tap an icon to preview it against your setup.</p>
+  );
   const TABS = [
     { id:'powerups', icon:'⚡', label:'Power-ups' },
     { id:'themes',   icon:'🎨', label:'Themes' },
@@ -5141,24 +5206,33 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
         })}
       </div>
 
-      {/* Power-ups */}
+      {/* Power-ups — tap one to see what it does */}
       {tab==='powerups' && (
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-          {powerups.map(p => (
-            <div key={p.key} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, opacity:p.count>0?1:0.55}}>
-              <span style={{fontSize:'1.4rem', flexShrink:0}}>{p.icon}</span>
-              <div style={{flex:1, textAlign:'left', minWidth:0}}>
-                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{p.name}</div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace", color:p.count>0?'var(--wf-accent)':'var(--wf-text-mute)', fontSize:'0.68rem'}}>{p.count>0?`×${p.count} owned`:'none'}</div>
+        <div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', margin:'0 0 12px', textAlign:'center'}}>Tap a power-up to see what it does.</p>
+          {powerups.map(p => {
+            const open = puOpen === p.key;
+            return (
+              <div key={p.key} onClick={()=>setPuOpen(o=>o===p.key?null:p.key)} style={{background:'var(--wf-surface)', border:`1.5px solid ${open?'var(--wf-accent2)':'var(--wf-border)'}`, borderRadius:12, padding:'12px 14px', marginBottom:8, cursor:'pointer', opacity:p.count>0?1:0.6}}>
+                <div style={{display:'flex', alignItems:'center', gap:12}}>
+                  <span style={{fontSize:'1.5rem', flexShrink:0}}>{p.icon}</span>
+                  <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.85rem', fontWeight:700}}>{p.name}</div>
+                    <div style={{fontFamily:"'JetBrains Mono',monospace", color:p.count>0?'var(--wf-accent)':'var(--wf-text-mute)', fontSize:'0.7rem'}}>{p.count>0?`×${p.count} owned`:'none owned'}</div>
+                  </div>
+                  <span style={{color:'var(--wf-text-dim)', fontSize:'0.85rem', display:'inline-block', transform: open?'rotate(90deg)':'none', transition:'transform 0.2s'}}>▸</span>
+                </div>
+                {open && <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.72rem', margin:'10px 0 0', lineHeight:1.55}}>{p.desc}</p>}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* Themes */}
       {tab==='themes' && (
         <div>
+          {previewHint}
           {myThemes.map(t => {
             const active = activeThemeId === t.id;
             return (
@@ -5167,9 +5241,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
                   <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
-                  </div>
-                  <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
-                </div>
+                  </div>                </div>
                 <div style={{flex:1, textAlign:'left'}}>
                   <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
                 </div>
@@ -5185,6 +5257,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
       {/* Tile backs */}
       {tab==='backs' && (
         <div>
+          {previewHint}
           {myBacks.map(t => {
             const active = activeTileBackId === t.id;
             const prev = tileBackPreview(t);
@@ -5193,9 +5266,7 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
                 <div onClick={()=>setPreview({themeId:activeThemeId, backId:t.id})} title="Tap to preview" style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', position:'relative', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
                   backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
                   backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
-                  <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
-                  <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
-                </div>
+                  <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>                </div>
                 <div style={{flex:1, textAlign:'left'}}>
                   <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
                 </div>
@@ -5599,9 +5670,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
                 <div style={{position:'absolute', bottom:5, left:5, display:'flex', gap:3}}>
                   <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
                   <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
-                </div>
-                <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
-              </div>
+                </div>              </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
                 {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'var(--wf-text-mute)', marginLeft:8}}>owned</span>}
@@ -5627,7 +5696,8 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
       })}
 
       {/* ── Tile Backs ── */}
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>TILE BACKS</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 4px', letterSpacing:'0.08em'}}>TILE BACKS</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.62rem', margin:'0 0 10px'}}>Tap a swatch to preview it against your theme.</p>
       {TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id)).map(t => {
         const owned = ownedTileBacks.has(t.id);
         const active = activeTileBackId === t.id;
@@ -5642,9 +5712,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
                 display:'flex', alignItems:'center', justifyContent:'center',
                 backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
                 backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
-                <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>
-                <span style={{position:'absolute', top:2, right:3, fontSize:'0.6rem', opacity:0.75}}>🔍</span>
-              </div>
+                <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>              </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
                 {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'var(--wf-text-mute)', marginLeft:8}}>owned</span>}
@@ -5777,6 +5845,9 @@ function WordFlip() {
   // Does the Rewards button deserve a glow? (Unlocked-but-unseen rewards exist.)
   // Recomputed each render; opening the Rewards screen marks them seen.
   const rewardsNew = rewardsHasNew(career);
+  // Grant any power-up rewards earned but not yet claimed (mount, after each
+  // game via the career change, and on sign-in). Idempotent via the claimed set.
+  useEffect(() => { claimEarnedPowerups(!!session?.user, career); }, [career, session?.user?.id]);
   // Cosmetic theme (accent + background). Selection is local; ownership is
   // account-level (derived from token_transactions).
   const [activeThemeId,setActiveThemeIdState] = useState(()=>getActiveThemeId());
