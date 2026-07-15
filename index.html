@@ -2926,7 +2926,7 @@ function btnStyle(bg,color) {
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
 function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
-  const [tab, setTab] = useState("personal");
+  const [tab, setTab] = useState("global"); // global leaderboard first, then personal
   const [globalTab, setGlobalTab] = useState("daily");
   const [leaderboard, setLeaderboard] = useState([]);
   const [lbLoading, setLbLoading] = useState(false);
@@ -3007,15 +3007,8 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
     <div style={{maxWidth:440,margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
 
-      {/* Tab row */}
+      {/* Tab row — global leaderboard first, then personal scores */}
       <div style={{display:"flex",gap:8,marginBottom:16}}>
-        <button onClick={()=>setTab("personal")} style={{
-          flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
-          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
-          background: tab==="personal" ? "var(--wf-accent)" : "var(--wf-surface)",
-          color: tab==="personal" ? "#0a2e24" : "var(--wf-text-mute)",
-          transition:"all 0.15s",
-        }}>🏅 My Scores</button>
         <button onClick={()=>setTab("global")} style={{
           flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
           fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
@@ -3023,6 +3016,13 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
           color: tab==="global" ? "#fff" : "var(--wf-text-mute)",
           transition:"all 0.15s",
         }}>🌍 Global</button>
+        <button onClick={()=>setTab("personal")} style={{
+          flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+          background: tab==="personal" ? "var(--wf-accent)" : "var(--wf-surface)",
+          color: tab==="personal" ? "#0a2e24" : "var(--wf-text-mute)",
+          transition:"all 0.15s",
+        }}>🏅 My Scores</button>
       </div>
 
       {tab === "personal" && (<>
@@ -6212,35 +6212,33 @@ function WordFlip() {
                 <button onClick={()=>openAuth("signin")} style={{...btnStyle("#162030","#F5EDD6"),flex:1,padding:"12px",fontSize:"0.9rem",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>Sign In</button>
               </div>
             )}
-            <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-              <button onClick={()=>setScreen("leaderboard")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-                🏆 Scores {getPersonalBest()>0?`· ${getPersonalBest().toLocaleString()}`:""}
-              </button>
-              <button onClick={()=>setScreen("achievements")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-                🏅 Achievements
-              </button>
-              <button onClick={()=>setScreen("rewards")} style={{
-                ...btnStyle("transparent", rewardsNew?"var(--wf-accent)":"var(--wf-text-dim)"),
-                padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline",
-                fontWeight: rewardsNew?800:700,
-                animation: rewardsNew?"shopPulse 1.5s ease-in-out infinite":"none",
-              }}>
-                🎁 Rewards{rewardsNew?" ✨":""}
-              </button>
-              <button onClick={()=>setScreen("inventory")} style={{...btnStyle("transparent","var(--wf-text-dim)"),padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline"}}>
-                🎒 Inventory
-              </button>
-              {session && (
-                <button onClick={()=>setScreen("shop")} style={{
-                  ...btnStyle("transparent", shopHasNew()?"var(--wf-accent)":"var(--wf-text-dim)"),
-                  padding:"10px 16px",fontSize:"0.85rem",border:"none",textDecoration:"underline",
-                  fontWeight: shopHasNew()?800:700,
-                  animation: shopHasNew()?"shopPulse 1.5s ease-in-out infinite":"none",
+            {/* Secondary destinations — icon cards: bigger tap targets than the
+                old underlined text, but visually lighter than the play buttons
+                above so "play" stays the clear priority. */}
+            {(() => {
+              const metaBtn = (screen, icon, label, opts={}) => (
+                <button key={screen} onClick={()=>setScreen(screen)} style={{
+                  display:"flex", flexDirection: opts.wide?"row":"column", alignItems:"center", justifyContent:"center", gap: opts.wide?8:3,
+                  background:"var(--wf-surface)", borderRadius:14, cursor:"pointer", padding:"13px 6px",
+                  border:`1.5px solid ${opts.glow?"var(--wf-accent)":"var(--wf-border)"}`,
+                  animation: opts.glow?"shopPulse 1.5s ease-in-out infinite":"none",
+                  gridColumn: opts.wide?"1 / -1":"auto",
                 }}>
-                  🛍️ Shop{shopHasNew()?" ✨":""}
+                  <span style={{fontSize:"1.5rem",lineHeight:1}}>{icon}</span>
+                  <span style={{fontFamily:"'JetBrains Mono',monospace", color:opts.glow?"var(--wf-accent)":"var(--wf-text-dim)", fontSize:"0.76rem", fontWeight:700}}>{label}{opts.glow?" ✨":""}</span>
+                  {opts.sub && <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.6rem"}}>{opts.sub}</span>}
                 </button>
-              )}
-            </div>
+              );
+              return (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {metaBtn("leaderboard","🏆","Leaderboard",{sub:getPersonalBest()>0?`best ${getPersonalBest().toLocaleString()}`:null})}
+                  {metaBtn("achievements","🏅","Achievements")}
+                  {metaBtn("rewards","🎁","Rewards",{glow:rewardsNew})}
+                  {metaBtn("inventory","🎒","Inventory")}
+                  {session && metaBtn("shop","🛍️","Shop",{glow:shopHasNew(), wide:true})}
+                </div>
+              );
+            })()}
           </div>
           <div style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
