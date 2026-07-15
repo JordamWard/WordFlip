@@ -649,3 +649,39 @@ BEGIN
   RETURN v_count;
 END;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 18. ADD_TOKENS (recorded from the live DB — predates this file). The core
+--     earning RPC: every client-side coin grant goes through it. Idempotent per
+--     (user_id, reason) so repeated grants (e.g. 'daily-<date>' retried on each
+--     sign-in) can never double-credit; returns the wallet balance either way.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.add_tokens(p_amount integer, p_reason text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user uuid := auth.uid();
+  v_rows int;
+  v_balance int;
+BEGIN
+  IF v_user IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  INSERT INTO token_transactions (user_id, amount, reason)
+  VALUES (v_user, p_amount, p_reason)
+  ON CONFLICT (user_id, reason) DO NOTHING;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  IF v_rows = 0 THEN
+    SELECT COALESCE(balance, 0) INTO v_balance FROM wallets WHERE user_id = v_user;
+    RETURN COALESCE(v_balance, 0);
+  END IF;
+
+  INSERT INTO wallets (user_id, balance, updated_at)
+  VALUES (v_user, p_amount, now())
+  ON CONFLICT (user_id) DO UPDATE
+    SET balance = wallets.balance + p_amount, updated_at = now()
+  RETURNING balance INTO v_balance;
+
+  RETURN v_balance;
+END;
+$$;
