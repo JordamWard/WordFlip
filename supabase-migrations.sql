@@ -537,3 +537,12 @@ ALTER TABLE public.daily_scores
 
 ALTER TABLE public.rooms
   ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAULT false;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 16. MULTIPLAYER POWER-UPS: store the host's per-room power-up rules so guests
+--     honor the same config. { hint: bool, xray: bool, perTurn: int }. Mega Hint
+--     is never offered in multiplayer. (Local pass-and-play needs no DB.)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE public.rooms
+  ADD COLUMN IF NOT EXISTS settings jsonb NOT NULL DEFAULT '{}'::jsonb;

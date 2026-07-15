@@ -3136,6 +3136,74 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
 }
 
 // ─── Local Multiplayer ────────────────────────────────────────────────────────
+// ─── Multiplayer power-ups (free & equal; host-configured, no Mega Hint) ──────
+const MP_PU_DEFAULT = { hint:true, xray:false, perTurn:1 };
+function normMpPU(s) {
+  if (!s || typeof s !== 'object') return { hint:false, xray:false, perTurn:0 };
+  return { hint: !!s.hint, xray: !!s.xray, perTurn: Math.max(0, Math.min(2, parseInt(s.perTurn || 0, 10) || 0)) };
+}
+function mpPUEnabled(s) { const n = normMpPU(s); return (n.hint || n.xray) && n.perTurn > 0; }
+// Which face-down tile to wiggle for a Hint. Tile ids are `${wordIndex}-${letterIndex}`.
+// Mirrors the daily/solo hint: infer the word being built from the flipped tiles,
+// then point at that word's next missing letter (or the first unsolved word's
+// first letter when nothing's flipped yet).
+function pickHintTileId(words, foundIdxSet, flippedNow, tiles) {
+  const unfound = words.map((_, i) => i).filter(i => !foundIdxSet.has(i));
+  if (!unfound.length) return null;
+  if (!flippedNow.length) return `${unfound[0]}-0`;
+  const flippedLetters = flippedNow.map(id => tiles.find(t => t.id === id)?.letter).filter(Boolean);
+  const containsSelection = (word) => {
+    const pool = {}; flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
+    let unmatched = flippedLetters.length;
+    [...word].forEach(l => { if (pool[l] > 0) { pool[l]--; unmatched--; } });
+    return unmatched === 0;
+  };
+  const targetWi = unfound.find(i => containsSelection(words[i])) ?? unfound[0];
+  const word = words[targetWi];
+  const pool = {}; flippedLetters.forEach(l => { pool[l] = (pool[l] || 0) + 1; });
+  let hintPos = -1;
+  for (let p = 0; p < word.length; p++) { if (pool[word[p]] > 0) pool[word[p]]--; else { hintPos = p; break; } }
+  if (hintPos === -1) return null;
+  for (let q = 0; q < word.length; q++) { if (word[q] === word[hintPos] && !flippedNow.includes(`${targetWi}-${q}`)) return `${targetWi}-${q}`; }
+  return null;
+}
+// Host config block (used in local setup + online create).
+function MpPowerupConfig({ value, onChange }) {
+  const s = value;
+  const chip = (on, label, onClick) => (
+    <button onClick={onClick} style={{...btnStyle(on?'var(--wf-accent2)':'var(--wf-border)', on?'#0D1B2A':'var(--wf-text-dim)'), padding:'7px 12px', fontSize:'0.76rem'}}>{label}</button>
+  );
+  return (
+    <div style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'12px 14px', marginBottom:16, textAlign:'left'}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', letterSpacing:'0.08em', margin:'0 0 4px'}}>POWER-UPS · free &amp; equal for everyone</p>
+      <div style={{display:'flex', gap:8, margin:'10px 0', flexWrap:'wrap'}}>
+        {chip(s.hint, '💡 Hint', ()=>onChange({...s, hint:!s.hint}))}
+        {chip(s.xray, '🔍 X-ray', ()=>onChange({...s, xray:!s.xray}))}
+      </div>
+      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.72rem'}}>Per turn:</span>
+        {chip(s.perTurn===0, 'Off', ()=>onChange({...s, perTurn:0}))}
+        {[1,2].map(n => <React.Fragment key={n}>{chip(s.perTurn===n, String(n), ()=>onChange({...s, perTurn:n}))}</React.Fragment>)}
+      </div>
+    </div>
+  );
+}
+// In-game bar (used in both multiplayer boards). `active` = it's this device's/player's turn.
+function MpPowerupBar({ settings, usedThisTurn, xrayArmed, onHint, onXrayToggle, active }) {
+  const s = normMpPU(settings);
+  if (!mpPUEnabled(s)) return null;
+  const left = Math.max(0, s.perTurn - usedThisTurn);
+  const canUse = active && left > 0;
+  const cbtn = (on, ok) => ({...btnStyle(on?'#2a1a3e':ok?'#0e2a3a':'var(--wf-surface)', on?'#9B5DE5':ok?'var(--wf-accent)':'#2a4060'), padding:'6px 12px', fontSize:'0.76rem', border:`1.5px solid ${on?'#9B5DE5':ok?'#00F5C455':'var(--wf-border)'}`, opacity:(ok||on)?1:0.55});
+  return (
+    <div style={{display:'flex', gap:6, justifyContent:'center', margin:'0 0 8px', flexWrap:'wrap', alignItems:'center'}}>
+      {s.hint && <button onClick={onHint} disabled={!canUse} style={cbtn(false, canUse)}>💡 Hint</button>}
+      {s.xray && <button onClick={onXrayToggle} disabled={!canUse && !xrayArmed} style={cbtn(xrayArmed, canUse)}>{xrayArmed?'🔍 tap a tile…':'🔍 X-ray'}</button>}
+      <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.64rem'}}>{active ? `${left} left this turn` : "opponent's turn"}</span>
+    </div>
+  );
+}
+
 function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
   const [playerCount,setPlayerCount] = useState(2);
   const [started,setStarted] = useState(false);
@@ -3153,6 +3221,11 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
   const [foundTileIdsMulti,setFoundTileIdsMulti] = useState(new Set());
   const multiProcessingRef = React.useRef(false);
   const multiFlippedRef = React.useRef([]);
+  const [mpPU,setMpPU] = useState(MP_PU_DEFAULT);      // host power-up config
+  const [puUsed,setPuUsed] = useState(0);              // power-ups used this guess
+  const [hintTileId,setHintTileId] = useState(null);
+  const [xrayArmed,setXrayArmed] = useState(false);
+  const [xrayTiles,setXrayTiles] = useState(new Set());
   const COLORS=["var(--wf-accent)","var(--wf-accent2)","#FF5E5B","#9B5DE5"];
   const playerNames=Array.from({length:playerCount},(_,i)=>`Player ${i+1}`);
 
@@ -3171,6 +3244,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
       <div style={{background:"var(--wf-surface)",border:"1px solid var(--wf-border)",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:0,lineHeight:1.8}}>⭐ Flip in order → <strong style={{color:"#F5EDD6"}}>300 pts</strong> · ✓ Any order → <strong style={{color:"#F5EDD6"}}>100 pts</strong> · ✗ Wrong → passes turn</p>
       </div>
+      <MpPowerupConfig value={mpPU} onChange={setMpPU} />
       <button onClick={()=>setStarted(true)} style={{...btnStyle("var(--wf-accent)","#0a2e24"),width:"100%",padding:"14px",borderRadius:12}}>Start Game</button>
     </div>
   );
@@ -3201,7 +3275,26 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
 
   const foundWordSet=new Set(foundWords.map(f=>f.wordIndex));
 
+  function doHint() {
+    if (puUsed >= mpPU.perTurn || multiProcessingRef.current) return;
+    const tid = pickHintTileId(words, foundWordSet, multiFlippedRef.current, tiles);
+    if (!tid) return;
+    setPuUsed(u=>u+1);
+    setHintTileId(tid);
+    setTimeout(()=>setHintTileId(null), 1600);
+  }
+
   function handleTileClick(tile) {
+    // 🔍 X-ray peek: reveal the tapped face-down tile briefly instead of flipping.
+    if (xrayArmed) {
+      setXrayArmed(false);
+      if (multiProcessingRef.current||foundTileIdsMulti.has(tile.id)||multiFlippedRef.current.includes(tile.id)) return;
+      if (puUsed >= mpPU.perTurn) return;
+      setPuUsed(u=>u+1);
+      setXrayTiles(new Set([tile.id]));
+      setTimeout(()=>setXrayTiles(new Set()), 1300);
+      return;
+    }
     if (multiProcessingRef.current||foundTileIdsMulti.has(tile.id)||multiFlippedRef.current.length>=4||multiFlippedRef.current.includes(tile.id)) return;
     multiFlippedRef.current=[...multiFlippedRef.current,tile.id];
     const newFlipped=multiFlippedRef.current;
@@ -3215,7 +3308,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
       if (matchIdx===-1) {
         multiProcessingRef.current=true;
         setError(newFlipped); setFlash("bad");
-        setTimeout(()=>{multiFlippedRef.current=[];multiProcessingRef.current=false;setFlipped([]);setError([]);setFlash(null);setCurrentPlayer(p=>(p+1)%playerCount);},700); return;
+        setTimeout(()=>{multiFlippedRef.current=[];multiProcessingRef.current=false;setFlipped([]);setError([]);setFlash(null);setPuUsed(0);setXrayArmed(false);setCurrentPlayer(p=>(p+1)%playerCount);},700); return;
       }
       const multiInOrder = letters.join("") === words[matchIdx];
       const multiPts = multiInOrder ? 300 : 100;
@@ -3229,7 +3322,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
         setFoundTileIdsMulti(prev=>new Set([...prev,...newFlipped]));
         const ns=[...scores]; ns[currentPlayer]+=multiPts; setScores(ns);
         multiFlippedRef.current=[];multiProcessingRef.current=false;
-        setFlipped([]); setFlash(null);
+        setFlipped([]); setFlash(null); setPuUsed(0); setXrayArmed(false);
         if (newFW.length===words.length) {
           soundManager.complete(); setGameOver(true);
           // Small payout for a completed pass-and-play game (signed-in device
@@ -3264,9 +3357,10 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
           {flash==="bad"&&"✗ Next player's turn"}
         </span>}
       </div>
+      <MpPowerupBar settings={mpPU} usedThisTurn={puUsed} xrayArmed={xrayArmed} onHint={doHint} onXrayToggle={()=>setXrayArmed(a=>!a)} active={!gameOver} />
       <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"clamp(3px,1.2vw,8px)",padding:"clamp(4px,2vw,12px)",background:"var(--wf-surface)",borderRadius:16,border:"1.5px solid var(--wf-border)"}}>
         {tiles.map(tile=>(
-          <Tile key={tile.id} tile={tile} isFlipped={flipped.includes(tile.id)} isFound={foundTileIdsMulti.has(tile.id)} isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)} isError={error.includes(tile.id)} onClick={()=>handleTileClick(tile)} orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined} />
+          <Tile key={tile.id} tile={tile} isFlipped={flipped.includes(tile.id)} isFound={foundTileIdsMulti.has(tile.id)} isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)} isError={error.includes(tile.id)} onClick={()=>handleTileClick(tile)} orderNum={flipped.includes(tile.id)?flipped.indexOf(tile.id):undefined} isHint={hintTileId===tile.id} isXray={xrayTiles.has(tile.id)} />
         ))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
@@ -3303,6 +3397,11 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
   const [isPublic, setIsPublic] = useState(false);      // list this room in the open-games lobby
   const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
   const [browseBusy, setBrowseBusy] = useState(false);
+  const [mpPU, setMpPU] = useState(MP_PU_DEFAULT);       // host's power-up config (persisted on the room)
+  const [puUsed, setPuUsed] = useState(0);               // power-ups I've used this guess
+  const [hintTileId, setHintTileId] = useState(null);
+  const [xrayArmed, setXrayArmed] = useState(false);
+  const [xrayTiles, setXrayTiles] = useState(new Set());
 
   const myId = useRef(getMyPlayerId()).current;
   const channelRef = useRef(null);
@@ -3586,9 +3685,13 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
         .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 },
                  { onConflict: 'id' });
       if (pe) throw pe;
-      // Mark public in a separate step so a missing is_public column can't break
-      // room creation (feature is dormant until the SQL is applied).
+      // Mark public + save power-up settings in separate steps so a missing
+      // column can't break room creation (each feature is dormant until its SQL
+      // is applied). Kept apart so one missing column doesn't sink the other.
       if (isPublic) { try { await db.from('rooms').update({ is_public: true }).eq('id', r.id); r.is_public = true; } catch (e) {} }
+      // On success everyone (host + guests via their room fetch) sees the same
+      // settings; on failure (column absent) it stays undefined for all → off.
+      try { await db.from('rooms').update({ settings: mpPU }).eq('id', r.id); r.settings = mpPU; } catch (e) {}
       setRoom(r); roomRef.current = r;
       setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
       playersRef.current = [{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }];
@@ -3678,8 +3781,33 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     } catch(e) { console.error('startGame:', e); }
   }
 
+  // 💡 Hint (free/equal, host-configured): wiggle the next correct tile.
+  function doHint() {
+    if (gsRef.current?.current_player_id !== myId || processingRef.current) return;
+    const s = normMpPU(roomRef.current?.settings);
+    if (puUsed >= s.perTurn) return;
+    const w = roomRef.current?.words || [];
+    const foundIdx = new Set((gsRef.current?.found_words || []).map(fw => fw.wordIndex));
+    const tid = pickHintTileId(w, foundIdx, flippedRef.current, tiles);
+    if (!tid) return;
+    setPuUsed(u => u + 1);
+    setHintTileId(tid);
+    setTimeout(() => setHintTileId(null), 1600);
+  }
+
   function handleTileClick(tile) {
     if (gsRef.current?.current_player_id !== myId) return;
+    // 🔍 X-ray peek: reveal the tapped face-down tile briefly (only on your turn).
+    if (xrayArmed) {
+      setXrayArmed(false);
+      const s = normMpPU(roomRef.current?.settings);
+      if (processingRef.current || foundTileIdsRef.current.has(tile.id) || flippedRef.current.includes(tile.id)) return;
+      if (puUsed >= s.perTurn) return;
+      setPuUsed(u => u + 1);
+      setXrayTiles(new Set([tile.id]));
+      setTimeout(() => setXrayTiles(new Set()), 1300);
+      return;
+    }
     if (processingRef.current) return;
     if (foundTileIdsRef.current.has(tile.id)) return;
     if (flippedRef.current.length >= 4) return;
@@ -3714,6 +3842,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     function unlock() {
       flippedRef.current = []; setFlipped([]); setErrTiles([]); setFlash(null);
       processingRef.current = false;
+      setPuUsed(0); setXrayArmed(false); // reset the per-turn power-up allowance
     }
     // Safety valve: always release the lock within 5s even if a DB call hangs
     const safetyTimer = setTimeout(unlock, 5000);
@@ -3813,6 +3942,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
         style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}}
         onKeyDown={e => e.key==='Enter' && (fromInvite && codeInput ? joinRoom() : createRoom())} />
+      {!fromInvite && <MpPowerupConfig value={mpPU} onChange={setMpPU} />}
       {!fromInvite && (
         <button onClick={createRoom} disabled={busy}
           style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:8, opacity:busy?0.6:1}}>
@@ -4009,6 +4139,8 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
           {flash==='bad'&&"✗ Wrong — next player's turn"}
         </span>}
       </div>
+      {/* Power-up bar (host-configured, free & equal) */}
+      <MpPowerupBar settings={room?.settings} usedThisTurn={puUsed} xrayArmed={xrayArmed} onHint={doHint} onXrayToggle={()=>setXrayArmed(a=>!a)} active={isMyTurn} />
       {/* Board — 6×6 grid; click-locked when not my turn but remote flips still visible */}
       <div style={{display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'clamp(3px,1.2vw,8px)', padding:'clamp(4px,2vw,12px)', background:'#0a1520', borderRadius:16, border:'1.5px solid #1e3048'}}>
         {(() => {
@@ -4027,6 +4159,8 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
                 remoteColor={isRemote ? currentPlayerColor : undefined}
                 onClick={() => handleTileClick(tile)}
                 orderNum={isLocalFlipped ? flipped.indexOf(tile.id) : undefined}
+                isHint={hintTileId===tile.id}
+                isXray={xrayTiles.has(tile.id)}
               />
             );
           });
