@@ -685,3 +685,79 @@ BEGIN
   RETURN v_balance;
 END;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 19. SERVER-AUTHORITATIVE ECONOMY TABLES (Phase 1 of the economy hardening pass)
+--     item_prices + earn_rules are the SOLE source of truth for what a coin
+--     purchase costs and what an earn event pays. Clients may READ them (the
+--     shop needs prices to render) but CANNOT write them: RLS is on with a
+--     SELECT-only policy AND write privileges are revoked from anon/authenticated.
+--     Only migrations / service_role (which bypasses RLS) may write.
+--     Seed values are copied EXACTLY from the live client constants.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.item_prices (
+  kind       text    NOT NULL,                       -- 'powerup' | 'theme' | 'tileback'
+  item_id    text    NOT NULL,
+  price      integer NOT NULL CHECK (price >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, item_id)
+);
+ALTER TABLE public.item_prices ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "item_prices_read" ON public.item_prices;
+CREATE POLICY "item_prices_read" ON public.item_prices FOR SELECT USING (true);
+REVOKE INSERT, UPDATE, DELETE ON public.item_prices FROM anon, authenticated;
+
+INSERT INTO public.item_prices (kind, item_id, price) VALUES
+  ('powerup','hint',100), ('powerup','xray',80), ('powerup','megahint',300),
+  ('powerup','undo',40),  ('powerup','freeze',100),
+  ('theme','firecracker',750), ('theme','electric',700), ('theme','ruby',500), ('theme','galaxy',550),
+  ('tileback','ruby',200), ('tileback','emerald',200), ('tileback','amethyst',200),
+  ('tileback','tangerine',200), ('tileback','galaxy',250), ('tileback','rosegold',250),
+  ('tileback','electric',400), ('tileback','neon',400), ('tileback','firecracker',450),
+  ('tileback','neonpulse',400)
+ON CONFLICT (kind, item_id) DO UPDATE SET price = EXCLUDED.price, updated_at = now();
+
+--    amount = flat + floor(rate * score).  max_score = per-completion ceiling
+--    (NULL = event takes no score). A claimed score above max_score is REJECTED
+--    (not clamped) by grant_earn and logged — see Phase 2.
+--    Ceilings: daily 3500 (4 words: 4*300+600+800+12*50 bonus, bonus capped by
+--    maxTurns=16; 10% rate ⇒ ≤350 coins). solo 12000 (9 words base 4100, bonus
+--    words not turn-capped in solo so a generous backstop; 1% rate ⇒ ≤170 coins).
+CREATE TABLE IF NOT EXISTS public.earn_rules (
+  event      text    PRIMARY KEY,
+  flat       integer NOT NULL DEFAULT 0 CHECK (flat >= 0),
+  rate       numeric NOT NULL DEFAULT 0 CHECK (rate >= 0),
+  max_score  integer,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.earn_rules ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "earn_rules_read" ON public.earn_rules;
+CREATE POLICY "earn_rules_read" ON public.earn_rules FOR SELECT USING (true);
+REVOKE INSERT, UPDATE, DELETE ON public.earn_rules FROM anon, authenticated;
+
+INSERT INTO public.earn_rules (event, flat, rate, max_score) VALUES
+  ('signup',   100, 0,    NULL),
+  ('daily',    0,   0.1,  3500),
+  ('solo',     50,  0.01, 12000),
+  ('nine',     40,  0,    NULL),
+  ('mp_win',   50,  0,    NULL),
+  ('mp_loss',  25,  0,    NULL),
+  ('local_mp', 25,  0,    NULL),
+  ('streak_wk1', 200, 0, NULL),
+  ('streak_wk2', 450, 0, NULL),
+  ('streak_wk3', 500, 0, NULL),
+  ('streak_wk4', 600, 0, NULL)
+ON CONFLICT (event) DO UPDATE SET flat=EXCLUDED.flat, rate=EXCLUDED.rate, max_score=EXCLUDED.max_score, updated_at=now();
+
+INSERT INTO public.earn_rules (event, flat) VALUES
+  ('ach-perfect_nohints',10000), ('ach-lucky4',5000), ('ach-all_green',250),
+  ('ach-all_yellow',200), ('ach-no_wrong',100), ('ach-no_hints',75),
+  ('ach-turns_4',500), ('ach-turns_6',250), ('ach-turns_8',100), ('ach-turns_10',60),
+  ('ach-turns_12',40), ('ach-time_5m',100), ('ach-time_3m',300), ('ach-time_90s',600),
+  ('ach-top10_daily',150), ('ach-top10_all',400), ('ach-play_daily',25),
+  ('ach-play_solo',25), ('ach-play_local',25), ('ach-play_online',50),
+  ('ach-win_online',150), ('ach-games_10',40), ('ach-games_50',150),
+  ('ach-games_100',300), ('ach-butterfingers',50), ('ach-blank_slate',50),
+  ('ach-scenic_route',40), ('ach-kitchen_sink',40)
+ON CONFLICT (event) DO UPDATE SET flat=EXCLUDED.flat, updated_at=now();
