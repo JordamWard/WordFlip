@@ -5613,6 +5613,15 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     setBuying(null);
   }
 
+  // Coin-buyable themes/backs, EXCLUDING anything already owned — once you buy
+  // one it drops off this list; from then on you switch/apply it from 🎒
+  // Inventory instead (which shows everything you own or unlocked, bought or
+  // earned, in one place).
+  const buyableThemes = THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id) && !ownedThemes.has(t.id));
+  const buyableBacks  = TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id) && !ownedTileBacks.has(t.id));
+  const allCoinThemes = THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id));
+  const allCoinBacks  = TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id));
+
   return (
     <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
       {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={onApplyTheme} onApplyTileBack={onApplyTileBack} onClose={()=>setPreview(null)} />}
@@ -5765,16 +5774,21 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         Power-ups are used during a game — look for the 💡 and 🔍 buttons above the board.
       </p>
 
-      {/* ── Themes (coin-buyable only; most are earned or bundle-exclusive) ── */}
-      {THEMES.some(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id)) &&
-        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>}
-      {THEMES.filter(t => t.price > 0 && !REWARD_THEME_IDS.has(t.id) && !BUNDLE_THEME_IDS.has(t.id)).map(t => {
-        const owned = ownedThemes.has(t.id);
-        const active = activeThemeId === t.id;
+      {/* ── Themes (coin-buyable only; owned ones move to 🎒 Inventory) ── */}
+      {buyableThemes.length > 0 && (
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
+      )}
+      {buyableThemes.length === 0 && allCoinThemes.length > 0 && (
+        <div style={{marginTop:22}}>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>THEMES</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-accent)', fontSize:'0.75rem', margin:'0 0 4px'}}>✓ You own every coin theme — apply them from 🎒 Inventory.</p>
+        </div>
+      )}
+      {buyableThemes.map(t => {
         const isBuying = buying === 'theme-'+t.id;
         const canAfford = balance >= t.price;
         return (
-          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
+          <div key={t.id} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               {/* Swatch preview — tap to preview against your active tiles */}
               <div onClick={()=>setPreview({themeId:t.id, backId:activeTileBackId})} title="Tap to preview" style={{width:44, height:44, borderRadius:10, flexShrink:0, background:t.bg, border:'1.5px solid #2a4060', position:'relative', overflow:'hidden', cursor:'pointer'}}>
@@ -5784,18 +5798,11 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
                 </div>              </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
-                {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'var(--wf-text-mute)', marginLeft:8}}>owned</span>}
               </div>
-              {active ? (
-                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
-              ) : owned ? (
-                <button onClick={() => onApplyTheme(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
-              ) : (
-                <button onClick={() => buyThemeFlow(t)} disabled={isBuying || !canAfford}
-                  style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'var(--wf-border)', canAfford?'#0D1B2A':'var(--wf-text-mute)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
-                  {isBuying ? '…' : `🪙 ${t.price}`}
-                </button>
-              )}
+              <button onClick={() => buyThemeFlow(t)} disabled={isBuying || !canAfford}
+                style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'var(--wf-border)', canAfford?'#0D1B2A':'var(--wf-text-mute)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
+                {isBuying ? '…' : `🪙 ${t.price}`}
+              </button>
             </div>
             {themeMsg?.id === t.id && (
               <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:themeMsg.good ? 'var(--wf-accent)' : 'var(--wf-accent2)'}}>
@@ -5806,17 +5813,25 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         );
       })}
 
-      {/* ── Tile Backs ── */}
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 4px', letterSpacing:'0.08em'}}>TILE BACKS</p>
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.62rem', margin:'0 0 10px'}}>Tap a swatch to preview it against your theme.</p>
-      {TILE_BACKS.filter(t => !REWARD_BACK_IDS.has(t.id) && !BUNDLE_BACK_IDS.has(t.id)).map(t => {
-        const owned = ownedTileBacks.has(t.id);
-        const active = activeTileBackId === t.id;
+      {/* ── Tile Backs (coin-buyable only; owned ones move to 🎒 Inventory) ── */}
+      {buyableBacks.length > 0 && (
+        <>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'22px 0 4px', letterSpacing:'0.08em'}}>TILE BACKS</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.62rem', margin:'0 0 10px'}}>Tap a swatch to preview it against your theme.</p>
+        </>
+      )}
+      {buyableBacks.length === 0 && allCoinBacks.length > 0 && (
+        <div style={{marginTop:22}}>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 10px', letterSpacing:'0.08em'}}>TILE BACKS</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-accent)', fontSize:'0.75rem', margin:'0 0 4px'}}>✓ You own every coin tile back — apply them from 🎒 Inventory.</p>
+        </div>
+      )}
+      {buyableBacks.map(t => {
         const isBuying = buying === 'back-'+t.id;
         const canAfford = balance >= t.price;
         const prev = tileBackPreview(t);
         return (
-          <div key={t.id} style={{background:'var(--wf-surface)', border:`1.5px solid ${active?'#00F5C455':'var(--wf-border)'}`, borderRadius:14, padding:'12px 14px', marginBottom:12}}>
+          <div key={t.id} style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:14, padding:'12px 14px', marginBottom:12}}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               {/* Mini tile-back preview — tap to preview against your active theme */}
               <div onClick={()=>setPreview({themeId:activeThemeId, backId:t.id})} title="Tap to preview" style={{width:44, height:44, borderRadius:9, flexShrink:0, border:'1.5px solid #2a4060', position:'relative', cursor:'pointer',
@@ -5826,18 +5841,11 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
                 <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>              </div>
               <div style={{flex:1, textAlign:'left'}}>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
-                {owned && <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.62rem', color:'var(--wf-text-mute)', marginLeft:8}}>owned</span>}
               </div>
-              {active ? (
-                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
-              ) : owned ? (
-                <button onClick={() => onApplyTileBack(t.id)} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
-              ) : (
-                <button onClick={() => buyTileBackFlow(t)} disabled={isBuying || !canAfford}
-                  style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'var(--wf-border)', canAfford?'#0D1B2A':'var(--wf-text-mute)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
-                  {isBuying ? '…' : `🪙 ${t.price}`}
-                </button>
-              )}
+              <button onClick={() => buyTileBackFlow(t)} disabled={isBuying || !canAfford}
+                style={{...btnStyle(canAfford?'linear-gradient(90deg,#FFB703,#ff9f1c)':'var(--wf-border)', canAfford?'#0D1B2A':'var(--wf-text-mute)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, opacity:isBuying?0.6:1, cursor:canAfford?'pointer':'default'}}>
+                {isBuying ? '…' : `🪙 ${t.price}`}
+              </button>
             </div>
             {backMsg?.id === t.id && (
               <p style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', margin:'10px 0 0', color:backMsg.good ? 'var(--wf-accent)' : 'var(--wf-accent2)'}}>
@@ -6405,7 +6413,10 @@ function WordFlip() {
             const newWorker = reg.installing;
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "activated") {
-                // Show a subtle update banner
+                // Show an update banner. It stays up until tapped — it used to
+                // auto-dismiss after 10s, which meant an easy-to-miss deploy
+                // (e.g. a bug fix) could sit unapplied indefinitely on a tab
+                // that was left open, since nothing else ever forces a reload.
                 const banner = document.createElement("div");
                 banner.innerHTML = `
                   <div style="
@@ -6418,8 +6429,6 @@ function WordFlip() {
                     ✨ New version available — tap to update
                   </div>`;
                 document.body.appendChild(banner);
-                // Auto-dismiss after 10 seconds
-                setTimeout(() => banner.remove(), 10000);
               }
             });
           });
