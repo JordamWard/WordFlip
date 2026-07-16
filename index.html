@@ -3721,6 +3721,47 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     setPhase('join'); phaseRef.current = 'join';
   }
 
+  // Actually leave: remove MY row from `players` (server-side — not just a
+  // local reset) so I stop showing up in the player list / score chips / turn
+  // rotation for everyone else. Previously "Leave room" and "Leave this game?"
+  // only reset local state, leaving a ghost player row behind that the other
+  // clients kept treating as still in the game (they'd only recover via the
+  // ~10-70s timeout+takeover once it became that ghost's turn — annoying, and
+  // confusing since the player list never reflected who'd actually left).
+  async function leaveRoom(confirmMsg) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    try {
+      await ensureFreshSession();
+      const db = getSB();
+      const currentRoom = roomRef.current;
+      const currentGs = gsRef.current;
+      if (phaseRef.current === 'game' && currentRoom && currentGs?.current_player_id === myId) {
+        if (playersRef.current.length > 1) {
+          await passTurn(currentGs); // hand the turn off immediately instead of making others wait
+        } else {
+          await db.from('rooms').update({ status:'done' }).eq('id', currentRoom.id); // I was the last one left
+        }
+      }
+      await db.from('players').delete().eq('id', myId);
+    } catch (e) { console.error('leaveRoom:', e); }
+    resetRoomState();
+    onBack();
+  }
+
+  // Best-effort: catch tab-close / app-kill too (not just the explicit Leave
+  // buttons above). Unload handlers are inherently unreliable — the browser
+  // can cut the request off mid-flight — so this is a bonus cleanup attempt,
+  // not something to depend on; the timeout+takeover mechanism remains the
+  // guaranteed backstop for turn advancement when a player just vanishes.
+  useEffect(() => {
+    const onLeaveAttempt = () => {
+      if (phaseRef.current !== 'lobby' && phaseRef.current !== 'game') return;
+      try { getSB().from('players').delete().eq('id', myId); } catch (e) {}
+    };
+    window.addEventListener('pagehide', onLeaveAttempt);
+    return () => window.removeEventListener('pagehide', onLeaveAttempt);
+  }, []); // eslint-disable-line
+
   // Load open (public + waiting) rooms for the lobby. Fails soft to [] if the
   // is_public column isn't there yet (feature stays dormant until the SQL runs).
   async function loadPublicRooms() {
@@ -3728,13 +3769,19 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     try {
       await ensureFreshSession();
       const db = getSB();
+      const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min
+      // Opportunistic cleanup: actually CLOSE (not just hide) any room — public
+      // or private — that's been sitting in 'waiting' for 5+ minutes with no
+      // one starting it. Rooms otherwise stay 'waiting' forever (a host only
+      // auto-closes their OWN stale rooms on their next create), so without
+      // this dead rows pile up in the table even though the lobby list hides
+      // them. RLS on rooms is wide open, so any signed-in client can do this —
+      // it just piggybacks on whoever happens to open the lobby.
+      await db.from('rooms').update({ status:'done' }).eq('status','waiting').lt('created_at', cutoff);
       const { data, error } = await db.from('rooms')
         .select('id, code, created_at, is_public, players(name, turn_order)')
         .eq('status', 'waiting').eq('is_public', true)
-        // Only rooms created recently — abandoned rooms stay 'waiting' forever
-        // (a host only auto-closes their OWN stale rooms), so without this the
-        // lobby fills with dead rooms nobody is hosting anymore.
-        .gte('created_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+        .gte('created_at', cutoff) // defensive backstop in case the cleanup above failed
         .order('created_at', { ascending: false }).limit(20);
       if (error) { setPublicRooms([]); }
       else {
@@ -4154,7 +4201,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
           </div>
         )}
       </div>
-      <button onClick={resetRoomState}
+      <button onClick={()=>leaveRoom()}
         style={{...btnStyle('transparent','#3a5570'), marginTop:12, fontSize:'0.75rem', border:'none', textDecoration:'underline'}}>
         Leave room
       </button>
@@ -4269,7 +4316,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
         >
           Room <strong style={{color:'#3a5570', letterSpacing:'0.1em'}}>{room?.code}</strong> 🔗
         </span>
-        <button onClick={() => { if(window.confirm('Leave this game?')) { resetRoomState(); onBack(); }}}
+        <button onClick={() => leaveRoom('Leave this game?')}
           style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
       </div>
     </div>
@@ -5964,15 +6011,25 @@ function WordFlip() {
           }
         });
       }
-      grantEarnedTokens(session.user.id).then(refreshWallet);
-      syncInventoryFromServer(session.user.id); // power-ups follow the account
-      fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
-      fetchOwnedTileBacks(session.user.id).then(setOwnedTileBacks); // tile backs too
+      // Refresh a possibly-stale JWT ONCE before the reads below. Without this,
+      // a session that's been idle for a while can 401 silently on each call
+      // (every other read site in this file already guards against exactly
+      // this) — the catch blocks then quietly fall back to an empty/default
+      // set, which is the "theme I bought didn't show up in Inventory" bug:
+      // the purchase was real (confirmed server-side), but this fetch failed
+      // silently and never picked it up.
+      ensureFreshSession().then(() => {
+        grantEarnedTokens(session.user.id).then(refreshWallet);
+        syncInventoryFromServer(session.user.id); // power-ups follow the account
+        fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
+        fetchOwnedTileBacks(session.user.id).then(setOwnedTileBacks); // tile backs too
+      });
       // Career points follow the account: migrate any guest-earned points once,
       // then treat the server total as the source of truth. Fails soft to local
       // if section 13 hasn't been applied yet.
       (async () => {
         const uid = session.user.id;
+        await ensureFreshSession();
         const server = await fetchCareerRemote(uid);
         if (server == null) return; // table/RPC not there yet — stay local-only
         const local = getCareerPoints();
