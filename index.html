@@ -246,13 +246,16 @@ async function retroSubmitTodayScore(userId) {
 }
 
 // ─── Token economy ────────────────────────────────────────────────────────────
-// Earning amounts (tweak freely — placeholders until the shop is priced)
-// Daily pays the most (10% of score, ~150-240); every other mode pays less.
+// DISPLAY-ONLY earn amounts. The SERVER is the sole authority on every payout
+// (earn_rules table + grant_earn RPC); these mirror the seeded values purely so
+// the UI can show "you'll earn N coins" before the server grants it. Changing a
+// number here changes what the UI PROMISES, not what the wallet RECEIVES — keep
+// them in sync with earn_rules or the preview will lie. The client never sends a
+// coin amount over the wire; it sends an intent (event key + optional score).
 const TOKENS = { SIGNUP: 100, MP_WIN: 50, MP_LOSS: 25, LOCAL: 25 };
-// Daily challenge pays out 10% of the score earned.
+// Daily challenge pays out 10% of the score earned. (mirrors earn_rules 'daily')
 const dailyTokens = (score) => Math.max(0, Math.round((score || 0) * 0.1));
-// Solo pays a flat 50 base + 1% of score, so a better (or larger) game earns a
-// little more, but the rate stays low enough that unlimited solo isn't a faucet.
+// Solo pays a flat 50 base + 1% of score. (mirrors earn_rules 'solo')
 const soloTokens = (score) => 50 + Math.max(0, Math.round((score || 0) * 0.01));
 
 async function fetchWallet(userId) {
@@ -261,27 +264,37 @@ async function fetchWallet(userId) {
   return data?.balance || 0;
 }
 
-// Idempotent grant via the secure RPC. Returns the new balance (or null on failure).
-async function grantTokens(amount, reason) {
-  const { data, error } = await getSB().rpc('add_tokens', { p_amount: amount, p_reason: reason });
-  if (error) { console.error("Grant tokens error:", error); return null; }
-  return data;
+// Server-authoritative earn. The client sends INTENT ONLY — an event key (+ an
+// optional raw score for score-scaled events), NEVER a coin amount. The server
+// looks the payout up in earn_rules, enforces the per-event score ceiling
+// (reject for hard-bounded paths like daily; clamp for unbounded ones like solo),
+// and folds career points in under the SAME (user_id, reason=ref) idempotency key
+// so coins + career commit together or not at all. Returns {balance, career,
+// granted} on success, or null on failure.
+async function grantEarn(event, ref, score) {
+  const args = { p_event: event, p_ref: ref };
+  if (score != null) args.p_score = Math.max(0, Math.round(score));
+  const { data, error } = await getSB().rpc('grant_earn', args);
+  if (error) { console.error('grant_earn error:', error); return null; }
+  return data || null;
 }
 
 // Grant all tokens the signed-in user has earned but not yet received.
 // Safe to call repeatedly — each reason is idempotent server-side.
 async function grantEarnedTokens(userId) {
-  await grantTokens(TOKENS.SIGNUP, 'signup-bonus');
+  await grantEarn('signup', 'signup-bonus', null);
   const done = getDailyDone();
   if (done && done.score) {
-    await grantTokens(dailyTokens(done.score), 'daily-' + dateKey().replace('wf_', ''));
+    await grantEarn('daily', 'daily-' + dateKey().replace('wf_', ''), done.score);
   }
 }
 
 // ─── Token Shop ───────────────────────────────────────────────────────────────
-// PLACEHOLDER PRICES — tune freely. Keys under wf_inv_* hold per-device
-// consumable counts (purchases deduct server-side via the spend_tokens RPC,
-// so the wallet stays the single source of truth).
+// DISPLAY-ONLY prices. The SERVER owns every price (item_prices table); these
+// `price` fields only render the shop tile and gate the pre-buy "not enough
+// coins" hint. buy_powerup ignores whatever the client thinks the price is and
+// charges the server price. Keys under wf_inv_* hold per-device consumable
+// counts (the account inventory is the source of truth; local mirrors it).
 const SHOP_ITEMS = [
   { key:'hint', icon:'💡', name:'Hint', desc:'Wiggles the next correct tile of the word you’re building.', price:100, invKey:'wf_inv_hint' },
   { key:'xray', icon:'🔍', name:'X-ray', desc:'Peek at one face-down tile without flipping it.', price:80, invKey:'wf_inv_xray' },
@@ -297,12 +310,13 @@ function addInv(invKey, delta) {
   try { localStorage.setItem(invKey, String(n)); } catch {}
   return n;
 }
-// Grant tokens only when signed in (the RPC uses auth.uid server-side).
+// Grant an earn event only when signed in (the RPC uses auth.uid server-side).
 // Refreshes a stale JWT first so the grant can't 401 on a day-old session.
-async function grantIfSignedIn(amount, reason, refreshWallet) {
+// Sends intent only (event + ref); the server owns the amount.
+async function grantEarnIfSignedIn(event, ref, score, refreshWallet) {
   const s = await ensureFreshSession();
   if (!s?.user) return;
-  await grantTokens(amount, reason);
+  await grantEarn(event, ref, score);
   if (refreshWallet) refreshWallet();
 }
 
@@ -318,29 +332,35 @@ function addDailyHelps(n) {
   return v;
 }
 
-// Atomic server-side spend via the spend_tokens RPC (see supabase-migrations.sql).
-// The RPC rejects overdrafts, so the balance can never go negative.
-// (Kept for future non-inventory purchases; item buys go through buyItem below.)
-async function spendTokens(amount, reason) {
-  const { data, error } = await getSB().rpc('spend_tokens', { p_amount: amount, p_reason: reason });
+// Buy a cosmetic (theme / tile back) at the SERVER price. The client sends the
+// kind + id only — never a price. purchase_cosmetic looks the price up in
+// item_prices, rejects anything without a price row (reward/bundle-only items),
+// charges the wallet atomically, and writes the 'theme-/tileback-<id>' ownership
+// row (un-rebuyable). Returns {ok, balance} or {ok:false, msg}.
+async function purchaseCosmetic(kind, id) {
+  const { data, error } = await getSB().rpc('purchase_cosmetic', { p_kind: kind, p_id: id });
   if (error) {
-    console.error('Spend tokens error:', error);
+    console.error('purchase_cosmetic error:', error);
     const m = String(error.message || '');
     if (/insufficient/i.test(m)) return { ok:false, msg:'Not enough coins.' };
-    if (/find the function|does not exist|404/i.test(m)) return { ok:false, msg:'Shop is not set up yet — try again later.' };
+    if (/already owned/i.test(m)) return { ok:false, msg:'You already own this.' };
+    if (/not for sale/i.test(m)) return { ok:false, msg:'That item isn’t for sale.' };
+    if (/find the function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Shop upgrade pending — one more migration to run.' };
     return { ok:false, msg:'Purchase failed — please try again.' };
   }
   return { ok:true, balance:data };
 }
 
-// Buy a power-up: one atomic RPC charges the wallet AND increments the
-// account-level inventory (see migration section 7). Returns the new count.
-async function buyItem(itemKey, price) {
-  const { data, error } = await getSB().rpc('buy_item', { p_item: itemKey, p_price: price });
+// Buy a power-up at the SERVER price. Client sends the item key only — never a
+// price. buy_powerup looks the price up in item_prices, charges the wallet, and
+// increments the account inventory atomically. Returns {ok, count}.
+async function buyItem(itemKey) {
+  const { data, error } = await getSB().rpc('buy_powerup', { p_item: itemKey });
   if (error) {
-    console.error('Buy item error:', error);
+    console.error('buy_powerup error:', error);
     const m = String(error.message || '');
     if (/insufficient/i.test(m)) return { ok:false, msg:'Not enough coins.' };
+    if (/not for sale|unknown item/i.test(m)) return { ok:false, msg:'That item isn’t for sale.' };
     if (/find the function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Shop upgrade pending — one more migration to run.' };
     return { ok:false, msg:'Purchase failed — please try again.' };
   }
@@ -348,24 +368,19 @@ async function buyItem(itemKey, price) {
 }
 
 // Pull the account's inventory into the local cache (wf_inv_*) so power-ups
-// follow the account across browsers/devices. First sync for an account
-// imports any pre-existing local purchases (bought before inventories existed).
+// follow the account across browsers/devices. Read-only: it mirrors the
+// account inventory DOWN to the device. It deliberately does NOT import local
+// guest counts up to the account — that old buy_item(...,0) path was a forge
+// hole (a guest could set wf_inv_hint=9999 locally and mint it). Guest power-ups
+// come only from the career rewards ladder, which is re-granted server-side by
+// claim_powerup_reward (career-verified) on sign-in, superseding any local count.
 async function syncInventoryFromServer(userId) {
   try {
     const db = getSB();
     // Column is `freezes` (plural) — FREEZE is a reserved word in Postgres.
     const { data, error } = await db.from('inventories').select('hint,xray,freezes,megahint').eq('user_id', userId).maybeSingle();
     if (error) return; // table/column missing (migration not run) — keep local behavior
-    if (!data) {
-      const lh = getInv('wf_inv_hint'), lx = getInv('wf_inv_xray'), lf = getInv('wf_inv_freeze'), lm = getInv('wf_inv_megahint');
-      for (let i = 0; i < lh; i++) await db.rpc('buy_item', { p_item:'hint', p_price:0 });
-      for (let i = 0; i < lx; i++) await db.rpc('buy_item', { p_item:'xray', p_price:0 });
-      for (let i = 0; i < lf; i++) await db.rpc('buy_item', { p_item:'freeze', p_price:0 });
-      for (let i = 0; i < lm; i++) await db.rpc('buy_item', { p_item:'megahint', p_price:0 });
-      // Undo import, best-effort — the column/RPC may not exist yet (section 17).
-      try { const lu = getInv('wf_inv_undo'); for (let i = 0; i < lu; i++) await db.rpc('buy_item', { p_item:'undo', p_price:0 }); } catch (e) {}
-      return; // local cache already reflects the imported counts
-    }
+    if (!data) return; // no account inventory yet — claim_powerup_reward will seed it
     try {
       localStorage.setItem('wf_inv_hint', String(data.hint || 0));
       localStorage.setItem('wf_inv_xray', String(data.xray || 0));
@@ -1168,7 +1183,7 @@ function unlockAchievements(ids) {
   return fresh;
 }
 // Tracks which achievement rewards have been paid, so we don't spam the RPC.
-// (grantTokens is idempotent by reason too — this just avoids redundant calls.)
+// (grant_earn is idempotent by reason too — this just avoids redundant calls.)
 function getAchPaid() {
   try { return JSON.parse(localStorage.getItem('wf_ach_paid') || '{}'); } catch { return {}; }
 }
@@ -1180,8 +1195,9 @@ async function grantAchievementRewards(ids) {
   for (const id of ids) {
     const a = achById(id);
     if (!a || !(a.reward > 0) || paid[id]) continue;
-    const res = await grantTokens(a.reward, 'ach-' + id);
-    if (res != null) paid[id] = true; // grantTokens returns new balance, or null on error
+    // Intent only: the server owns the per-achievement reward (earn_rules 'ach-<id>').
+    const res = await grantEarn('ach-' + id, 'ach-' + id, null);
+    if (res != null) paid[id] = true; // res is {balance,...} on success, null on error
   }
   try { localStorage.setItem('wf_ach_paid', JSON.stringify(paid)); } catch {}
 }
@@ -1400,9 +1416,10 @@ async function fetchOwnedThemes(userId) {
     return new Set([...FREE_THEMES, ...ids]);
   } catch { return new Set(FREE_THEMES); }
 }
-// Buy = atomic coin spend keyed to a stable reason (un-rebuyable, account-level).
-async function buyTheme(themeId, price) {
-  return spendTokens(price, 'theme-' + themeId);
+// Buy = atomic coin spend at the SERVER price, keyed to a stable reason
+// (un-rebuyable, account-level). Intent only — no price crosses the wire.
+async function buyTheme(themeId) {
+  return purchaseCosmetic('theme', themeId);
 }
 
 // ─── Tile Backs ───────────────────────────────────────────────────────────────
@@ -1457,7 +1474,7 @@ async function fetchOwnedTileBacks(userId) {
     return new Set([...FREE_TILEBACKS, ...ids]);
   } catch { return new Set(FREE_TILEBACKS); }
 }
-async function buyTileBack(id, price) { return spendTokens(price, 'tileback-' + id); }
+async function buyTileBack(id) { return purchaseCosmetic('tileback', id); }
 
 // ─── Rewards / career progression ─────────────────────────────────────────────
 // Earn cosmetics by PLAYING (not by spending coins): your cumulative score
@@ -1479,13 +1496,13 @@ async function fetchCareerRemote(userId) {
     return data ? Number(data.career_points) : 0;
   } catch (e) { return null; }
 }
-async function addCareerRemote(amount) {
-  try {
-    const { data, error } = await getSB().rpc('add_career_points', { p_amount: Math.max(0, Math.round(amount||0)) });
-    if (error) return null;
-    return data == null ? null : Number(data);
-  } catch (e) { return null; }
-}
+// NOTE: career points are NO LONGER written by a standalone client RPC. The old
+// add_career_points(arbitrary) write path was a mint hole and is now REVOKEd.
+// Career is added SERVER-SIDE inside grant_earn (for daily/solo, under the same
+// idempotency key as the coins) and, one-time on sign-in, via the 'guest_migrate'
+// earn event. fetchCareerRemote (read-only SELECT) stays as the source of truth.
+// FUTURE: multiplayer→career must route through grant_earn (an adds_career event),
+// never by resurrecting add_career_points.
 // Each entry unlocks a theme or tile back once your career total reaches
 // `points`. Themes are immediately followed by their matching back. Thresholds
 // are tunable placeholders.
@@ -1530,8 +1547,10 @@ function newRewardIds(career) { const seen = getSeenRewards(); return unlockedRe
 function rewardsHasNew(career) { return newRewardIds(career).length > 0; }
 
 // ─── Power-up rewards: grant the consumables from the ladder, once each ───────
-// Guarded by a local "claimed" set; signed-in grants go to the account via
-// buy_item(price 0) so they survive the account sync. hint/xray/megahint only.
+// Guarded by a local "claimed" set; signed-in grants go to the account via the
+// server-authoritative claim_powerup_reward RPC (it verifies the player's career
+// total actually reached the ladder threshold, and owns the amount — the client
+// sends only the reward id). hint/xray/megahint only.
 function getClaimedRewards() { try { return new Set(JSON.parse(localStorage.getItem('wf_rewards_claimed')||'[]')); } catch (e) { return new Set(); } }
 function markRewardClaimed(id) { try { const s = getClaimedRewards(); s.add(id); localStorage.setItem('wf_rewards_claimed', JSON.stringify([...s])); } catch (e) {} }
 function unmarkRewardClaimed(id) { try { const s = getClaimedRewards(); s.delete(id); localStorage.setItem('wf_rewards_claimed', JSON.stringify([...s])); } catch (e) {} }
@@ -1543,17 +1562,14 @@ async function claimPowerupReward(entry, signedIn) {
   if (signedIn) {
     try {
       await ensureFreshSession();
-      const db = getSB();
-      let last = getInv(it.invKey);
-      for (let i = 0; i < entry.amount; i++) {
-        const { data, error } = await db.rpc('buy_item', { p_item: entry.item, p_price: 0 });
-        if (error) throw error;
-        if (data != null) last = data;
-      }
-      try { localStorage.setItem(it.invKey, String(last)); } catch (e) {}
+      // Intent only: the server owns the reward's item + amount (powerup_rewards)
+      // and re-checks career >= threshold. Idempotent on the reward id.
+      const { data, error } = await getSB().rpc('claim_powerup_reward', { p_reward_id: entry.id });
+      if (error) throw error;
+      if (data != null) { try { localStorage.setItem(it.invKey, String(data)); } catch (e) {} }
     } catch (e) { unmarkRewardClaimed(entry.id); } // failed → allow a retry later
   } else {
-    addInv(it.invKey, entry.amount); // guests earn locally; imported to the account on sign-up
+    addInv(it.invKey, entry.amount); // guests earn locally; re-derived from career server-side on sign-in
   }
 }
 // Grant every power-up reward the player has earned but not yet claimed.
@@ -3415,7 +3431,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
           // Small payout for a completed pass-and-play game (signed-in device
           // owner). Only on natural completion — the End button pays nothing,
           // so quick-quitting can't farm coins.
-          grantIfSignedIn(TOKENS.LOCAL, 'lmp-' + Date.now(), refreshWallet);
+          grantEarnIfSignedIn('local_mp', 'lmp-' + Date.now(), null, refreshWallet);
           if (onAchievements) onAchievements(unlockAchievements(['play_local']));
         }
       },400);
@@ -3537,8 +3553,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     const maxScore = Math.max(...ps.map(p => p.score || 0));
     const mine = ps.find(p => p.id === myId)?.score || 0;
     const won = maxScore > 0 && mine >= maxScore;
-    const amount = won ? TOKENS.MP_WIN : TOKENS.MP_LOSS;
-    grantIfSignedIn(amount, 'mp-' + roomRef.current.id, refreshWallet);
+    grantEarnIfSignedIn(won ? 'mp_win' : 'mp_loss', 'mp-' + roomRef.current.id, null, refreshWallet);
     // Mode achievements: played online, and won it (finished top).
     if (onAchievements) onAchievements(unlockAchievements(won ? ['play_online','win_online'] : ['play_online']));
   }, [phase]);
@@ -5551,7 +5566,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     if (balance < t.price) { setBackMsg({ id:t.id, text:'Not enough coins yet!' }); return; }
     setBuying('back-'+t.id); setBackMsg(null);
     await ensureFreshSession();
-    const res = await buyTileBack(t.id, t.price);
+    const res = await buyTileBack(t.id);
     if (res.ok) {
       onOwnTileBack(t.id); onApplyTileBack(t.id);
       setBackMsg({ id:t.id, text:`✓ ${t.name} unlocked & applied!`, good:true });
@@ -5568,7 +5583,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     if (balance < t.price) { setThemeMsg({ id:t.id, text:'Not enough coins yet!' }); return; }
     setBuying('theme-'+t.id); setThemeMsg(null);
     await ensureFreshSession();
-    const res = await buyTheme(t.id, t.price);
+    const res = await buyTheme(t.id);
     if (res.ok) {
       onOwnTheme(t.id); onApplyTheme(t.id);
       setThemeMsg({ id:t.id, text:`✓ ${t.name} unlocked & applied!`, good:true });
@@ -5600,8 +5615,9 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
     }
     setBuying(item.key); setMsg(null);
     await ensureFreshSession();
-    // One atomic RPC: charges the wallet AND grants the item account-wide.
-    const res = await buyItem(item.key, item.price);
+    // One atomic RPC: charges the wallet at the SERVER price AND grants the item
+    // account-wide. item.price is display-only (the pre-check hint above).
+    const res = await buyItem(item.key);
     if (res.ok) {
       try { localStorage.setItem(item.invKey, String(res.count)); } catch {}
       setInv(prev => ({ ...prev, [item.key]: res.count }));
@@ -6026,34 +6042,41 @@ function WordFlip() {
       // set, which is the "theme I bought didn't show up in Inventory" bug:
       // the purchase was real (confirmed server-side), but this fetch failed
       // silently and never picked it up.
-      ensureFreshSession().then(() => {
-        grantEarnedTokens(session.user.id).then(refreshWallet);
-        syncInventoryFromServer(session.user.id); // power-ups follow the account
-        fetchOwnedThemes(session.user.id).then(setOwnedThemes); // themes follow the account
-        fetchOwnedTileBacks(session.user.id).then(setOwnedTileBacks); // tile backs too
-      });
-      // Career points follow the account: migrate any guest-earned points once,
-      // then treat the server total as the source of truth. Fails soft to local
-      // if section 13 hasn't been applied yet.
+      // One sequenced sign-in reconcile. Ordering matters for career: the daily
+      // earn grant (inside grantEarnedTokens) folds today's daily score into the
+      // server career under 'daily-<date>' FIRST, so the guest-migration delta
+      // below (local − server) nets today's daily out and can't double-count it.
       (async () => {
         const uid = session.user.id;
         await ensureFreshSession();
+        // 1. Pay signup + today's daily (idempotent; folds daily career server-side).
+        await grantEarnedTokens(uid);
+        refreshWallet();
+        // 2. Migrate any remaining guest-only career the server doesn't yet know
+        //    about, ONCE, through grant_earn (adds_career; no coins, no ceiling).
+        //    Idempotent on a stable per-user ref, so it can't re-transfer.
         const server = await fetchCareerRemote(uid);
-        if (server == null) return; // table/RPC not there yet — stay local-only
-        const local = getCareerPoints();
-        const migKey = 'wf_career_migrated_' + uid;
-        let total = server;
-        if (!localStorage.getItem(migKey) && local > server) {
-          const merged = await addCareerRemote(local - server); // one-time guest → account
-          if (merged != null) total = merged;
+        if (server != null) {
+          const local = getCareerPoints();
+          const migKey = 'wf_career_migrated_' + uid;
+          let total = server;
+          if (!localStorage.getItem(migKey) && local > server) {
+            const res = await grantEarn('guest_migrate', 'career-migrate-' + uid, local - server);
+            if (res && res.career != null) total = res.career;
+          }
+          try { localStorage.setItem(migKey, '1'); } catch (e) {}
+          try { localStorage.setItem('wf_career', String(total)); } catch (e) {}
+          setCareer(total);
         }
-        try { localStorage.setItem(migKey, '1'); } catch (e) {}
-        try { localStorage.setItem('wf_career', String(total)); } catch (e) {}
-        setCareer(total);
+        // 3. Pull account inventory + cosmetics down to this device.
+        syncInventoryFromServer(uid); // power-ups follow the account
+        fetchOwnedThemes(uid).then(setOwnedThemes); // themes follow the account
+        fetchOwnedTileBacks(uid).then(setOwnedTileBacks); // tile backs too
+        // 4. Reconcile achievement rewards: pays any unlocked-but-unpaid badges
+        //    (e.g. earned while signed out, or a grant that failed earlier).
+        await grantAchievementRewards(Object.keys(getAchievements()));
+        refreshWallet();
       })();
-      // Reconcile achievement rewards: pays any unlocked-but-unpaid badges
-      // (e.g. earned while signed out, or a grant that failed earlier).
-      ensureFreshSession().then(() => grantAchievementRewards(Object.keys(getAchievements())).then(refreshWallet));
     }
   }, [session?.user?.id]);
 
@@ -6090,7 +6113,7 @@ function WordFlip() {
   function handleNineSolve() {
     setNineDoneLS({ solved:true });
     if (session?.user) {
-      ensureFreshSession().then(()=> grantTokens(NINE_REWARD, nineReason()).then(refreshWallet));
+      ensureFreshSession().then(()=> grantEarn('nine', nineReason(), null).then(refreshWallet));
     }
   }
 
@@ -6101,21 +6124,28 @@ function WordFlip() {
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
     const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
     // Career progression: every point counts toward the rewards ladder. Fire a
-    // toast for any cosmetic milestone this game just crossed.
+    // toast for any cosmetic milestone this game just crossed. The LOCAL update
+    // here is optimistic (drives the toast + immediate UI); for a signed-in user
+    // the AUTHORITATIVE career total is added SERVER-SIDE inside the daily/solo
+    // grant_earn call below (same idempotency key as the coins) and reconciled
+    // back via applyCareerFromGrant. Guests keep the local total only.
     {
       const before = getCareerPoints();
       const after = addCareerPoints(score); // optimistic local update
       setCareer(after);
       const crossed = REWARD_LADDER.filter(r => before < r.points && after >= r.points);
       if (crossed.length) showRewardToast(crossed);
-      // Sync to the account; the authoritative server total wins if it differs
-      // (e.g. points earned on another device). Fails soft to the local total.
-      if (session?.user) {
-        ensureFreshSession().then(() => addCareerRemote(score)).then(total => {
-          if (total != null) { try { localStorage.setItem('wf_career', String(total)); } catch (e) {} setCareer(total); }
-        });
-      }
     }
+    // Reconcile the local career total to the server's after a grant_earn that
+    // folded career in (daily/solo). The server total wins (e.g. points earned on
+    // another device); fails soft to the optimistic local total on a null result.
+    const applyCareerFromGrant = (res) => {
+      refreshWallet();
+      if (res && res.career != null) {
+        try { localStorage.setItem('wf_career', String(res.career)); } catch (e) {}
+        setCareer(res.career);
+      }
+    };
     if (mode==="daily") {
       saveDailyBest(score);
       setDailyDone({turns:result.turns,elapsed:result.elapsed,score,wordResults:result.wordResults||{},wrongGuesses:result.wrongGuesses||0,outOfTurns:result.outOfTurns||false,bonusPts:result.bonusPts||0,bonusWords:result.bonusWords||[]});
@@ -6137,13 +6167,17 @@ function WordFlip() {
         // cause the write to be silently rejected (it would only land on next sign-in).
         ensureFreshSession().then(() => {
           submitDailyScore(session.user.id, score, dateKey().replace('wf_',''), result.turns, result.elapsed, result.wrongGuesses||0, blocks, getDailyHelps());
-          grantTokens(dailyTokens(score), 'daily-' + dateKey().replace('wf_','')).then(refreshWallet);
+          // Intent only: server computes the daily payout (10% of score) AND folds
+          // the score into career, both under the 'daily-<date>' idempotency key.
+          // A forged score above the hard-bounded ceiling is REJECTED server-side.
+          grantEarn('daily', 'daily-' + dateKey().replace('wf_',''), score).then(applyCareerFromGrant);
           // Weekly streak milestone: pay when the streak crosses a multiple of
           // 7. Uses week-boundary crossing (not exact %7) so a Streak Freeze
           // that jumps the count over a milestone (e.g. 6 -> 8) still pays it.
-          // Reason keyed to today's date — idempotent, can't double-pay.
+          // Reason keyed to today's date — idempotent, can't double-pay. The
+          // server owns the amount and floors/caps the week to streak_wk1..4.
           if (streakMilestoneBonus > 0) {
-            grantTokens(streakMilestoneBonus, 'streakwk-' + dateKey().replace('wf_','')).then(refreshWallet);
+            grantEarn('streak_wk' + weekNow, 'streakwk-' + dateKey().replace('wf_',''), null).then(refreshWallet);
           }
         });
       }
@@ -6163,10 +6197,12 @@ function WordFlip() {
       dailyStreakCount = s.count;
     } else if (mode==="solo") {
       // Repeatable grant — unique reason each game so it always pays out.
-      // 50 + 1% of score, so bigger/better games earn a bit more.
+      // Intent only: server computes the payout (50 + 1% of score) AND folds the
+      // score into career under the same 'solo-<ts>' key. Solo is UNBOUNDED (no
+      // turn cap), so an over-ceiling score is CLAMPED server-side, not rejected.
       if (session?.user) {
         ensureFreshSession().then(() =>
-          grantTokens(soloTokens(score), 'solo-' + Date.now()).then(refreshWallet));
+          grantEarn('solo', 'solo-' + Date.now(), score).then(applyCareerFromGrant));
       }
     }
     // Achievements (daily + solo). Evaluated from the finished game plus running

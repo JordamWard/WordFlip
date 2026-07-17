@@ -719,11 +719,13 @@ INSERT INTO public.item_prices (kind, item_id, price) VALUES
 ON CONFLICT (kind, item_id) DO UPDATE SET price = EXCLUDED.price, updated_at = now();
 
 --    amount = flat + floor(rate * score).  max_score = per-completion ceiling
---    (NULL = event takes no score). A claimed score above max_score is REJECTED
---    (not clamped) by grant_earn and logged — see Phase 2.
---    Ceilings: daily 3500 (4 words: 4*300+600+800+12*50 bonus, bonus capped by
---    maxTurns=16; 10% rate ⇒ ≤350 coins). solo 12000 (9 words base 4100, bonus
---    words not turn-capped in solo so a generous backstop; 1% rate ⇒ ≤170 coins).
+--    (NULL = event takes no score). Over-ceiling behaviour is per-event (see the
+--    clamp_over column added in section 20): daily REJECTS, solo CLAMPS. Both log.
+--    Ceilings (generous, ~3x true max — the ceiling is a catastrophic-forge
+--    backstop, NOT the anti-cheat mechanism, so it never false-rejects a legit
+--    game): daily 10000 (4 words, true max ~3200, hard-bounded by maxTurns=16;
+--    10% rate ⇒ ≤1000 coins). solo 12000 (9 words, base ~4100, bonus words not
+--    turn-capped in solo; 1% rate ⇒ ≤170 coins).
 CREATE TABLE IF NOT EXISTS public.earn_rules (
   event      text    PRIMARY KEY,
   flat       integer NOT NULL DEFAULT 0 CHECK (flat >= 0),
@@ -738,7 +740,7 @@ REVOKE INSERT, UPDATE, DELETE ON public.earn_rules FROM anon, authenticated;
 
 INSERT INTO public.earn_rules (event, flat, rate, max_score) VALUES
   ('signup',   100, 0,    NULL),
-  ('daily',    0,   0.1,  3500),
+  ('daily',    0,   0.1,  10000),
   ('solo',     50,  0.01, 12000),
   ('nine',     40,  0,    NULL),
   ('mp_win',   50,  0,    NULL),
@@ -761,3 +763,249 @@ INSERT INTO public.earn_rules (event, flat) VALUES
   ('ach-games_100',300), ('ach-butterfingers',50), ('ach-blank_slate',50),
   ('ach-scenic_route',40), ('ach-kitchen_sink',40)
 ON CONFLICT (event) DO UPDATE SET flat=EXCLUDED.flat, updated_at=now();
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 20. ECONOMY HARDENING PHASE 2 — intent-only RPCs (server owns every amount)
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- The SERVER is the sole authority on every coin amount and price. Clients send
+-- INTENT ONLY (which item / earn event / reward) — never a value. Builds on the
+-- section-19 tables (item_prices, earn_rules). Re-runnable (CREATE OR REPLACE /
+-- IF NOT EXISTS / ON CONFLICT). No side effects on user data (DDL + seed + defs +
+-- revokes). This section REVOKEs the old client-value RPCs (add_tokens /
+-- spend_tokens / buy_item / add_career_points) — the client no longer calls them.
+
+-- ── 20a. powerup_rewards: server-owned rewards-ladder power-up grants ────────
+--    Seeded EXACTLY from REWARD_LADDER's power-up entries (index.html).
+CREATE TABLE IF NOT EXISTS public.powerup_rewards (
+  reward_id       text PRIMARY KEY,
+  item            text NOT NULL,
+  amount          integer NOT NULL CHECK (amount > 0),
+  points_required bigint  NOT NULL CHECK (points_required >= 0)
+);
+ALTER TABLE public.powerup_rewards ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "powerup_rewards_read" ON public.powerup_rewards;
+CREATE POLICY "powerup_rewards_read" ON public.powerup_rewards FOR SELECT USING (true);
+REVOKE INSERT, UPDATE, DELETE ON public.powerup_rewards FROM anon, authenticated;
+INSERT INTO public.powerup_rewards (reward_id, item, amount, points_required) VALUES
+  ('p-hint1','hint',2,4500),  ('p-xray1','xray',2,15000), ('p-hint2','hint',3,32000),
+  ('p-mega1','megahint',1,58000), ('p-xray2','xray',3,97000), ('p-hint3','hint',3,195000),
+  ('p-mega2','megahint',2,280000)
+ON CONFLICT (reward_id) DO UPDATE SET item=EXCLUDED.item, amount=EXCLUDED.amount, points_required=EXCLUDED.points_required;
+
+-- ── 20b. earn_rules: career flag, over-ceiling mode, guest-migrate event ─────
+--    adds_career : this event contributes its (effective) score to career_points
+--    clamp_over  : TRUE  = clamp a too-high score to max_score (UNBOUNDED paths
+--                          like solo — a legit outlier is never rejected)
+--                  FALSE = reject a too-high score (HARD-BOUNDED paths like daily,
+--                          capped by maxTurns=16 — >ceiling ⇒ tampering)
+--    (daily max_score is seeded at 10000 in section 19; solo at 12000.)
+ALTER TABLE public.earn_rules ADD COLUMN IF NOT EXISTS adds_career boolean NOT NULL DEFAULT false;
+ALTER TABLE public.earn_rules ADD COLUMN IF NOT EXISTS clamp_over  boolean NOT NULL DEFAULT false;
+UPDATE public.earn_rules SET adds_career = true WHERE event IN ('daily','solo');
+UPDATE public.earn_rules SET clamp_over  = true WHERE event = 'solo';   -- solo unbounded -> CLAMP; daily bounded -> REJECT (default)
+INSERT INTO public.earn_rules (event, flat, rate, max_score, adds_career, clamp_over)
+VALUES ('guest_migrate', 0, 0, NULL, true, false)   -- one-time guest career transfer: no coins, adds career, no score ceiling
+ON CONFLICT (event) DO UPDATE SET flat=0, rate=0, max_score=NULL, adds_career=true, clamp_over=false;
+
+-- PARK (future anti-cheat / rate-limit task — do NOT solve here): 'solo' uses a
+-- per-GAME reason key (solo-<ts>), not per-day like daily-<date>, so it has no
+-- repetition ceiling — unlimited solo games each pay out. It is the most
+-- grind-exploitable earn path and belongs with raw-score validation +
+-- streak-to-server in that later task, not this security pass.
+
+-- ── 20c. grant_earn: the ONLY coin/career earning path ──────────────────────
+--    Client sends (event, ref, score?) — never an amount. Coins AND career
+--    commit under ONE shared (user_id, reason=ref) idempotency key, so a retry
+--    can never grant one without the other. Over-ceiling behaviour is per-event
+--    (reject vs clamp) and ALWAYS logged. When clamping, BOTH coins and career
+--    use the clamped score, so clamp can't reopen the career hole.
+CREATE OR REPLACE FUNCTION public.grant_earn(p_event text, p_ref text, p_score integer DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_ev text := p_event;
+  v_flat int; v_rate numeric; v_max int; v_career boolean; v_clamp boolean;
+  v_eff int; v_amount int; v_bal int; v_total bigint; v_rows int; v_week int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_ref IS NULL OR length(p_ref) = 0 THEN RAISE EXCEPTION 'missing ref'; END IF;
+
+  -- Streak weeks: FLOOR at 1 and CAP at 4 (mirrors client min(max(w,1),4)); a
+  -- week<1 assertion can't resolve to a missing streak_wk0 row, week>4 -> wk4.
+  IF v_ev LIKE 'streak_wk%' THEN
+    v_week := NULLIF(regexp_replace(v_ev, '^streak_wk', ''), '')::int;
+    IF v_week IS NOT NULL THEN v_ev := 'streak_wk' || least(greatest(v_week,1),4); END IF;
+  END IF;
+
+  SELECT flat, rate, max_score, adds_career, clamp_over
+    INTO v_flat, v_rate, v_max, v_career, v_clamp
+    FROM public.earn_rules WHERE event = v_ev;
+  IF v_flat IS NULL THEN RAISE EXCEPTION 'unknown earn event: %', v_ev; END IF;
+
+  v_eff := p_score;
+  IF v_max IS NOT NULL THEN
+    IF p_score IS NULL OR p_score < 0 THEN RAISE EXCEPTION 'score required'; END IF;
+    IF p_score > v_max THEN
+      RAISE LOG 'economy: OVER-CEILING grant_earn user=% event=% score=% ceiling=% mode=%',
+                v_uid, v_ev, p_score, v_max, CASE WHEN v_clamp THEN 'clamp' ELSE 'reject' END;
+      IF v_clamp THEN v_eff := v_max;                          -- clamp coins AND career
+      ELSE RAISE EXCEPTION 'score exceeds ceiling'; END IF;    -- reject (bounded path)
+    END IF;
+  END IF;
+
+  v_amount := v_flat + floor(v_rate * COALESCE(v_eff, 0))::int;
+
+  -- Single idempotency gate for BOTH coins and career.
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+  VALUES (v_uid, v_amount, p_ref)
+  ON CONFLICT (user_id, reason) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  IF v_rows > 0 THEN                          -- fresh grant (not a replay)
+    IF v_amount > 0 THEN
+      INSERT INTO public.wallets (user_id, balance) VALUES (v_uid, v_amount)
+      ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + v_amount, updated_at = now();
+    END IF;
+    IF v_career AND COALESCE(v_eff,0) > 0 THEN
+      INSERT INTO public.player_progress (user_id, career_points) VALUES (v_uid, v_eff)
+      ON CONFLICT (user_id) DO UPDATE SET career_points = player_progress.career_points + v_eff, updated_at = now();
+    END IF;
+  END IF;
+
+  SELECT COALESCE(balance,0)       INTO v_bal   FROM public.wallets         WHERE user_id = v_uid;
+  SELECT COALESCE(career_points,0) INTO v_total FROM public.player_progress WHERE user_id = v_uid;
+  RETURN jsonb_build_object('balance', COALESCE(v_bal,0), 'career', COALESCE(v_total,0), 'granted', (v_rows > 0));
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.grant_earn(text, text, integer) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.grant_earn(text, text, integer) TO authenticated;
+
+-- ── 20d. purchase_cosmetic: buy a theme/tile-back at the server price ────────
+CREATE OR REPLACE FUNCTION public.purchase_cosmetic(p_kind text, p_id text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_price int; v_reason text; v_bal int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_kind NOT IN ('theme','tileback') THEN RAISE EXCEPTION 'unknown kind'; END IF;
+  SELECT price INTO v_price FROM public.item_prices WHERE kind = p_kind AND item_id = p_id;
+  IF v_price IS NULL THEN RAISE EXCEPTION 'not for sale'; END IF;   -- reward/bundle-only items have no row
+  v_reason := p_kind || '-' || p_id;                               -- 'theme-firecracker' / 'tileback-ruby'
+
+  IF EXISTS (SELECT 1 FROM public.token_transactions WHERE user_id = v_uid AND reason = v_reason) THEN
+    RAISE EXCEPTION 'already owned';
+  END IF;
+
+  IF v_price > 0 THEN
+    UPDATE public.wallets SET balance = balance - v_price, updated_at = now()
+     WHERE user_id = v_uid AND balance >= v_price RETURNING balance INTO v_bal;
+    IF v_bal IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+  ELSE
+    SELECT balance INTO v_bal FROM public.wallets WHERE user_id = v_uid;
+  END IF;
+
+  -- UNIQUE(user_id,reason) is the race backstop; a dup here rolls back the deduct.
+  INSERT INTO public.token_transactions (user_id, amount, reason) VALUES (v_uid, -v_price, v_reason);
+  RETURN COALESCE(v_bal, 0);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.purchase_cosmetic(text, text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.purchase_cosmetic(text, text) TO authenticated;
+
+-- ── 20e. buy_powerup: buy a power-up at the server price ─────────────────────
+CREATE OR REPLACE FUNCTION public.buy_powerup(p_item text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_price int; v_bal int; v_count int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_item NOT IN ('hint','xray','freeze','megahint','undo') THEN RAISE EXCEPTION 'unknown item'; END IF;
+  SELECT price INTO v_price FROM public.item_prices WHERE kind = 'powerup' AND item_id = p_item;
+  IF v_price IS NULL THEN RAISE EXCEPTION 'not for sale'; END IF;
+
+  IF v_price > 0 THEN
+    UPDATE public.wallets SET balance = balance - v_price, updated_at = now()
+     WHERE user_id = v_uid AND balance >= v_price RETURNING balance INTO v_bal;
+    IF v_bal IS NULL THEN RAISE EXCEPTION 'insufficient balance'; END IF;
+    INSERT INTO public.token_transactions (user_id, amount, reason)
+    VALUES (v_uid, -v_price, 'buy-' || p_item || '-' || gen_random_uuid());
+  END IF;
+
+  INSERT INTO public.inventories (user_id, hint, xray, freezes, megahint, undo)
+  VALUES (v_uid, CASE WHEN p_item='hint' THEN 1 ELSE 0 END, CASE WHEN p_item='xray' THEN 1 ELSE 0 END,
+                 CASE WHEN p_item='freeze' THEN 1 ELSE 0 END, CASE WHEN p_item='megahint' THEN 1 ELSE 0 END,
+                 CASE WHEN p_item='undo' THEN 1 ELSE 0 END)
+  ON CONFLICT (user_id) DO UPDATE SET
+    hint=inventories.hint+CASE WHEN p_item='hint' THEN 1 ELSE 0 END,
+    xray=inventories.xray+CASE WHEN p_item='xray' THEN 1 ELSE 0 END,
+    freezes=inventories.freezes+CASE WHEN p_item='freeze' THEN 1 ELSE 0 END,
+    megahint=inventories.megahint+CASE WHEN p_item='megahint' THEN 1 ELSE 0 END,
+    undo=inventories.undo+CASE WHEN p_item='undo' THEN 1 ELSE 0 END, updated_at=now();
+
+  SELECT CASE p_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray WHEN 'freeze' THEN freezes
+                     WHEN 'megahint' THEN megahint ELSE undo END
+    INTO v_count FROM public.inventories WHERE user_id = v_uid;
+  RETURN v_count;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.buy_powerup(text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.buy_powerup(text) TO authenticated;
+
+-- ── 20f. claim_powerup_reward: grant a ladder power-up reward, career-verified
+--    Replaces the old buy_item(...,0) free-grant path. Server checks the player
+--    actually reached the career threshold. Idempotent on 'reward-<id>'.
+CREATE OR REPLACE FUNCTION public.claim_powerup_reward(p_reward_id text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_item text; v_amount int; v_req bigint; v_career bigint; v_count int; v_rows int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  SELECT item, amount, points_required INTO v_item, v_amount, v_req
+    FROM public.powerup_rewards WHERE reward_id = p_reward_id;
+  IF v_item IS NULL THEN RAISE EXCEPTION 'unknown reward'; END IF;
+
+  SELECT COALESCE(career_points,0) INTO v_career FROM public.player_progress WHERE user_id = v_uid;
+  IF COALESCE(v_career,0) < v_req THEN RAISE EXCEPTION 'reward not earned'; END IF;
+
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+  VALUES (v_uid, 0, 'reward-' || p_reward_id)
+  ON CONFLICT (user_id, reason) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  IF v_rows > 0 THEN
+    INSERT INTO public.inventories (user_id, hint, xray, freezes, megahint, undo)
+    VALUES (v_uid, CASE WHEN v_item='hint' THEN v_amount ELSE 0 END, CASE WHEN v_item='xray' THEN v_amount ELSE 0 END,
+                   CASE WHEN v_item='freeze' THEN v_amount ELSE 0 END, CASE WHEN v_item='megahint' THEN v_amount ELSE 0 END,
+                   CASE WHEN v_item='undo' THEN v_amount ELSE 0 END)
+    ON CONFLICT (user_id) DO UPDATE SET
+      hint=inventories.hint+CASE WHEN v_item='hint' THEN v_amount ELSE 0 END,
+      xray=inventories.xray+CASE WHEN v_item='xray' THEN v_amount ELSE 0 END,
+      freezes=inventories.freezes+CASE WHEN v_item='freeze' THEN v_amount ELSE 0 END,
+      megahint=inventories.megahint+CASE WHEN v_item='megahint' THEN v_amount ELSE 0 END,
+      undo=inventories.undo+CASE WHEN v_item='undo' THEN v_amount ELSE 0 END, updated_at=now();
+  END IF;
+
+  SELECT CASE v_item WHEN 'hint' THEN hint WHEN 'xray' THEN xray WHEN 'freeze' THEN freezes
+                     WHEN 'megahint' THEN megahint ELSE undo END
+    INTO v_count FROM public.inventories WHERE user_id = v_uid;
+  RETURN COALESCE(v_count, 0);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.claim_powerup_reward(text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.claim_powerup_reward(text) TO authenticated;
+
+-- ── 20g. Lock down the OLD client-value RPCs (the actual exploit surface) ────
+--    They trusted a client amount/price. No client path may call them anymore.
+--    credit_tokens (service-role, Stripe webhook) and redeem_code/use_item
+--    (already safe) are untouched. add_career_points writes are killed; the
+--    client reads career via a plain SELECT on player_progress (RLS read-own).
+--    FUTURE: multiplayer->career MUST route through grant_earn (an 'mp_*'/sibling
+--    earn event with adds_career), NEVER by re-granting execute on add_career_points.
+REVOKE EXECUTE ON FUNCTION public.add_tokens(integer, text)     FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text)   FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer)       FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.add_career_points(integer)    FROM anon, authenticated;
