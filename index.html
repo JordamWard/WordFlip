@@ -1792,14 +1792,13 @@ function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 
     return "\u{1F7E5}"; // 🟥 not found
   }).join("");
   const bonus = bonusCount > 0 ? bonusCount + " bonus word" + (bonusCount !== 1 ? "s" : "") + " \u00B7 " : "";
-  // "Guesses" = how many guesses it took to find the 4 target words = every
-  // 4-tile word you completed toward a target (found + wrong), EXCLUDING bonus
-  // words. turns counts found+bonus+wrong, so turns \u2212 bonusCount = found + wrong.
-  // A flawless game = 4; bonus words don't inflate it.
-  const guesses = Math.max(0, turns - bonusCount);
+  // Guesses taken out of the daily's 16-guess limit: every 4-tile word you
+  // completed \u2014 found + wrong + bonus (bonus words are counted, they don't grant
+  // extra guesses). `turns` is exactly that count. A flawless game reads 4/16.
+  const guesses = turns + "/16";
   return "WordFlip Daily \u00B7 " + date + "\n"
     + blocks + "\n"
-    + guesses + " guess" + (guesses !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
+    + guesses + " guesses \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
     + "https://wordflipgame.netlify.app";
 }
 
@@ -2508,6 +2507,10 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
           setFoundBonusWords(b=>[...b,bonusWord]);
           setLastBonusWord(bonusWord);
           setBonusPts(p=>p+50);
+          // A bonus word wasn't a target, so it counts as a wrong guess for
+          // accuracy (−50) — the +50 bonus offsets that (net 0), rather than
+          // stacking. It still consumes a turn (setTurns above), like any guess.
+          setWrongGuesses(g=>g+1);
           setFlash("bonus");
           setTimeout(()=>unlock(), 1200);
           return;
@@ -2757,8 +2760,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const guessPts = Math.max(0, 800 - wrongGuesses*50);
 
   const timeFormula  = `solved in ${formatTime(elapsed)}`;
-  const accuracyCredits = Math.round(guessPts / 50);
-  const guessFormula = `${accuracyCredits} remaining guesses × 50 pts`;
+  // Accuracy bonus = 800 − 50 per wrong guess (bonus words count as wrong). Framed
+  // around wrong guesses so it doesn't imply a second "guesses out of 16" meter —
+  // the guess COUNT (shown on the share/leaderboard) is total turns out of 16.
+  const guessFormula = wrongGuesses > 0
+    ? `800 − ${wrongGuesses} wrong × 50`
+    : `800 · flawless, no wrong guesses`;
 
   const rows = [
     { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
@@ -3203,11 +3210,9 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
               const isMe = session?.user?.id && entry.user_id === session.user.id;
               const medal = i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : null;
               const username = entry.profiles?.username || "Anonymous";
-              // "Guesses to find the words" = words found + wrong guesses (bonus
-              // words excluded). Derived from stored data: non-🟥 blocks = found,
-              // wrong_guesses = misses. Falls back to raw turns for old rows w/o blocks.
-              const lbFound = Array.from(entry.blocks||"").filter(ch => ch!=="🟥").length;
-              const lbGuesses = entry.blocks ? lbFound + (entry.wrong_guesses||0) : entry.turns;
+              // Guesses taken out of the daily's 16-guess limit = every 4-tile
+              // word completed (found + wrong + bonus). That's exactly `turns`.
+              const lbGuesses = entry.turns;
               return (
                 <div key={i} style={{
                   background: isMe ? "#9B5DE515" : "var(--wf-surface)",
@@ -3229,7 +3234,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                       <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
                     )}
                     <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.6rem"}}>
-                      {lbGuesses != null ? `${lbGuesses} guess${lbGuesses!==1?"es":""}` : ""}
+                      {lbGuesses != null ? `${lbGuesses}/16 guesses` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
                       {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
                       {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
