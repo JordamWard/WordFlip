@@ -2902,8 +2902,14 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
         {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
       </h2>
-      <p style={{color:"var(--wf-text-dim)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:16}}>
+      <p style={{color:"var(--wf-text-dim)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:8}}>
         {result.words.join(" · ")}
+      </p>
+      {/* Guesses taken (total attempts). Same 16-guess efficiency rule applies in
+          both modes; solo is uncapped, so this can exceed 16 (efficiency then 0). */}
+      <p style={{color:"var(--wf-text-mute)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",marginBottom:16}}>
+        {result.turns} guess{result.turns!==1?"es":""}
+        {(result.bonusWords&&result.bonusWords.length)?` · ${result.bonusWords.length} bonus`:""}
       </p>
       {isDaily&&showNewBest&&(
         <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:16}}>
