@@ -1781,7 +1781,7 @@ function shareOrCopy(text, onDone) {
   onDone && onDone(true);
 }
 
-function buildShareText(wrongGuesses, ms, score, wordResults, totalWords, bonusCount = 0) {
+function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 0) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   // wordResults array may be shorter than totalWords if player ran out of turns
@@ -1792,11 +1792,14 @@ function buildShareText(wrongGuesses, ms, score, wordResults, totalWords, bonusC
     return "\u{1F7E5}"; // 🟥 not found
   }).join("");
   const bonus = bonusCount > 0 ? bonusCount + " bonus word" + (bonusCount !== 1 ? "s" : "") + " \u00B7 " : "";
-  // "Guesses" = wrong guesses (the accuracy meter's "used" count out of 16), i.e.
-  // how many mis-guesses it took to finish \u2014 NOT every 4-tile submission.
+  // "Guesses" = how many guesses it took to find the 4 target words = every
+  // 4-tile word you completed toward a target (found + wrong), EXCLUDING bonus
+  // words. turns counts found+bonus+wrong, so turns \u2212 bonusCount = found + wrong.
+  // A flawless game = 4; bonus words don't inflate it.
+  const guesses = Math.max(0, turns - bonusCount);
   return "WordFlip Daily \u00B7 " + date + "\n"
     + blocks + "\n"
-    + wrongGuesses + " guess" + (wrongGuesses !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
+    + guesses + " guess" + (guesses !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
     + "https://wordflipgame.netlify.app";
 }
 
@@ -2884,7 +2887,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
-    const text = buildShareText(result.wrongGuesses||0, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
+    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
 
@@ -3200,6 +3203,11 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
               const isMe = session?.user?.id && entry.user_id === session.user.id;
               const medal = i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : null;
               const username = entry.profiles?.username || "Anonymous";
+              // "Guesses to find the words" = words found + wrong guesses (bonus
+              // words excluded). Derived from stored data: non-🟥 blocks = found,
+              // wrong_guesses = misses. Falls back to raw turns for old rows w/o blocks.
+              const lbFound = Array.from(entry.blocks||"").filter(ch => ch!=="🟥").length;
+              const lbGuesses = entry.blocks ? lbFound + (entry.wrong_guesses||0) : entry.turns;
               return (
                 <div key={i} style={{
                   background: isMe ? "#9B5DE515" : "var(--wf-surface)",
@@ -3221,7 +3229,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                       <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
                     )}
                     <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.6rem"}}>
-                      {entry.turns != null ? `${entry.turns} guess${entry.turns!==1?"es":""}` : ""}
+                      {lbGuesses != null ? `${lbGuesses} guess${lbGuesses!==1?"es":""}` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
                       {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
                       {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
@@ -4729,7 +4737,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
-    const text = buildShareText(done?.wrongGuesses ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
+    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
