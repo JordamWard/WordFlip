@@ -1781,7 +1781,7 @@ function shareOrCopy(text, onDone) {
   onDone && onDone(true);
 }
 
-function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 0) {
+function buildShareText(wrongGuesses, ms, score, wordResults, totalWords, bonusCount = 0) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   // wordResults array may be shorter than totalWords if player ran out of turns
@@ -1792,9 +1792,11 @@ function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 
     return "\u{1F7E5}"; // 🟥 not found
   }).join("");
   const bonus = bonusCount > 0 ? bonusCount + " bonus word" + (bonusCount !== 1 ? "s" : "") + " \u00B7 " : "";
+  // "Guesses" = wrong guesses (the accuracy meter's "used" count out of 16), i.e.
+  // how many mis-guesses it took to finish \u2014 NOT every 4-tile submission.
   return "WordFlip Daily \u00B7 " + date + "\n"
     + blocks + "\n"
-    + turns + " guess" + (turns !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
+    + wrongGuesses + " guess" + (wrongGuesses !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
     + "https://wordflipgame.netlify.app";
 }
 
@@ -2882,7 +2884,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
-    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
+    const text = buildShareText(result.wrongGuesses||0, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
 
@@ -4727,7 +4729,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
-    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
+    const text = buildShareText(done?.wrongGuesses ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
