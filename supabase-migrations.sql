@@ -1005,7 +1005,12 @@ GRANT  EXECUTE ON FUNCTION public.claim_powerup_reward(text) TO authenticated;
 --    client reads career via a plain SELECT on player_progress (RLS read-own).
 --    FUTURE: multiplayer->career MUST route through grant_earn (an 'mp_*'/sibling
 --    earn event with adds_career), NEVER by re-granting execute on add_career_points.
-REVOKE EXECUTE ON FUNCTION public.add_tokens(integer, text)     FROM anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text)   FROM anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer)       FROM anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.add_career_points(integer)    FROM anon, authenticated;
+--    NOTE: must revoke from PUBLIC, not just anon/authenticated — CREATE FUNCTION
+--    grants EXECUTE to PUBLIC by default, and authenticated inherits it THROUGH
+--    PUBLIC, so `REVOKE ... FROM anon, authenticated` alone leaves the function
+--    callable (verified by the tamper suite: add_tokens/buy_item/add_career_points
+--    were still reachable until PUBLIC was revoked).
+REVOKE EXECUTE ON FUNCTION public.add_tokens(integer, text)     FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text)   FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer)       FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.add_career_points(integer)    FROM PUBLIC, anon, authenticated;
