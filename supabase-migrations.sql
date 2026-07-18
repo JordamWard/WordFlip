@@ -804,9 +804,16 @@ ALTER TABLE public.earn_rules ADD COLUMN IF NOT EXISTS adds_career boolean NOT N
 ALTER TABLE public.earn_rules ADD COLUMN IF NOT EXISTS clamp_over  boolean NOT NULL DEFAULT false;
 UPDATE public.earn_rules SET adds_career = true WHERE event IN ('daily','solo');
 UPDATE public.earn_rules SET clamp_over  = true WHERE event = 'solo';   -- solo unbounded -> CLAMP; daily bounded -> REJECT (default)
+-- guest_migrate: one-time guest->account career transfer (no coins, adds career).
+-- CAPPED + CLAMPED (not rejected) so a forged delta can't mint unlimited career
+-- (career unlocks power-ups), while a legit heavy guest never loses their sign-in.
+-- Ceiling 5,000,000: guests earn 0 coins, so career comes only from daily(<=10k)+
+-- solo(<=12k) completions; a heavy ~2-month guest reaches ~2-3M, and the reward
+-- ladder tops out at 360k career, so 5M is ~2x a heavy guest and ~14x the point
+-- past which nothing new unlocks. Above 5M -> clamp to 5M and RAISE LOG.
 INSERT INTO public.earn_rules (event, flat, rate, max_score, adds_career, clamp_over)
-VALUES ('guest_migrate', 0, 0, NULL, true, false)   -- one-time guest career transfer: no coins, adds career, no score ceiling
-ON CONFLICT (event) DO UPDATE SET flat=0, rate=0, max_score=NULL, adds_career=true, clamp_over=false;
+VALUES ('guest_migrate', 0, 0, 5000000, true, true)
+ON CONFLICT (event) DO UPDATE SET flat=0, rate=0, max_score=5000000, adds_career=true, clamp_over=true;
 
 -- PARK (future anti-cheat / rate-limit task — do NOT solve here): 'solo' uses a
 -- per-GAME reason key (solo-<ts>), not per-day like daily-<date>, so it has no
