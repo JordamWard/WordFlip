@@ -972,13 +972,16 @@ function formatTime(ms) {
   return `${m}:${String(s%60).padStart(2,"0")}`;
 }
 
-function scoreCalc(ms, wordResults, wrongGuesses, bonusPts = 0) {
+function scoreCalc(ms, wordResults, turns, bonusPts = 0) {
   const greenPts = wordResults.filter(r=>r==="green").length * 300;
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
   // "missed" words score 0 — no bonus for unfound words
   const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
-  const guessBonus = Math.max(0, 800 - (wrongGuesses||0) * 50); // 800 pts (16 guesses), -50 per wrong guess
-  return greenPts + yellowPts + timeBonus + guessBonus + bonusPts; // bonus words are a clean +50, no accuracy offset
+  // Efficiency: you start with 16 guesses; EVERY attempt (right, wrong, or bonus)
+  // spends one. You're rewarded 50 per UNUSED guess: (16 − turns) × 50.
+  const guessBonus = Math.max(0, (16 - (turns||0)) * 50);
+  // A bonus word spends a guess (−50 here) but pays +50 below → net 0, no special case.
+  return greenPts + yellowPts + timeBonus + guessBonus + bonusPts;
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -1781,7 +1784,7 @@ function shareOrCopy(text, onDone) {
   onDone && onDone(true);
 }
 
-function buildShareText(wrongGuesses, ms, score, wordResults, totalWords, bonusCount = 0) {
+function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 0) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   // wordResults array may be shorter than totalWords if player ran out of turns
@@ -1792,12 +1795,12 @@ function buildShareText(wrongGuesses, ms, score, wordResults, totalWords, bonusC
     return "\u{1F7E5}"; // 🟥 not found
   }).join("");
   const bonus = bonusCount > 0 ? bonusCount + " bonus word" + (bonusCount !== 1 ? "s" : "") + " \u00B7 " : "";
-  // "Guesses" = wrong guesses = how many of your 16 guesses you spent (the same
-  // meter as the results screen's "N remaining guesses"). Bonus words are shown
-  // separately and don't count here.
+  // "Guesses" = total guesses used to finish = every 4-tile attempt (found +
+  // wrong + bonus) = `turns`, out of the 16 you start with. Bonus words are shown
+  // separately too, but they DO count as a guess here (they spent an attempt).
   return "WordFlip Daily \u00B7 " + date + "\n"
     + blocks + "\n"
-    + wrongGuesses + " guess" + (wrongGuesses !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
+    + turns + " guess" + (turns !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
     + "https://wordflipgame.netlify.app";
 }
 
@@ -2755,12 +2758,11 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
   const timePts  = Math.max(0, 600 - Math.floor(elapsed/1000));
-  const guessPts = Math.max(0, 800 - wrongGuesses*50); // 16 guesses × 50, −50 per wrong guess
+  // Efficiency: 50 per UNUSED guess. You start with 16; every attempt spends one.
+  const remainingGuesses = Math.max(0, 16 - (turns||0));
+  const guessPts = remainingGuesses * 50;
 
   const timeFormula  = `solved in ${formatTime(elapsed)}`;
-  // "N remaining guesses × 50" — how many of your 16 guesses you didn't spend on
-  // a wrong guess. Simple and matches the wrong-guess meter shown on the share.
-  const remainingGuesses = Math.round(guessPts / 50);
   const guessFormula = `${remainingGuesses} remaining guess${remainingGuesses!==1?"es":""} × 50 pts`;
 
   const rows = [
@@ -2777,7 +2779,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     { icon:"⏱", label:"Time bonus",
       formula:timeFormula,
       pts:timePts,  color:"#9B5DE5" },
-    { icon:"🎯", label:"Accuracy bonus",
+    { icon:"🎯", label:"Efficiency bonus",
       formula:guessFormula,
       pts:guessPts, color:"#00BBF9" },
   ];
@@ -2874,7 +2876,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 // ─── Win Screen ───────────────────────────────────────────────────────────────
 function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-  const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
+  const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
   // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
   const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloTokens(score) : 0;
@@ -2890,7 +2892,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const [copied, setCopied] = useState(false);
 
   function handleShare() {
-    const text = buildShareText(result.wrongGuesses||0, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
+    const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
 
@@ -3206,11 +3208,11 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
               const isMe = session?.user?.id && entry.user_id === session.user.id;
               const medal = i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : null;
               const username = entry.profiles?.username || "Anonymous";
-              // "Guesses" = wrong guesses (the 16-guess accuracy meter), matching
-              // the share. Bonus-word count is derived from stored data:
+              // "Guesses" = total guesses used to finish (out of 16) = turns,
+              // matching the share. Bonus-word count is derived from stored data:
               // turns = found + wrong + bonus, so bonus = turns − found − wrong,
               // where found = non-🟥 blocks. No extra DB column needed.
-              const lbGuesses = entry.wrong_guesses != null ? entry.wrong_guesses : entry.turns;
+              const lbGuesses = entry.turns;
               const lbFound = Array.from(entry.blocks||"").filter(ch => ch!=="🟥").length;
               const lbBonus = (entry.blocks && entry.turns != null && entry.wrong_guesses != null)
                 ? Math.max(0, entry.turns - lbFound - entry.wrong_guesses) : 0;
@@ -4738,13 +4740,13 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   // Infer bonusPts from saved total for old entries that predate the bonusPts field
-  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses, 0) : 0;
+  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.turns, 0) : 0;
   const bonusPts = done ? (done.bonusPts != null ? done.bonusPts : Math.max(0, (done.score||0) - basePts)) : 0;
-  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.wrongGuesses, bonusPts)) : 0;
+  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts)) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
-    const text = buildShareText(done?.wrongGuesses ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
+    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
@@ -6157,7 +6159,7 @@ function WordFlip() {
     setFireworks(true); setTimeout(()=>setFireworks(false),4000);
     let dailyStreakCount = 0;
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-    const score = scoreCalc(result.elapsed, wordResultsArr, result.wrongGuesses, result.bonusPts||0);
+    const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
     // Career progression: every point counts toward the rewards ladder. Fire a
     // toast for any cosmetic milestone this game just crossed. The LOCAL update
     // here is optimistic (drives the toast + immediate UI); for a signed-in user
@@ -6423,7 +6425,7 @@ function WordFlip() {
           <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
-            const wscore = scoreCalc(winResult.elapsed, wr, winResult.wrongGuesses, winResult.bonusPts||0);
+            const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0);
             const daily = winMode==="daily";
             const wouldEarn = daily ? dailyTokens(wscore)+(winStreakBonus||0) : soloTokens(wscore);
             return (
