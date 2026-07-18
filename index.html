@@ -977,7 +977,12 @@ function scoreCalc(ms, wordResults, wrongGuesses, bonusPts = 0) {
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
   // "missed" words score 0 — no bonus for unfound words
   const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
-  const guessBonus = Math.max(0, 800 - (wrongGuesses||0) * 50); // 800 pts, -50 per wrong guess
+  // Accuracy: 800, −50 per off-target guess. Off-target = wrong guesses AND bonus
+  // words (a bonus word isn't a target, so it takes the same −50). Deducting
+  // bonusPts here exactly cancels the +bonusPts added below, so a bonus word nets
+  // to 0 (you "only get the 50", offset by the accuracy hit) — while wrongGuesses
+  // stays true misses for the achievements.
+  const guessBonus = Math.max(0, 800 - (wrongGuesses||0) * 50 - (bonusPts||0));
   return greenPts + yellowPts + timeBonus + guessBonus + bonusPts;
 }
 
@@ -2507,10 +2512,10 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily }) {
           setFoundBonusWords(b=>[...b,bonusWord]);
           setLastBonusWord(bonusWord);
           setBonusPts(p=>p+50);
-          // A bonus word wasn't a target, so it counts as a wrong guess for
-          // accuracy (−50) — the +50 bonus offsets that (net 0), rather than
-          // stacking. It still consumes a turn (setTurns above), like any guess.
-          setWrongGuesses(g=>g+1);
+          // NOTE: we do NOT increment wrongGuesses — a bonus word IS a valid word,
+          // so it must not break the "every guess is a valid word" achievement.
+          // Its accuracy penalty (−50, offsetting the +50) is applied in scoreCalc
+          // by deducting bonusPts from the accuracy bonus. It still costs a turn.
           setFlash("bonus");
           setTimeout(()=>unlock(), 1200);
           return;
@@ -2757,15 +2762,17 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
   const timePts  = Math.max(0, 600 - Math.floor(elapsed/1000));
-  const guessPts = Math.max(0, 800 - wrongGuesses*50);
+  // Accuracy: 800 − 50 per OFF-TARGET guess. Off-target = wrong guesses + bonus
+  // words (neither is one of the 4 targets). This matches scoreCalc: the bonus
+  // words' +points are offset here (net 0). NOTE bonus words are NOT "wrong" — they
+  // form valid words — so they don't affect the "every guess valid" achievement.
+  const offTarget = (wrongGuesses||0) + Math.round((bonusPts||0)/50);
+  const guessPts = Math.max(0, 800 - offTarget*50);
 
   const timeFormula  = `solved in ${formatTime(elapsed)}`;
-  // Accuracy bonus = 800 − 50 per wrong guess (bonus words count as wrong). Framed
-  // around wrong guesses so it doesn't imply a second "guesses out of 16" meter —
-  // the guess COUNT (shown on the share/leaderboard) is total turns out of 16.
-  const guessFormula = wrongGuesses > 0
-    ? `800 − ${wrongGuesses} wrong × 50`
-    : `800 · flawless, no wrong guesses`;
+  const guessFormula = offTarget > 0
+    ? `800 − ${offTarget} off-target × 50`
+    : `800 · flawless, every guess on target`;
 
   const rows = [
     { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
