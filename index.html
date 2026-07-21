@@ -2238,7 +2238,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 }
 
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved, peekTileIds }) {
   const cols = words.length===4?4:6;
   // Resume an in-progress daily so leaving mid-game continues instead of restarting.
   const savedProg = isDaily ? getDailyProgress() : null;
@@ -2674,9 +2674,10 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
           boxShadow:"0 4px 32px #00000055",
         }}>
         {tiles.map(tile=>{
+          const isPeeked = peekTileIds && peekTileIds.has(tile.id);
           const tileEl = (
             <Tile key={tile.id} tile={tile}
-              isFlipped={flipped.includes(tile.id)}
+              isFlipped={flipped.includes(tile.id)||isPeeked}
               isFound={foundTileIds.has(tile.id)}
               foundInOrder={foundInOrderSet.has(tile.id)}
               isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
@@ -2688,8 +2689,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
             />
           );
           // Tutorial mode: tiles outside the current scripted step are dimmed/inert
-          // (already-found tiles stay at full color — nothing to lock there).
-          if (allowedTileIds && !allowedTileIds.has(tile.id) && !foundTileIds.has(tile.id)) {
+          // (already-found and peeked tiles stay at full color — nothing to lock there).
+          if (allowedTileIds && !allowedTileIds.has(tile.id) && !foundTileIds.has(tile.id) && !isPeeked) {
             return <div key={tile.id} style={{opacity:0.3,filter:"grayscale(0.6)",pointerEvents:"none"}}>{tileEl}</div>;
           }
           return tileEl;
@@ -2708,8 +2709,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
 // in ALL_WORDS_4). Re-tapping those same F,L tiles together with row 2's I,P
 // completes FLIP for real (yellow if tapped out of spelling order); the remaining
 // O,W + R,D completes WORD for real (green if tapped in spelling order).
-const TUT_WORDS = ["FLIP", "WORD", "STAR", "GAME"];
+const TUT_WORDS = ["FLIP", "WORD", "PLAY", "GAME"];
 const TUT_ROW1_IDS = ["0-0", "0-1", "1-1", "1-0"]; // F, L, O, W
+const TUT_ROW2_IDS = ["0-2", "0-3", "1-2", "1-3"]; // I, P, R, D
 const TUT_FLIP_SEQ = ["0-2", "0-0", "0-3", "0-1"]; // I, F, P, L — joins "IFPL" → yellow
 const TUT_WORD_SEQ = ["1-0", "1-1", "1-2", "1-3"]; // W, O, R, D — joins "WORD" → green
 
@@ -2723,7 +2725,7 @@ function buildTutorialTiles() {
     { id: "1-2", letter: "R" }, { id: "1-3", letter: "D" },
   ];
   const rest = shuffle([
-    { id: "2-0", letter: "S" }, { id: "2-1", letter: "T" }, { id: "2-2", letter: "A" }, { id: "2-3", letter: "R" },
+    { id: "2-0", letter: "P" }, { id: "2-1", letter: "L" }, { id: "2-2", letter: "A" }, { id: "2-3", letter: "Y" },
     { id: "3-0", letter: "G" }, { id: "3-1", letter: "A" }, { id: "3-2", letter: "M" }, { id: "3-3", letter: "E" },
   ]);
   return [...row1, ...row2, ...rest];
@@ -2731,7 +2733,7 @@ function buildTutorialTiles() {
 
 function TutorialBoard({ onExit }) {
   const [tiles] = useState(buildTutorialTiles);
-  const [step, setStep] = useState("intro"); // intro → bonus → bonusExplain → yellow → yellowExplain → green → greenExplain → free → complete
+  const [step, setStep] = useState("bonus"); // bonus → bonusExplain → revealRow2 → yellow → yellowExplain → green → greenExplain → free → complete
   const [seqIndex, setSeqIndex] = useState(0);
 
   const allowedTileIds = useMemo(() => {
@@ -2739,8 +2741,15 @@ function TutorialBoard({ onExit }) {
     if (step === "yellow") return new Set([TUT_FLIP_SEQ[seqIndex]]);
     if (step === "green") return new Set([TUT_WORD_SEQ[seqIndex]]);
     if (step === "free" || step === "complete") return undefined; // fully free play
-    return new Set(); // intro / *Explain — board locked while reading
+    return new Set(); // bonusExplain / revealRow2 / *Explain — board locked while reading
   }, [step, seqIndex]);
+
+  // Row 2 is shown face-up (read-only) from the reveal step onward, so the player
+  // already knows its letters before ever being asked to pick tiles with them.
+  const peekTileIds = useMemo(() => {
+    const rowsAfterReveal = ["revealRow2", "yellow", "yellowExplain", "green", "greenExplain", "free", "complete"];
+    return rowsAfterReveal.includes(step) ? new Set(TUT_ROW2_IDS) : undefined;
+  }, [step]);
 
   function handleTileFlipped(tile) {
     if (step === "yellow" && tile.id === TUT_FLIP_SEQ[seqIndex]) setSeqIndex(i => i + 1);
@@ -2754,14 +2763,15 @@ function TutorialBoard({ onExit }) {
   }
 
   function advance() {
-    if (step === "intro") setStep("bonus");
-    else if (step === "bonusExplain") { setSeqIndex(0); setStep("yellow"); }
+    if (step === "bonusExplain") setStep("revealRow2");
+    else if (step === "revealRow2") { setSeqIndex(0); setStep("yellow"); }
     else if (step === "yellowExplain") { setSeqIndex(0); setStep("green"); }
     else if (step === "greenExplain") setStep("free");
   }
 
   const prompt = {
     bonus: "👉 Flip all 4 tiles in the top row — any order.",
+    revealRow2: "👀 Here's what's under row 2 — take a look before we use them.",
     yellow: "👉 Flip the glowing tile — follow the highlight, one at a time.",
     green: "👉 Almost there! Flip the glowing tile in order.",
     free: "👉 Nice work! Finish the puzzle — flip the rest in any order.",
@@ -2770,7 +2780,7 @@ function TutorialBoard({ onExit }) {
     greenExplain: "🟩 Right letters, right order = Green, +300 points. Now finish the puzzle!",
   }[step];
 
-  const showContinue = step === "bonusExplain" || step === "yellowExplain" || step === "greenExplain";
+  const showContinue = step === "bonusExplain" || step === "revealRow2" || step === "yellowExplain" || step === "greenExplain";
 
   return (
     <div style={{ width: "100%", animation: "menuIn 0.3s ease" }}>
@@ -2795,29 +2805,12 @@ function TutorialBoard({ onExit }) {
         words={TUT_WORDS}
         fixedTiles={tiles}
         allowedTileIds={allowedTileIds}
+        peekTileIds={peekTileIds}
         onTileFlipped={handleTileFlipped}
         onGuessResolved={handleGuessResolved}
         onWin={() => setStep("complete")}
         timeLimit={null}
       />
-
-      {step === "intro" && (
-        <div style={{ position: "fixed", inset: 0, background: "#000000bb", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
-          <div style={{ background: "linear-gradient(160deg,#0e1e30,#0a1520)", border: "1.5px solid var(--wf-border)", borderRadius: 20, padding: "28px 24px", maxWidth: 360, width: "100%", boxShadow: "0 20px 60px #000a", animation: "menuIn 0.3s ease" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>👋</div>
-              <h2 style={{ fontFamily: "'Fraunces',serif", color: "#F5EDD6", fontSize: "1.4rem", fontWeight: 700, margin: "0 0 10px" }}>Let's flip some tiles!</h2>
-              <p style={{ fontFamily: "'JetBrains Mono',monospace", color: "var(--wf-text-dim)", fontSize: "0.78rem", lineHeight: 1.7, margin: 0 }}>
-                This is a real board. We'll walk you through your first few flips, then you finish the puzzle yourself.
-              </p>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-              <button onClick={advance} style={{ ...btnStyle("var(--wf-accent)", "#0a2e24"), padding: "10px", fontWeight: 700 }}>Start →</button>
-              <button onClick={onExit} style={{ ...btnStyle("transparent", "var(--wf-text-mute)"), padding: "6px", fontSize: "0.75rem", textDecoration: "underline", border: "none" }}>Skip tutorial</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {step === "complete" && (
         <div style={{ position: "fixed", inset: 0, background: "#000000bb", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
@@ -5056,7 +5049,7 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "🪙",
       title: "Earn Coins, Buy Power-ups",
-      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus themes and tile backs. Keep a daily streak going for bonus coins!",
+      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus themes and tile backs. Keep a daily streak going for bonus coins! One last thing — let's try a real board together, step by step.",
       visual: (
         <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0"}}>
           {[["💡","Hint"],["🔍","X-ray"],["🧊","Freeze"]].map(([em,label])=>(
@@ -5092,7 +5085,7 @@ function HowToPlay({ onClose, onFinish }) {
             <button onClick={()=>setStep(s=>s-1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,padding:"10px"}}>← Back</button>
           )}
           <button onClick={isLast ? (onFinish||onClose) : ()=>setStep(s=>s+1)} style={{...btnStyle(isLast?"var(--wf-accent)":"var(--wf-border)",isLast?"#0a2e24":"#F5EDD6"),flex:2,padding:"10px",fontWeight:700}}>
-            {isLast ? "Let's Play! 🎉" : "Next →"}
+            {isLast ? "Try it live →" : "Next →"}
           </button>
         </div>
         {!isLast && (
@@ -6538,7 +6531,6 @@ function WordFlip() {
                   {metaBtn("achievements","🏅","Achievements")}
                   {metaBtn("rewards","🎁","Rewards",{glow:rewardsNew})}
                   {metaBtn("inventory","🎒","Inventory")}
-                  {metaBtn("tutorial","🎓","Tutorial",{wide:true})}
                   {session && metaBtn("shop","🛍️","Shop",{glow:shopHasNew(), wide:true})}
                 </div>
               );
