@@ -2238,7 +2238,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 }
 
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved, peekTileIds }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved }) {
   const cols = words.length===4?4:6;
   // Resume an in-progress daily so leaving mid-game continues instead of restarting.
   const savedProg = isDaily ? getDailyProgress() : null;
@@ -2674,10 +2674,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
           boxShadow:"0 4px 32px #00000055",
         }}>
         {tiles.map(tile=>{
-          const isPeeked = peekTileIds && peekTileIds.has(tile.id);
           const tileEl = (
             <Tile key={tile.id} tile={tile}
-              isFlipped={flipped.includes(tile.id)||isPeeked}
+              isFlipped={flipped.includes(tile.id)}
               isFound={foundTileIds.has(tile.id)}
               foundInOrder={foundInOrderSet.has(tile.id)}
               isSelected={flipped.includes(tile.id)&&!error.includes(tile.id)}
@@ -2689,8 +2688,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
             />
           );
           // Tutorial mode: tiles outside the current scripted step are dimmed/inert
-          // (already-found and peeked tiles stay at full color — nothing to lock there).
-          if (allowedTileIds && !allowedTileIds.has(tile.id) && !foundTileIds.has(tile.id) && !isPeeked) {
+          // (already-found tiles stay at full color — nothing to lock there).
+          if (allowedTileIds && !allowedTileIds.has(tile.id) && !foundTileIds.has(tile.id)) {
             return <div key={tile.id} style={{opacity:0.3,filter:"grayscale(0.6)",pointerEvents:"none"}}>{tileEl}</div>;
           }
           return tileEl;
@@ -2733,23 +2732,20 @@ function buildTutorialTiles() {
 
 function TutorialBoard({ onExit }) {
   const [tiles] = useState(buildTutorialTiles);
-  const [step, setStep] = useState("bonus"); // bonus → bonusExplain → revealRow2 → yellow → yellowExplain → green → greenExplain → free → complete
+  const [step, setStep] = useState("bonus"); // bonus → bonusExplain → row2 → row2Explain → yellow → yellowExplain → green → greenExplain → free → complete
   const [seqIndex, setSeqIndex] = useState(0);
 
   const allowedTileIds = useMemo(() => {
     if (step === "bonus") return new Set(TUT_ROW1_IDS);
+    // Row 2's letters (I,P,R,D) sort to "DRIP" — a real word already in the
+    // game's bank, and not one of this board's 4 target words — so flipping
+    // all 4 for real resolves as a genuine second bonus, exactly like row 1.
+    if (step === "row2") return new Set(TUT_ROW2_IDS);
     if (step === "yellow") return new Set([TUT_FLIP_SEQ[seqIndex]]);
     if (step === "green") return new Set([TUT_WORD_SEQ[seqIndex]]);
     if (step === "free" || step === "complete") return undefined; // fully free play
-    return new Set(); // bonusExplain / revealRow2 / *Explain — board locked while reading
+    return new Set(); // *Explain — board locked while reading
   }, [step, seqIndex]);
-
-  // Row 2 is shown face-up (read-only) from the reveal step onward, so the player
-  // already knows its letters before ever being asked to pick tiles with them.
-  const peekTileIds = useMemo(() => {
-    const rowsAfterReveal = ["revealRow2", "yellow", "yellowExplain", "green", "greenExplain", "free", "complete"];
-    return rowsAfterReveal.includes(step) ? new Set(TUT_ROW2_IDS) : undefined;
-  }, [step]);
 
   function handleTileFlipped(tile) {
     if (step === "yellow" && tile.id === TUT_FLIP_SEQ[seqIndex]) setSeqIndex(i => i + 1);
@@ -2758,29 +2754,31 @@ function TutorialBoard({ onExit }) {
 
   function handleGuessResolved(result) {
     if (step === "bonus" && result.kind === "bonus") setStep("bonusExplain");
+    if (step === "row2" && result.kind === "bonus") setStep("row2Explain");
     if (step === "yellow" && result.kind === "match") setStep("yellowExplain");
     if (step === "green" && result.kind === "match") setStep("greenExplain");
   }
 
   function advance() {
-    if (step === "bonusExplain") setStep("revealRow2");
-    else if (step === "revealRow2") { setSeqIndex(0); setStep("yellow"); }
+    if (step === "bonusExplain") setStep("row2");
+    else if (step === "row2Explain") { setSeqIndex(0); setStep("yellow"); }
     else if (step === "yellowExplain") { setSeqIndex(0); setStep("green"); }
     else if (step === "greenExplain") setStep("free");
   }
 
   const prompt = {
     bonus: "👉 Flip all 4 tiles in the top row — any order.",
-    revealRow2: "👀 Here's what's under row 2 — take a look before we use them.",
+    row2: "👉 Now flip all 4 tiles in the second row — any order.",
     yellow: "👉 Flip the glowing tile — follow the highlight, one at a time.",
     green: "👉 Almost there! Flip the glowing tile in order.",
     free: "👉 Nice work! Finish the puzzle — flip the rest in any order.",
     bonusExplain: "✨ That's a Bonus Word! It's not one of this puzzle's 4 real words, but any valid word — in any order — still earns +50.",
+    row2Explain: "✨ Another bonus word! Between rows 1 and 2, we've now seen enough letters to spell some of our real words.",
     yellowExplain: "🟨 Right letters, wrong order = Yellow, +100 points.",
     greenExplain: "🟩 Right letters, right order = Green, +300 points. Now finish the puzzle!",
   }[step];
 
-  const showContinue = step === "bonusExplain" || step === "revealRow2" || step === "yellowExplain" || step === "greenExplain";
+  const showContinue = step === "bonusExplain" || step === "row2Explain" || step === "yellowExplain" || step === "greenExplain";
 
   return (
     <div style={{ width: "100%", animation: "menuIn 0.3s ease" }}>
@@ -2805,7 +2803,6 @@ function TutorialBoard({ onExit }) {
         words={TUT_WORDS}
         fixedTiles={tiles}
         allowedTileIds={allowedTileIds}
-        peekTileIds={peekTileIds}
         onTileFlipped={handleTileFlipped}
         onGuessResolved={handleGuessResolved}
         onWin={() => setStep("complete")}
