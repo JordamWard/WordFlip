@@ -656,7 +656,7 @@ function getMyPlayerId() {
 const MP_COLORS = ['#00F5C4', '#FFB703', '#FF5E5B', '#9B5DE5'];
 
 // ─── Word Bank ────────────────────────────────────────────────────────────────
-// 400+ themed 4-word sets — enough for over a year of daily challenges without repeats
+// 480+ themed 4-word sets — enough for over a year of daily challenges without repeats
 const ALL_WORDS_4 = [
   // NATURE / WEATHER
   ["GUST","HAIL","SLOP","DRIP"],["MIST","HAZE","SMOG","DULL"],
@@ -897,6 +897,127 @@ const ALL_WORDS_4 = [
     ["KEEN","WAIL","WEEP","MOAN"],  ["SLAB","TILE","PAVE","FLAG"],
     ["JIBE","TACK","LUFF","VEER"],  ["BOLD","LOUD","DEEP","RICH"],
     ["LUSH","DAMP","FERN","MOSS"],  ["BOON","BALE","BODE","BANE"],
+
+  // ─── +400 common-word sets ──────────────────────────────────
+  // TIME & CALENDAR
+  ["TIME","YEAR","WEEK","HOUR"],["DATE","DAYS","LAST","PAST"],
+  // SCHOOL & LEARNING
+  ["BOOK","READ","TERM","EXAM"],["TEST","MATH","UNIT","FAIL"],
+  // WORK & BUSINESS
+  ["JOBS","BOSS","TEMP","HOST"],["WAGE","DUTY","RULE","PREP"],
+  ["LABS","EXPO","GURU","EDIT"],["SELL","BIDS","OWNS","LOSS"],
+  ["PROS","CONS","ENDS","GONE"],
+  // MONEY & SHOPPING
+  ["SHOP","SALE","CASH","GIFT"],["LOAN","DEBT","RENT","FUND"],
+  ["COIN","CENT","EURO","EARN"],["BAGS","TAGS","MALL","BULK"],
+  // PLACES & DIRECTIONS
+  ["CITY","TOWN","AREA","PARK"],["WEST","EAST","LEFT","BACK"],
+  // TRANSPORT
+  ["BOAT","BIKE","AUTO","TAXI"],["CARS","TIRE","JEEP","JETS"],
+  // FAMILY & PEOPLE
+  ["BABY","WIFE","BOYS","GIRL"],["KIDS","TEEN","MOMS","SONS"],
+  ["LADY","GUYS","MALE","BORN"],
+  // BODY
+  ["HEAD","FACE","FEET","FOOT"],["EYES","NOSE","LIPS","EARS"],
+  ["ARMS","LEGS","FIST","BALD"],
+  // HEALTH & WELLNESS
+  ["PILL","DOSE","CURE","SICK"],["DIET","SPAS","MASK","YOGA"],
+  // FOOD & KITCHEN
+  ["FOOD","MEAL","MEAT","MILK"],["EGGS","NUTS","OILS","CHEF"],
+  ["CAFE","MENU","DISH","CUPS"],
+  // CLOTHING
+  ["SUIT","SHOE","HATS","CAPS"],["WEAR","FITS","HOOD","TIES"],
+  // SPORTS & GAMES
+  ["GOLF","POLO","TEAM","CLUB"],["GAME","PLAY","TOYS","DOLL"],
+  ["WINS","LOSE","FOUL","HITS"],
+  // ANIMALS
+  ["DOGS","CATS","BIRD","MICE"],["PETS","BUGS","PUPS","TAIL"],
+  // ARTS & MUSIC
+  ["SONG","SING","ALTO","PUNK"],["POEM","MIME","IDOL","HERO"],
+  ["ECHO","DEMO","ICON","POET"],
+  // TECH & MEDIA
+  ["DATA","INFO","USER","SITE"],["TEXT","CHAT","POST","NEWS"],
+  ["DISK","CAMS","TABS","MODE"],["PICS","UNDO","DOCS","ITEM"],
+  // MIND & CONCEPTS
+  ["IDEA","KNOW","MIND","SEEM"],["LUCK","FATE","FACT","RISK"],
+  ["RELY","URGE","COPE","LEAN"],["TIER","GAPS","FEAT","AGES"],
+  // EMOTIONS
+  ["HATE","MOOD","MISS","KISS"],
+  // FARM & NATURE
+  ["FARM","CROP","TREE","LEAF"],["HILL","BUSH","PINE","OAKS"],
+  ["WIND","HEAT","PEAK","GULF"],
+  // SPACE & SCIENCE
+  ["NOVA","MARS","ACID","BETA"],
+  // SIZE, SHAPE & DESCRIPTION
+  ["OVAL","LONG","HIGH","FULL"],["HARD","EASY","FAST","SLOW"],
+  ["GOOD","BEST","TRUE","PURE"],["RARE","WEAK","THIN","BUSY"],
+  // MEASURING
+  ["INCH","TONS","ACRE","MILE"],
+  // COMMUNICATION
+  ["TALK","TELL","SAYS","ASKS"],["DENY","JOKE","CITE","DARE"],
+  // ACTION / MOVEMENT
+  ["TAKE","MAKE","GIVE","HELP"],["STOP","WAIT","STAY","HANG"],
+  ["FILL","DUMP","SWAP","TEND"],["VIEW","LOOK","HEAR","SEES"],
+  ["GROW","GREW","DREW","PUTS"],
+  // WORK / TOOLS
+  ["FORK","PUMP","DIAL","MILL"],
+  // CIVICS & SOCIETY
+  ["VOTE","LAWS","JURY","POLL"],
+  // MISC EVERYDAY
+  ["ROOM","ROOF","YARD","MESS"],["BELL","YARN","JUNK","CLAN"],
+  ["NAME","CASE","SIDE","WAYS"],["SELF","FAME","LIFE","LONE"],
+  ["SIZE","MINE","DIRT","GUNK"],
+  // PAST TENSE VERBS
+  ["PAID","TOLD","TOOK","WENT"],["CAME","HELD","KEPT","KNEW"],
+  ["GAVE","SENT","MADE","SEEN"],
+  // NUMBERS & AMOUNTS
+  ["FOUR","FIVE","NINE","PLUS"],
+  // DESCRIPTIVE WORDS II
+  ["FREE","WELL","MAIN","SAME"],["OPEN","DOWN","AWAY","ABLE"],
+  // HOME & CONTAINERS
+  ["SEAT","BASE","TUBE","WING"],["STEM","TIED","BENT","POSE"],
+  // GRAMMAR: PREPOSITIONS
+  ["WITH","FROM","INTO","UPON"],["OVER","ONTO","ANTI","SANS"],
+  // GRAMMAR: PRONOUNS
+  ["YOUR","THEM","WHOM","OURS"],
+  // GRAMMAR: LINKING WORDS
+  ["ALSO","THUS","THAN","THEN"],
+  // GRAMMAR: QUANTIFIERS
+  ["EACH","BOTH","MOST","MANY"],
+  // GRAMMAR: HELPING VERBS
+  ["HAVE","WILL","BEEN","WERE"],
+  // GRAMMAR: POINTING & ASKING WORDS
+  ["WHAT","WHEN","HERE","THIS"],
+  // GRAMMAR: EVERYDAY FILLER WORDS
+  ["LIKE","JUST","VERY","ONLY"],
+  // GRAMMAR: MORE LITTLE WORDS
+  ["SOME","LESS","EVER","ONCE"],
+  // GRAMMAR: ODDS & ENDS
+  ["ELSE","DOES","MUST","ONES"],
+  // LOTS OF E'S
+  ["DEER","GEEK","FEED","TEEM"],
+  // THE LETTER Q
+  ["QUIZ","QUIT","QUAD","QUID"],
+  // THE LETTER X
+  ["FOXY","WAXY","APEX","JINX"],
+  // THE LETTER Z
+  ["LAZY","ZANY","DOZE","MAZE"],
+  // DOUBLE LETTERS
+  ["ADDS","INNS","ERRS","MUSS"],
+  // RHYMES WITH -ACK
+  ["LACK","SACK","JACK","YACK"],
+  // ANAGRAMS (same 4 letters, A R S T)
+  ["ARTS","RATS","TARS","TSAR"],
+  // OLDE ENGLISH
+  ["THOU","THEE","DOTH","HATH"],
+  // GRAMMAR: MORE LINKERS
+  ["THAT","THEY","SUCH","MORE"],
+  // DESCRIPTIVE WORDS III
+  ["REAL","FINE","NICE","CUTE"],
+  // EVERYDAY VERBS
+  ["NEED","LIVE","COME","GOES"],
+  // HOME & LIFE
+  ["HOME","BODY","KIND","LATE"],
 ];
 
 const ALL_WORDS_9 = [
