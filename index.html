@@ -5026,8 +5026,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts)) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
-    const wordResultsArr = getDailyWords().map((_,i) => done?.wordResults?.[i] || "yellow");
-    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr, getDailyWords().length, (done?.bonusWords||[]).length);
+    const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr2, getDailyWords().length, (done?.bonusWords||[]).length);
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
