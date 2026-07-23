@@ -2238,7 +2238,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 }
 
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved, gridRef }) {
   const cols = words.length===4?4:6;
   // Resume an in-progress daily so leaving mid-game continues instead of restarting.
   const savedProg = isDaily ? getDailyProgress() : null;
@@ -2666,6 +2666,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       })()}
       <div
         role="grid"
+        ref={gridRef}
         aria-label="WordFlip game board"
         style={{
           display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,
@@ -2734,6 +2735,37 @@ function TutorialBoard({ onExit }) {
   const [tiles] = useState(buildTutorialTiles);
   const [step, setStep] = useState("bonus"); // bonus → bonusExplain → row2 → row2Explain → yellow → yellowExplain → green → greenExplain → free → complete
   const [seqIndex, setSeqIndex] = useState(0);
+  const wrapRef = useRef(null);
+  const gridRef = useRef(null);
+  // Rows 3-4 (PLAY/GAME) sit untouched — never in any allowedTileIds set —
+  // for the whole guided sequence, only unlocking at "free". That makes the
+  // bottom half of the grid a stable place to dock the instruction card: it
+  // always overlays inert tiles, and the board never shifts as prompt text
+  // grows/shrinks, since the overlay is positioned absolutely, not in-flow.
+  const [overlayRect, setOverlayRect] = useState(null);
+  useEffect(() => {
+    function measure() {
+      if (!gridRef.current || !wrapRef.current) return;
+      const g = gridRef.current.getBoundingClientRect();
+      const w = wrapRef.current.getBoundingClientRect();
+      const halfHeight = g.height / 2;
+      // Inset so the card doesn't fully blot out rows 3-4 — a visible sliver
+      // of tile edges peeking out on every side signals there's more board
+      // under here, not just an instructions panel bolted to the bottom.
+      const inset = 14;
+      setOverlayRect({
+        top: g.top - w.top + halfHeight + inset,
+        left: g.left - w.left + inset,
+        width: g.width - inset * 2,
+        height: halfHeight - inset * 2,
+      });
+    }
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (gridRef.current) ro.observe(gridRef.current);
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
 
   const allowedTileIds = useMemo(() => {
     if (step === "bonus") return new Set(TUT_ROW1_IDS);
@@ -2779,24 +2811,16 @@ function TutorialBoard({ onExit }) {
   }[step];
 
   const showContinue = step === "bonusExplain" || step === "row2Explain" || step === "yellowExplain" || step === "greenExplain";
+  // Rows 3-4 are the live play area during "free" — can't dock a card on top
+  // of tiles the player needs to tap, so that one prompt stays in normal flow.
+  const overlayPrompt = prompt && step !== "free";
 
   return (
-    <div style={{ width: "100%", animation: "menuIn 0.3s ease" }}>
+    <div ref={wrapRef} style={{ width: "100%", position: "relative", animation: "menuIn 0.3s ease" }}>
       <button onClick={onExit} style={{ ...btnStyle("var(--wf-border)", "var(--wf-text-dim)"), marginBottom: 14, fontSize: "0.8rem" }}>← Menu</button>
 
-      {prompt && (
-        <div style={{
-          background: "linear-gradient(135deg,#12253a,#0a1520)", border: "1.5px solid var(--wf-accent2)",
-          borderRadius: 12, padding: "10px 14px", marginBottom: 10,
-          display: "flex", flexDirection: "column", gap: 8, alignItems: "center", textAlign: "center",
-        }}>
-          <p style={{ fontFamily: "'JetBrains Mono',monospace", color: "#F5EDD6", fontSize: "0.8rem", lineHeight: 1.5, margin: 0 }}>{prompt}</p>
-          {showContinue && (
-            <button onClick={advance} style={{ ...btnStyle("var(--wf-accent)", "#0a2e24"), padding: "7px 18px", fontSize: "0.78rem", fontWeight: 700 }}>
-              Continue →
-            </button>
-          )}
-        </div>
+      {step === "free" && prompt && (
+        <p style={{ textAlign: "center", fontFamily: "'JetBrains Mono',monospace", color: "var(--wf-text-dim)", fontSize: "0.8rem", margin: "0 0 10px" }}>{prompt}</p>
       )}
 
       <GameBoard
@@ -2807,7 +2831,26 @@ function TutorialBoard({ onExit }) {
         onGuessResolved={handleGuessResolved}
         onWin={() => setStep("complete")}
         timeLimit={null}
+        gridRef={gridRef}
       />
+
+      {overlayPrompt && overlayRect && (
+        <div style={{
+          position: "absolute", top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 14px", zIndex: 10,
+          background: "linear-gradient(135deg,#12253af2,#0a1520f2)", border: "1.5px solid var(--wf-accent2)",
+          borderRadius: 12, boxShadow: "0 8px 28px #000000aa", backdropFilter: "blur(2px)",
+        }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", textAlign: "center" }}>
+            <p style={{ fontFamily: "'JetBrains Mono',monospace", color: "#F5EDD6", fontSize: "0.8rem", lineHeight: 1.4, margin: 0 }}>{prompt}</p>
+            {showContinue && (
+              <button onClick={advance} style={{ ...btnStyle("var(--wf-accent)", "#0a2e24"), padding: "7px 18px", fontSize: "0.78rem", fontWeight: 700 }}>
+                Continue →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {step === "complete" && (
         <div style={{ position: "fixed", inset: 0, background: "#000000bb", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
@@ -5065,31 +5108,34 @@ function HowToPlay({ onClose, onFinish }) {
 
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"linear-gradient(160deg,#0e1e30,#0a1520)",border:"1.5px solid var(--wf-border)",borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",boxShadow:"0 20px 60px #000a",animation:"menuIn 0.3s ease"}}>
-        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:20}}>
+      {/* Fixed card height (not content-driven) so the Next button lands in the
+          same spot on every slide, regardless of how much title/body/visual a
+          given step has — makes rapid click-through reliable. */}
+      <div style={{background:"linear-gradient(160deg,#0e1e30,#0a1520)",border:"1.5px solid var(--wf-border)",borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",height:"min(560px,88vh)",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px #000a",animation:"menuIn 0.3s ease"}}>
+        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:20,flexShrink:0}}>
           {steps.map((_,i)=>(
             <div key={i} onClick={()=>setStep(i)} style={{width:i===step?20:6,height:6,borderRadius:3,background:i===step?"var(--wf-accent)":"var(--wf-border)",transition:"all 0.3s",cursor:"pointer"}}/>
           ))}
         </div>
-        <div style={{textAlign:"center"}}>
+        <div style={{textAlign:"center",flex:1,minHeight:0,display:"flex",flexDirection:"column",justifyContent:"center",overflowY:"auto"}}>
           <div style={{fontSize:"2.5rem",marginBottom:8}}>{s.emoji}</div>
           <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.4rem",fontWeight:700,margin:"0 0 10px"}}>{s.title}</h2>
           <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem",lineHeight:1.7,margin:0}}>{s.body}</p>
           {s.visual}
         </div>
-        <div style={{display:"flex",gap:10,marginTop:16}}>
-          {step > 0 && (
-            <button onClick={()=>setStep(s=>s-1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,padding:"10px"}}>← Back</button>
-          )}
+        <div style={{display:"flex",gap:10,marginTop:16,flexShrink:0}}>
+          <button onClick={()=>setStep(s=>s-1)} disabled={step===0} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,padding:"10px",visibility:step===0?"hidden":"visible"}}>← Back</button>
           <button onClick={isLast ? (onFinish||onClose) : ()=>setStep(s=>s+1)} style={{...btnStyle(isLast?"var(--wf-accent)":"var(--wf-border)",isLast?"#0a2e24":"#F5EDD6"),flex:2,padding:"10px",fontWeight:700}}>
             {isLast ? "Try it live →" : "Next →"}
           </button>
         </div>
-        {!isLast && (
-          <button onClick={onClose} style={{...btnStyle("transparent","var(--wf-text-mute)"),width:"100%",padding:"6px",marginTop:6,fontSize:"0.75rem",textDecoration:"underline",border:"none"}}>
-            Skip tutorial
-          </button>
-        )}
+        <div style={{height:30,marginTop:6,flexShrink:0}}>
+          {!isLast && (
+            <button onClick={onClose} style={{...btnStyle("transparent","var(--wf-text-mute)"),width:"100%",padding:"6px",fontSize:"0.75rem",textDecoration:"underline",border:"none"}}>
+              Skip tutorial
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
