@@ -2749,7 +2749,16 @@ function TutorialBoard({ onExit }) {
       const g = gridRef.current.getBoundingClientRect();
       const w = wrapRef.current.getBoundingClientRect();
       const halfHeight = g.height / 2;
-      setOverlayRect({ top: g.top - w.top + halfHeight, left: g.left - w.left, width: g.width, height: halfHeight });
+      // Inset so the card doesn't fully blot out rows 3-4 — a visible sliver
+      // of tile edges peeking out on every side signals there's more board
+      // under here, not just an instructions panel bolted to the bottom.
+      const inset = 14;
+      setOverlayRect({
+        top: g.top - w.top + halfHeight + inset,
+        left: g.left - w.left + inset,
+        width: g.width - inset * 2,
+        height: halfHeight - inset * 2,
+      });
     }
     measure();
     const ro = new ResizeObserver(measure);
