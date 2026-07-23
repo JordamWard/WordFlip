@@ -2950,7 +2950,7 @@ function Firework({ color, trigger, large }) {
 }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], coins = 0, coinsFormula = "" }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], coins = 0, coinsFormula = "", onShop, shopGlow }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -3059,9 +3059,16 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
               <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.66rem", marginTop:3}}>{coinsFormula}</div>
             )}
           </div>
-          <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-            <Firework color="var(--wf-accent)" trigger={firedSet.has("coins")} large />
-            <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" />
+          <div style={{display:"flex", alignItems:"center", gap:10}}>
+            <div style={{position:"relative", display:"flex", alignItems:"center"}}>
+              <Firework color="var(--wf-accent)" trigger={firedSet.has("coins")} large />
+              <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" />
+            </div>
+            {onShop && (
+              <button onClick={onShop} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'7px 12px', fontSize:'0.72rem', flexShrink:0, border:'1.5px solid #00F5C455', animation: shopGlow?'shopPulse 1.5s ease-in-out infinite':'none'}}>
+                🛍️ Shop
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -3072,7 +3079,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 // ─── Career Progress Row — a taste of the Rewards ladder, right on Results ─────
 // Mirrors RewardsScreen's "next reward" bar: fills within the current tier, or
 // from zero if this game's points pushed you into a new tier.
-function CareerProgressRow({ before, after, delay = 900 }) {
+function CareerProgressRow({ before, after, delay = 900, onClick }) {
   const gain = after - before;
   const fromProg = nextRewardProgress(before);
   const toProg = nextRewardProgress(after);
@@ -3101,11 +3108,14 @@ function CareerProgressRow({ before, after, delay = 900 }) {
   }, [active]);
   if (gain <= 0) return null;
   return (
-    <div style={{
+    <div onClick={onClick} role={onClick?"button":undefined} tabIndex={onClick?0:undefined}
+      onKeyDown={onClick?(e=>{if(e.key==="Enter"||e.key===" ")onClick();}):undefined}
+      style={{
       background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14,
       padding:"14px 16px", marginBottom:20, textAlign:"left",
       opacity:active?1:0, transform:active?"scale(1)":"scale(0.92)",
       transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
+      cursor: onClick ? "pointer" : "default",
     }}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>🎁 CAREER PROGRESS</span>
@@ -3114,9 +3124,16 @@ function CareerProgressRow({ before, after, delay = 900 }) {
       <div style={{height:8, borderRadius:4, background:"var(--wf-border)", overflow:"hidden"}}>
         <div style={{width:`${pct}%`, height:"100%", background:"linear-gradient(90deg,#FFB703,#ff9f1c)", transition:"width 0.15s linear"}} />
       </div>
-      {toProg.entry && (
-        <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.66rem", marginTop:6}}>
-          {Math.max(0, toProg.entry.points - after).toLocaleString()} pts to next reward
+      {(toProg.entry || onClick) && (
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6}}>
+          <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.66rem"}}>
+            {toProg.entry ? `${Math.max(0, toProg.entry.points - after).toLocaleString()} pts to next reward` : ""}
+          </span>
+          {onClick && (
+            <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-accent2)", fontSize:"0.66rem", fontWeight:700}}>
+              View rewards →
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -3139,7 +3156,6 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const careerDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
   const hasCareerGain = careerGain && careerGain.after > careerGain.before;
   const streakDelay = careerDelay + (hasCareerGain ? 1400 : 0);
-  const crossedReward = hasCareerGain && REWARD_LADDER.some(r => careerGain.before < r.points && careerGain.after >= r.points);
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -3183,9 +3199,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         bonusWords={result.bonusWords||[]}
         coins={coins}
         coinsFormula={coinsFormula}
+        onShop={signedIn ? onShop : null}
+        shopGlow={shopHasNew()}
       />
       {hasCareerGain&&(
-        <CareerProgressRow before={careerGain.before} after={careerGain.after} delay={careerDelay} />
+        <CareerProgressRow before={careerGain.before} after={careerGain.after} delay={careerDelay} onClick={onRewards} />
       )}
       {isDaily&&(
         <div style={{marginBottom:20}}>
@@ -3203,13 +3221,8 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         )}
         <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
       </div>
-      {signedIn && onShop && coins > 0 && (
-        <button onClick={onShop} style={{...btnStyle("transparent","var(--wf-accent)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline",animation: shopHasNew()?"shopPulse 1.5s ease-in-out infinite":"none"}}>
-          🛍️ Spend your coins in the Shop →
-        </button>
-      )}
-      {signedIn && onRewards && (
-        <button onClick={onRewards} style={{...btnStyle("transparent","var(--wf-accent2)"),marginTop:8,fontSize:"0.82rem",border:"none",textDecoration:"underline",animation: crossedReward?"shopPulse 1.5s ease-in-out infinite":"none"}}>
+      {signedIn && onRewards && !hasCareerGain && (
+        <button onClick={onRewards} style={{...btnStyle("transparent","var(--wf-accent2)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline"}}>
           🎁 View your rewards →
         </button>
       )}
@@ -5537,40 +5550,55 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
   }, []);
 
   // Fill-from-old animation + gold pulse, only when arriving with a just-earned
-  // delta (i.e. via the Results screen's "View Rewards" button).
+  // delta (i.e. via the Results screen's "View Rewards" button). Runs as a
+  // sequence of segments split at each crossed reward's threshold, so a card's
+  // celebration finishes completely before the bar resumes toward the next one.
   useEffect(() => {
     if (!hasGain) return;
-    const delta = gain.after - gain.before;
-    const crossed = REWARD_LADDER.filter(r => gain.before < r.points && gain.after >= r.points);
-    const START = 650, DURATION = 1300, FRAMES = 30;
+    const crossed = REWARD_LADDER.filter(r => gain.before < r.points && gain.after >= r.points)
+      .sort((a,b)=>a.points-b.points);
+    const waypoints = [gain.before, ...crossed.map(r=>r.points), gain.after];
+    const START = 650, SEG_DURATION = 700, FRAMES = 18, PULSE_HOLD = 1200;
     const timeouts = [];
-    crossed.forEach(r => {
-      const at = START + DURATION * (r.points - gain.before) / delta;
-      timeouts.push(setTimeout(() => {
-        setGoldPulse(s => new Set(s).add(r.id));
-        timeouts.push(setTimeout(() => {
-          setGoldPulse(s => { const n = new Set(s); n.delete(r.id); return n; });
-        }, 1100));
-      }, at));
-    });
-    timeouts.push(setTimeout(() => {
+
+    function runSegment(i) {
+      if (i >= waypoints.length - 1) { setTweenDone(true); return; }
+      const from = waypoints[i], to = waypoints[i+1];
       let frame = 0;
       tweenInterval.current = setInterval(() => {
         frame++;
-        setDisplayCareer(Math.round(gain.before + (frame / FRAMES) * delta));
+        setDisplayCareer(Math.round(from + (frame / FRAMES) * (to - from)));
         if (frame >= FRAMES) {
           clearInterval(tweenInterval.current);
-          setDisplayCareer(gain.after);
-          setTweenDone(true);
+          setDisplayCareer(to);
+          const landedReward = crossed.find(r => r.points === to);
+          if (landedReward) {
+            setGoldPulse(s => new Set(s).add(landedReward.id));
+            timeouts.push(setTimeout(() => {
+              setGoldPulse(s => { const n = new Set(s); n.delete(landedReward.id); return n; });
+              runSegment(i + 1);
+            }, PULSE_HOLD));
+          } else {
+            runSegment(i + 1);
+          }
         }
-      }, Math.round(DURATION / FRAMES));
-    }, START));
-    timeouts.push(setTimeout(() => setBadgeVisible(false), START + DURATION + 700));
+      }, Math.round(SEG_DURATION / FRAMES));
+    }
+
+    timeouts.push(setTimeout(() => runSegment(0), START));
     return () => {
       timeouts.forEach(clearTimeout);
       if (tweenInterval.current) clearInterval(tweenInterval.current);
     };
   }, []);
+
+  // Fade the "+N" badge out shortly after the whole sequence (however long it
+  // ran, depending on how many milestones were crossed) settles.
+  useEffect(() => {
+    if (!hasGain || !tweenDone) return;
+    const t = setTimeout(() => setBadgeVisible(false), 500);
+    return () => clearTimeout(t);
+  }, [tweenDone]);
 
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
@@ -5610,11 +5638,13 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
         const golden = goldPulse.has(entry.id);
         return (
           <div key={entry.id} ref={el => cardRefs.current[entry.id] = el} style={{
+            position:'relative',
             background: golden ? 'linear-gradient(135deg,#3a2f10,var(--wf-surface))' : 'var(--wf-surface)',
             border:`1.5px solid ${golden?'#FFD700':fresh?'var(--wf-accent2)':active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
             borderRadius:14, padding:'12px 14px', marginBottom:12, opacity: unlocked||isNext ? 1 : 0.55,
             animation: golden ? 'rewardGold 1.1s ease' : fresh ? `rewardPop 0.85s ease ${0.25 + Math.max(0,freshOrder.indexOf(entry.id))*0.18}s both` : 'none',
           }}>
+            <Firework color="#FFD700" trigger={golden} large />
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               <div style={{filter: unlocked ? 'none' : 'grayscale(0.7)', position:'relative'}}>
                 <RewardPreview entry={entry} />
