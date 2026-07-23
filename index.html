@@ -2709,23 +2709,23 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
 // in ALL_WORDS_4). Re-tapping those same F,L tiles together with row 2's I,P
 // completes FLIP for real (yellow if tapped out of spelling order); the remaining
 // O,W + R,D completes WORD for real (green if tapped in spelling order).
-const TUT_WORDS = ["FLIP", "WORD", "PLAY", "GAME"];
-const TUT_ROW1_IDS = ["0-0", "0-1", "1-1", "1-0"]; // F, L, O, W
-const TUT_ROW2_IDS = ["0-2", "0-3", "1-2", "1-3"]; // I, P, R, D
-const TUT_FLIP_SEQ = ["0-2", "0-0", "0-3", "0-1"]; // I, F, P, L — joins "IFPL" → yellow
+const TUT_WORDS = ["PLAY", "WORD", "FLIP", "GAME"];
+const TUT_ROW1_IDS = ["2-0", "2-1", "1-1", "1-0"]; // F, L, O, W
+const TUT_ROW2_IDS = ["2-2", "2-3", "1-2", "1-3"]; // I, P, R, D
+const TUT_FLIP_SEQ = ["2-2", "2-0", "2-3", "2-1"]; // I, F, P, L — joins "IFPL" → yellow
 const TUT_WORD_SEQ = ["1-0", "1-1", "1-2", "1-3"]; // W, O, R, D — joins "WORD" → green
 
 function buildTutorialTiles() {
   const row1 = [
-    { id: "0-0", letter: "F" }, { id: "0-1", letter: "L" },
+    { id: "2-0", letter: "F" }, { id: "2-1", letter: "L" },
     { id: "1-1", letter: "O" }, { id: "1-0", letter: "W" },
   ];
   const row2 = [
-    { id: "0-2", letter: "I" }, { id: "0-3", letter: "P" },
+    { id: "2-2", letter: "I" }, { id: "2-3", letter: "P" },
     { id: "1-2", letter: "R" }, { id: "1-3", letter: "D" },
   ];
   const rest = shuffle([
-    { id: "2-0", letter: "P" }, { id: "2-1", letter: "L" }, { id: "2-2", letter: "A" }, { id: "2-3", letter: "Y" },
+    { id: "0-0", letter: "P" }, { id: "0-1", letter: "L" }, { id: "0-2", letter: "A" }, { id: "0-3", letter: "Y" },
     { id: "3-0", letter: "G" }, { id: "3-1", letter: "A" }, { id: "3-2", letter: "M" }, { id: "3-3", letter: "E" },
   ]);
   return [...row1, ...row2, ...rest];
@@ -2735,6 +2735,7 @@ function TutorialBoard({ onExit }) {
   const [tiles] = useState(buildTutorialTiles);
   const [step, setStep] = useState("bonus"); // bonus → bonusExplain → row2 → row2Explain → yellow → yellowExplain → green → greenExplain → free → complete
   const [seqIndex, setSeqIndex] = useState(0);
+  const [freeMsgDismissed, setFreeMsgDismissed] = useState(false);
   const wrapRef = useRef(null);
   const gridRef = useRef(null);
   // Rows 3-4 (PLAY/GAME) sit untouched — never in any allowedTileIds set —
@@ -2775,9 +2776,10 @@ function TutorialBoard({ onExit }) {
     if (step === "row2") return new Set(TUT_ROW2_IDS);
     if (step === "yellow") return new Set([TUT_FLIP_SEQ[seqIndex]]);
     if (step === "green") return new Set([TUT_WORD_SEQ[seqIndex]]);
-    if (step === "free" || step === "complete") return undefined; // fully free play
+    if (step === "free") return freeMsgDismissed ? undefined : new Set(); // locked until the player OKs the message
+    if (step === "complete") return undefined;
     return new Set(); // *Explain — board locked while reading
-  }, [step, seqIndex]);
+  }, [step, seqIndex, freeMsgDismissed]);
 
   function handleTileFlipped(tile) {
     if (step === "yellow" && tile.id === TUT_FLIP_SEQ[seqIndex]) setSeqIndex(i => i + 1);
@@ -2811,17 +2813,15 @@ function TutorialBoard({ onExit }) {
   }[step];
 
   const showContinue = step === "bonusExplain" || step === "row2Explain" || step === "yellowExplain" || step === "greenExplain";
-  // Rows 3-4 are the live play area during "free" — can't dock a card on top
-  // of tiles the player needs to tap, so that one prompt stays in normal flow.
-  const overlayPrompt = prompt && step !== "free";
+  // The "free" prompt is a one-time message the player dismisses themselves
+  // (rows 3-4 are locked until they do) — same overlay spot as every other
+  // step, rather than a special in-flow caption up near the menu button.
+  const showFreeDismiss = step === "free" && !freeMsgDismissed;
+  const overlayPrompt = prompt && !(step === "free" && freeMsgDismissed);
 
   return (
     <div ref={wrapRef} style={{ width: "100%", position: "relative", animation: "menuIn 0.3s ease" }}>
       <button onClick={onExit} style={{ ...btnStyle("var(--wf-border)", "var(--wf-text-dim)"), marginBottom: 14, fontSize: "0.8rem" }}>← Menu</button>
-
-      {step === "free" && prompt && (
-        <p style={{ textAlign: "center", fontFamily: "'JetBrains Mono',monospace", color: "var(--wf-text-dim)", fontSize: "0.8rem", margin: "0 0 10px" }}>{prompt}</p>
-      )}
 
       <GameBoard
         words={TUT_WORDS}
@@ -2843,9 +2843,9 @@ function TutorialBoard({ onExit }) {
         }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", textAlign: "center" }}>
             <p style={{ fontFamily: "'JetBrains Mono',monospace", color: "#F5EDD6", fontSize: "0.8rem", lineHeight: 1.4, margin: 0 }}>{prompt}</p>
-            {showContinue && (
-              <button onClick={advance} style={{ ...btnStyle("var(--wf-accent)", "#0a2e24"), padding: "7px 18px", fontSize: "0.78rem", fontWeight: 700 }}>
-                Continue →
+            {(showContinue || showFreeDismiss) && (
+              <button onClick={showFreeDismiss ? () => setFreeMsgDismissed(true) : advance} style={{ ...btnStyle("var(--wf-accent)", "#0a2e24"), padding: "7px 18px", fontSize: "0.78rem", fontWeight: 700 }}>
+                {showFreeDismiss ? "OK, got it →" : "Continue →"}
               </button>
             )}
           </div>
