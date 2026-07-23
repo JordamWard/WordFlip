@@ -4865,6 +4865,7 @@ function DailyNine({ onBack, onSolve, signedIn }) {
   const [slots, setSlots] = useState(()=> solved ? target.split("").map((_,i)=>i) : Array(9).fill(null));
   const [hints, setHints] = useState(0);
   const [wrong, setWrong] = useState(false);
+  const [badSlot, setBadSlot] = useState(-1); // index of a mis-placed letter the hint flagged
   const placed = new Set(slots.filter(x=>x!=null));
   const letterOf = (id)=> tiles.find(t=>t.id===id)?.letter || "";
 
@@ -4880,7 +4881,7 @@ function DailyNine({ onBack, onSolve, signedIn }) {
     if (solved || placed.has(id) || fly) return;
     const i = slots.indexOf(null);
     if (i === -1) return;
-    const next = slots.slice(); next[i] = id; setSlots(next); setWrong(false);
+    const next = slots.slice(); next[i] = id; setSlots(next); setWrong(false); setBadSlot(-1);
     // Measure start (tapped tile) and end (destination slot) for the glide.
     const fromR = e && e.currentTarget && e.currentTarget.getBoundingClientRect();
     const toEl = slotRefs.current[i];
@@ -4892,11 +4893,17 @@ function DailyNine({ onBack, onSolve, signedIn }) {
   }
   function removeSlot(i) {
     if (solved || slots[i]==null) return;
-    const next = slots.slice(); next[i] = null; setSlots(next); setWrong(false);
+    const next = slots.slice(); next[i] = null; setSlots(next); setWrong(false); setBadSlot(-1);
   }
-  function clearAll() { if (!solved) { setSlots(Array(9).fill(null)); setWrong(false); } }
+  function clearAll() { if (!solved) { setSlots(Array(9).fill(null)); setWrong(false); setBadSlot(-1); } }
   function useNineHint() {
     if (solved || hints>=3) return;
+    // A hint should never silently work around a letter you've already placed
+    // wrong — flag it (free, no charge) so you can remove it before the hint
+    // moves on to filling in the next correct letter.
+    const badIdx = slots.findIndex((id,i)=> id!=null && letterOf(id)!==target[i]);
+    if (badIdx !== -1) { setBadSlot(badIdx); return; }
+    setBadSlot(-1);
     const i = slots.indexOf(null);
     if (i === -1) return;
     const want = target[i];
@@ -4944,6 +4951,7 @@ function DailyNine({ onBack, onSolve, signedIn }) {
         animation: wrong ? "nineShake 0.5s ease" : "none"}}>
         {slots.map((id,i)=>{
           const hidden = arriving===i; // letter is mid-flight; keep the slot empty-looking
+          const isBad = badSlot===i;
           return (
             <div key={i} ref={el=>slotRefs.current[i]=el} onClick={()=>removeSlot(i)} style={{
               width:34,height:44,borderRadius:7,cursor:id!=null&&!solved?"pointer":"default",
@@ -4951,10 +4959,10 @@ function DailyNine({ onBack, onSolve, signedIn }) {
               fontFamily:"'JetBrains Mono',monospace",fontWeight:800,fontSize:"1.05rem",
               background: solved ? "linear-gradient(135deg,#00c49f,#00F5C4)" : (id!=null&&!hidden) ? "linear-gradient(135deg,#FFB703,#ffcf40)" : "transparent",
               color: solved ? "#0a2e24" : "#3d2800",
-              border: solved ? "2px solid #00F5C4" : wrong ? "2px solid #ff5a5a" : (id!=null&&!hidden) ? "2px solid #ffcf40" : "2px dashed var(--wf-border)",
+              border: solved ? "2px solid #00F5C4" : (wrong||isBad) ? "2px solid #ff5a5a" : (id!=null&&!hidden) ? "2px solid #ffcf40" : "2px dashed var(--wf-border)",
               transition:"border-color 0.15s, background 0.2s",
               // Stadium wave: each solved letter hops in sequence, left → right.
-              animation: solved ? "nineWave 0.9s ease" : "none",
+              animation: isBad ? "nineShake 0.5s ease" : solved ? "nineWave 0.9s ease" : "none",
               animationDelay: solved ? `${i*0.07}s` : "0s",
             }}>{(id!=null&&!hidden)?letterOf(id):""}</div>
           );
@@ -4991,11 +4999,18 @@ function DailyNine({ onBack, onSolve, signedIn }) {
           <button onClick={onBack} style={{...btnStyle("linear-gradient(90deg,#FFB703,#ff9f1c)","#0D1B2A"),padding:"10px 24px"}}>Done</button>
         </div>
       ) : (
+        <div>
+        {badSlot!==-1 && (
+          <p style={{textAlign:"center",fontFamily:"'JetBrains Mono',monospace",color:"#ff5a5a",fontSize:"0.72rem",margin:"0 0 10px"}}>
+            ⚠️ Letter {badSlot+1} is wrong — tap it to remove, then hint again.
+          </p>
+        )}
         <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
           <button onClick={useNineHint} disabled={hints>=3} style={{...btnStyle("var(--wf-border)",hints>=3?"var(--wf-text-mute)":"#F5EDD6"),padding:"9px 14px",fontSize:"0.78rem",opacity:hints>=3?0.5:1}}>
             💡 Hint ({3-hints})
           </button>
           <button onClick={clearAll} style={{...btnStyle("var(--wf-border)","#F5EDD6"),padding:"9px 14px",fontSize:"0.78rem"}}>Clear</button>
+        </div>
         </div>
       )}
 
