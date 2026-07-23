@@ -1548,6 +1548,16 @@ function getSeenRewards() { try { return new Set(JSON.parse(localStorage.getItem
 function markRewardsSeen(ids) { try { const s = getSeenRewards(); ids.forEach(k=>s.add(k)); localStorage.setItem('wf_rewards_seen', JSON.stringify([...s])); } catch (e) {} }
 function newRewardIds(career) { const seen = getSeenRewards(); return unlockedRewardIds(career).filter(id => !seen.has(id)); }
 function rewardsHasNew(career) { return newRewardIds(career).length > 0; }
+// Progress toward the next not-yet-unlocked reward (fills from the PREVIOUS
+// milestone, not zero, so finishing one reward doesn't leave the next ¾ done).
+function nextRewardProgress(career) {
+  const nextIdx = REWARD_LADDER.findIndex(r => career < r.points);
+  if (nextIdx === -1) return { nextIdx:-1, pct:100, entry:null };
+  const prevPoints = nextIdx > 0 ? REWARD_LADDER[nextIdx-1].points : 0;
+  const entry = REWARD_LADDER[nextIdx];
+  const pct = Math.max(0, Math.min(100, Math.round((career - prevPoints) / (entry.points - prevPoints) * 100)));
+  return { nextIdx, pct, entry };
+}
 
 // ─── Power-up rewards: grant the consumables from the ladder, once each ───────
 // Guarded by a local "claimed" set; signed-in grants go to the account via the
@@ -3059,9 +3069,62 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   );
 }
 
+// ─── Career Progress Row — a taste of the Rewards ladder, right on Results ─────
+// Mirrors RewardsScreen's "next reward" bar: fills within the current tier, or
+// from zero if this game's points pushed you into a new tier.
+function CareerProgressRow({ before, after, delay = 900 }) {
+  const gain = after - before;
+  const fromProg = nextRewardProgress(before);
+  const toProg = nextRewardProgress(after);
+  const tierChanged = fromProg.nextIdx !== toProg.nextIdx;
+  const startPct = tierChanged ? 0 : fromProg.pct;
+  const endPct = toProg.pct;
+  const [active, setActive] = useState(false);
+  const [pct, setPct] = useState(startPct);
+  const started = useRef(false);
+  useEffect(() => {
+    const t = setTimeout(() => setActive(true), delay);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (!active || started.current) return;
+    started.current = true;
+    const DURATION = 900, FRAMES = 24;
+    let frame = 0;
+    const id = setInterval(() => {
+      frame++;
+      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
+      setPct(startPct + p * (endPct - startPct));
+      if (frame >= FRAMES) clearInterval(id);
+    }, Math.round(DURATION / FRAMES));
+    return () => clearInterval(id);
+  }, [active]);
+  if (gain <= 0) return null;
+  return (
+    <div style={{
+      background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14,
+      padding:"14px 16px", marginBottom:20, textAlign:"left",
+      opacity:active?1:0, transform:active?"scale(1)":"scale(0.92)",
+      transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
+    }}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>🎁 CAREER PROGRESS</span>
+        <CountUp to={gain} active={active} color="var(--wf-accent2)" />
+      </div>
+      <div style={{height:8, borderRadius:4, background:"var(--wf-border)", overflow:"hidden"}}>
+        <div style={{width:`${pct}%`, height:"100%", background:"linear-gradient(90deg,#FFB703,#ff9f1c)", transition:"width 0.15s linear"}} />
+      </div>
+      {toProg.entry && (
+        <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.66rem", marginTop:6}}>
+          {Math.max(0, toProg.entry.points - after).toLocaleString()} pts to next reward
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
@@ -3070,9 +3133,13 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
-  // Start the streak animation right after the receipt's coins row lands
+  // Sequence the post-receipt reveals: career progress lands right after the
+  // receipt's coins row, then the streak card (daily only) follows it.
   const receiptRows = 3 + ((result.bonusPts||0) > 0 ? 1 : 0);
-  const streakDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
+  const careerDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
+  const hasCareerGain = careerGain && careerGain.after > careerGain.before;
+  const streakDelay = careerDelay + (hasCareerGain ? 1400 : 0);
+  const crossedReward = hasCareerGain && REWARD_LADDER.some(r => careerGain.before < r.points && careerGain.after >= r.points);
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -3117,6 +3184,9 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         coins={coins}
         coinsFormula={coinsFormula}
       />
+      {hasCareerGain&&(
+        <CareerProgressRow before={careerGain.before} after={careerGain.after} delay={careerDelay} />
+      )}
       {isDaily&&(
         <div style={{marginBottom:20}}>
           <StreakCard animate delay={streakDelay} />
@@ -3136,6 +3206,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       {signedIn && onShop && coins > 0 && (
         <button onClick={onShop} style={{...btnStyle("transparent","var(--wf-accent)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline",animation: shopHasNew()?"shopPulse 1.5s ease-in-out infinite":"none"}}>
           🛍️ Spend your coins in the Shop →
+        </button>
+      )}
+      {signedIn && onRewards && (
+        <button onClick={onRewards} style={{...btnStyle("transparent","var(--wf-accent2)"),marginTop:8,fontSize:"0.82rem",border:"none",textDecoration:"underline",animation: crossedReward?"shopPulse 1.5s ease-in-out infinite":"none"}}>
+          🎁 View your rewards →
         </button>
       )}
     </div>
@@ -5428,14 +5503,75 @@ function RewardToast({ entries }) {
 }
 
 // ─── Rewards Screen — the "earn by playing" progression ladder ────────────────
-function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onApplyTheme, onApplyTileBack }) {
-  const nextIdx = REWARD_LADDER.findIndex(r => career < r.points); // first locked (-1 = all done)
+function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onApplyTheme, onApplyTileBack, justEarned }) {
+  // Capture the just-earned delta once at mount only — a later prop change
+  // (e.g. backing out and reopening from the menu) must NOT replay this.
+  const [gain] = useState(()=>justEarned);
+  const hasGain = !!(gain && gain.after > gain.before);
+  const [displayCareer, setDisplayCareer] = useState(()=> hasGain ? gain.before : career);
+  const [tweenDone, setTweenDone] = useState(!hasGain);
+  const shownCareer = tweenDone ? career : displayCareer;
+  const [goldPulse, setGoldPulse] = useState(()=>new Set());
+  const [badgeVisible, setBadgeVisible] = useState(hasGain);
+  const cardRefs = useRef({});
+  const tweenInterval = useRef(null);
+
+  const nextIdx = REWARD_LADDER.findIndex(r => shownCareer < r.points); // first locked (-1 = all done)
   const unlockedCount = nextIdx === -1 ? REWARD_LADDER.length : nextIdx;
   // Capture which rewards are freshly unlocked (earned but not yet seen) so we
   // can pop them in celebration — captured once at mount, before we mark seen.
   const [freshKeys] = useState(()=> new Set(newRewardIds(career)));
   const freshOrder = REWARD_LADDER.filter(r => freshKeys.has(r.id)).map(r => r.id);
   useEffect(()=>{ markRewardsSeen(unlockedRewardIds(career)); }, []); // clear the "new" glow
+
+  // Auto-scroll to wherever you currently stand on the ladder — the true,
+  // final `career` total, not the animated one — so the fill-up (if any)
+  // plays out right where the user is already looking.
+  useEffect(() => {
+    const last = REWARD_LADDER[REWARD_LADDER.length-1];
+    const targetId = career >= last.points ? last.id : REWARD_LADDER.find(r => career < r.points).id;
+    const t = setTimeout(() => {
+      cardRefs.current[targetId]?.scrollIntoView({ behavior:'smooth', block:'center' });
+    }, 250);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Fill-from-old animation + gold pulse, only when arriving with a just-earned
+  // delta (i.e. via the Results screen's "View Rewards" button).
+  useEffect(() => {
+    if (!hasGain) return;
+    const delta = gain.after - gain.before;
+    const crossed = REWARD_LADDER.filter(r => gain.before < r.points && gain.after >= r.points);
+    const START = 650, DURATION = 1300, FRAMES = 30;
+    const timeouts = [];
+    crossed.forEach(r => {
+      const at = START + DURATION * (r.points - gain.before) / delta;
+      timeouts.push(setTimeout(() => {
+        setGoldPulse(s => new Set(s).add(r.id));
+        timeouts.push(setTimeout(() => {
+          setGoldPulse(s => { const n = new Set(s); n.delete(r.id); return n; });
+        }, 1100));
+      }, at));
+    });
+    timeouts.push(setTimeout(() => {
+      let frame = 0;
+      tweenInterval.current = setInterval(() => {
+        frame++;
+        setDisplayCareer(Math.round(gain.before + (frame / FRAMES) * delta));
+        if (frame >= FRAMES) {
+          clearInterval(tweenInterval.current);
+          setDisplayCareer(gain.after);
+          setTweenDone(true);
+        }
+      }, Math.round(DURATION / FRAMES));
+    }, START));
+    timeouts.push(setTimeout(() => setBadgeVisible(false), START + DURATION + 700));
+    return () => {
+      timeouts.forEach(clearTimeout);
+      if (tweenInterval.current) clearInterval(tweenInterval.current);
+    };
+  }, []);
+
   return (
     <div style={{width:"100%", maxWidth:440, margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Menu</button>
@@ -5446,14 +5582,19 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
           Earn themes, tile backs &amp; power-ups just by playing — every point you score counts.
         </p>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.9rem",fontWeight:800,margin:"10px 0 0"}}>
-          {career.toLocaleString()} career points
+          {shownCareer.toLocaleString()} career points
+          {hasGain && (
+            <span style={{marginLeft:8,color:'var(--wf-accent2)',fontWeight:800,fontSize:'0.8rem',opacity:badgeVisible?1:0,transition:'opacity 0.6s ease'}}>
+              +{(gain.after-gain.before).toLocaleString()}
+            </span>
+          )}
         </p>
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",margin:"2px 0 0"}}>
           {unlockedCount} of {REWARD_LADDER.length} unlocked
         </p>
       </div>
       {REWARD_LADDER.map((entry, idx) => {
-        const unlocked = career >= entry.points;
+        const unlocked = shownCareer >= entry.points;
         const isNext = idx === nextIdx;
         const isPU = entry.type === 'powerup';
         const puItem = isPU ? SHOP_ITEMS.find(s=>s.key===entry.item) : null;
@@ -5464,14 +5605,15 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
         // Progress fills from the PREVIOUS milestone to this one (not from zero),
         // so finishing one reward doesn't leave the next looking ¾ done.
         const prevPoints = idx > 0 ? REWARD_LADDER[idx-1].points : 0;
-        const pct = Math.max(0, Math.min(100, Math.round((career - prevPoints) / (entry.points - prevPoints) * 100)));
+        const pct = Math.max(0, Math.min(100, Math.round((shownCareer - prevPoints) / (entry.points - prevPoints) * 100)));
         const fresh = freshKeys.has(entry.id);
+        const golden = goldPulse.has(entry.id);
         return (
-          <div key={entry.id} style={{
-            background:'var(--wf-surface)',
-            border:`1.5px solid ${fresh?'var(--wf-accent2)':active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
+          <div key={entry.id} ref={el => cardRefs.current[entry.id] = el} style={{
+            background: golden ? 'linear-gradient(135deg,#3a2f10,var(--wf-surface))' : 'var(--wf-surface)',
+            border:`1.5px solid ${golden?'#FFD700':fresh?'var(--wf-accent2)':active?'#00F5C455':isNext?'var(--wf-accent2)':'var(--wf-border)'}`,
             borderRadius:14, padding:'12px 14px', marginBottom:12, opacity: unlocked||isNext ? 1 : 0.55,
-            animation: fresh ? `rewardPop 0.85s ease ${0.25 + Math.max(0,freshOrder.indexOf(entry.id))*0.18}s both` : 'none',
+            animation: golden ? 'rewardGold 1.1s ease' : fresh ? `rewardPop 0.85s ease ${0.25 + Math.max(0,freshOrder.indexOf(entry.id))*0.18}s both` : 'none',
           }}>
             <div style={{display:'flex', alignItems:'center', gap:12}}>
               <div style={{filter: unlocked ? 'none' : 'grayscale(0.7)', position:'relative'}}>
@@ -5489,7 +5631,7 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
               </div>
               {isPU ? (
                 <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.72rem', fontWeight:700, color: unlocked?'var(--wf-accent)':'var(--wf-text-mute)', padding:'8px 10px', flexShrink:0}}>
-                  {unlocked ? '✓ Earned' : `${Math.max(0,entry.points-career).toLocaleString()} to go`}
+                  {unlocked ? '✓ Earned' : `${Math.max(0,entry.points-shownCareer).toLocaleString()} to go`}
                 </span>
               ) : active ? (
                 <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
@@ -5497,7 +5639,7 @@ function RewardsScreen({ onBack, career, activeThemeId, activeTileBackId, onAppl
                 <button onClick={() => entry.type==='theme' ? onApplyTheme(entry.key) : onApplyTileBack(entry.key)}
                   style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'9px 14px', fontSize:'0.78rem', flexShrink:0, border:'1.5px solid #00F5C455'}}>Use</button>
               ) : (
-                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', color:'var(--wf-text-mute)', flexShrink:0}}>{Math.max(0,entry.points-career).toLocaleString()} to go</span>
+                <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.7rem', color:'var(--wf-text-mute)', flexShrink:0}}>{Math.max(0,entry.points-shownCareer).toLocaleString()} to go</span>
               )}
             </div>
             {isNext && (
@@ -6210,6 +6352,13 @@ function WordFlip() {
     setRewardToast(entries);
     setTimeout(() => setRewardToast([]), 4800);
   }
+  // Career total right before/after the game that just ended (drives the Results
+  // screen's "career points earned" reveal). Set once per handleWin.
+  const [careerGain,setCareerGain] = useState(null); // {before, after}
+  // Set only when navigating to Rewards FROM Results, so RewardsScreen can play
+  // the fill-from-old-to-new animation. Plain menu navigation leaves this null.
+  const [rewardsJustEarned,setRewardsJustEarned] = useState(null);
+  function goToRewardsFromWin() { setRewardsJustEarned(careerGain); setScreen("rewards"); }
   // Does the Rewards button deserve a glow? (Unlocked-but-unseen rewards exist.)
   // Recomputed each render; opening the Rewards screen marks them seen.
   const rewardsNew = rewardsHasNew(career);
@@ -6366,6 +6515,7 @@ function WordFlip() {
       const before = getCareerPoints();
       const after = addCareerPoints(score); // optimistic local update
       setCareer(after);
+      setCareerGain({ before, after });
       const crossed = REWARD_LADDER.filter(r => before < r.points && after >= r.points);
       if (crossed.length) showRewardToast(crossed);
     }
@@ -6488,6 +6638,7 @@ function WordFlip() {
         @keyframes nineShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-8px)}30%{transform:translateX(7px)}45%{transform:translateX(-6px)}60%{transform:translateX(5px)}75%{transform:translateX(-3px)}90%{transform:translateX(2px)}}
         @keyframes nineWave{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-14px)}}
         @keyframes rewardPop{0%{transform:scale(0.82);box-shadow:0 0 0 transparent}45%{transform:scale(1.08);box-shadow:0 0 26px var(--wf-accent2)}72%{transform:scale(0.98)}100%{transform:scale(1);box-shadow:0 0 0 transparent}}
+        @keyframes rewardGold{0%{transform:scale(1);box-shadow:0 0 0 transparent}40%{transform:scale(1.045);box-shadow:0 0 22px #FFD70099}70%{transform:scale(0.99)}100%{transform:scale(1);box-shadow:0 0 0 transparent}}
         @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
       `}</style>
       <Fireworks active={fireworks} />
@@ -6512,7 +6663,14 @@ function WordFlip() {
             🪙 {balance.toLocaleString()}
           </button>
         )}
-        <button onClick={()=>setShowTutorial(true)} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",right:16,background:"var(--wf-border)",border:"1.5px solid #2a4060",borderRadius:"50%",width:32,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"var(--wf-text-dim)",fontSize:"0.8rem",fontWeight:700,padding:0,zIndex:50}} aria-label="How to play">?</button>
+        {(() => { const { pct } = nextRewardProgress(career); return (
+          <button onClick={()=>setScreen("rewards")} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",right:16,background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:16,height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6,padding:"0 10px",zIndex:50}} aria-label="Rewards progress">
+            <span style={{fontSize:"0.8rem"}}>🎁</span>
+            <span style={{width:34,height:5,borderRadius:3,background:"var(--wf-border)",overflow:"hidden",display:"inline-block"}}>
+              <span style={{display:"block",width:`${pct}%`,height:"100%",background:"linear-gradient(90deg,#FFB703,#ff9f1c)"}} />
+            </span>
+          </button>
+        );})()}
       </>)}
       {/* On the menu, push the title below the fixed top controls (avatar + token
           pill on the left, help on the right) so a wide balance can't overlap it */}
@@ -6579,9 +6737,9 @@ function WordFlip() {
               );
             })()}
           </div>
-          <div style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)"}}>
+          <div onClick={()=>setShowTutorial(true)} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" ")setShowTutorial(true);}} style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)",cursor:"pointer"}} aria-label="How to play">
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
-              <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)!
+              <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)! <span style={{color:"var(--wf-accent)",fontWeight:700}}>▶ Full tutorial</span>
             </p>
           </div>
           <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",textAlign:"center",marginTop:18}}>
@@ -6620,7 +6778,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
             const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0);
@@ -6654,7 +6812,7 @@ function WordFlip() {
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
-      {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} /></div>}
+      {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>{setScreen("menu");setRewardsJustEarned(null);}} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} justEarned={rewardsJustEarned} /></div>}
       {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}
       {screen==="auth"&&<AuthScreen initialMode={authMode} onBack={()=>setScreen("menu")} onAuth={async ()=>{
         await refreshProfile();
