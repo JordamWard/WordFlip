@@ -656,7 +656,7 @@ function getMyPlayerId() {
 const MP_COLORS = ['#00F5C4', '#FFB703', '#FF5E5B', '#9B5DE5'];
 
 // ─── Word Bank ────────────────────────────────────────────────────────────────
-// 480+ themed 4-word sets — enough for over a year of daily challenges without repeats
+// 500+ themed 4-word sets — enough for over a year of daily challenges without repeats
 const ALL_WORDS_4 = [
   // NATURE / WEATHER
   ["GUST","HAIL","SLOP","DRIP"],["MIST","HAZE","SMOG","DULL"],
@@ -1018,6 +1018,19 @@ const ALL_WORDS_4 = [
   ["NEED","LIVE","COME","GOES"],
   // HOME & LIFE
   ["HOME","BODY","KIND","LATE"],
+
+  // MESSAGES — read the 4 words in order (as shown on "FIND THESE WORDS") for a
+  // silly little sentence. Order matters here, unlike every other set above.
+  ["WILL","THEY","HEAR","BEAR"],["GOAT","EATS","YOUR","SHOE"],
+  ["DUCK","JUMP","OVER","LOGS"],["WHAT","DOES","THIS","MEAN"],
+  ["RAIN","FELL","ONTO","ROOF"],["BIRD","FLEW","OVER","LAKE"],
+  ["KIDS","PLAY","WITH","TOYS"],["COOK","MADE","GOOD","SOUP"],
+  ["HOLD","YOUR","HEAD","HIGH"],["WORK","HARD","PLAY","FAIR"],
+  ["KEEP","CALM","STAY","WISE"],["GIVE","YOUR","BEST","SHOT"],
+  ["FIND","YOUR","TRUE","PATH"],["GOOD","DEED","PAYS","BACK"],
+  ["WISH","UPON","YOUR","STAR"],["STOP","DROP","THEN","ROLL"],
+  ["TAKE","YOUR","TIME","HERE"],["GEEK","READ","THIS","BOOK"],
+  ["OWLS","HOOT","INTO","DUSK"],["WOLF","HOWL","UNTO","MOON"],
 ];
 
 const ALL_WORDS_9 = [
@@ -1032,11 +1045,50 @@ const ALL_WORDS_9 = [
   ["DAWN","MORN","PINK","ROSY","DUSK","HAZE","GLOW","STAR","HALO"],
 ];
 
-// Daily words: deterministic by date from the 4-word bank
+// Daily rotation walks ALL_WORDS_4 by index (see getDailyWords below), and that
+// walk moves through mostly-consecutive indices — day-of-month increments idx
+// by 1, only jumping at month/year boundaries — so newly-appended sets at the
+// tail of the array could go unpicked for a very long time. DAILY_ORDER is a
+// fixed shuffle of the *indices* (not the array itself, which stays grouped by
+// theme for readability) so that walk actually surfaces old and new sets in a
+// mixed order. Seed is fixed so every client computes the same permutation and
+// everyone gets the same Daily.
+const DAILY_ORDER = (() => {
+  const order = Array.from({length: ALL_WORDS_4.length}, (_, i) => i);
+  const rng = mulberry32(20260101);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+})();
+
+// Temporary preview window: forces specific new sets onto the Daily for a
+// short run so we can see how players react before they fold back into the
+// shuffled rotation above. Safe to delete PREVIEW_START/PREVIEW_QUADS and the
+// `if` branch below once the test window has run its course.
+const PREVIEW_START = new Date(2026, 6, 24); // Jul 24, 2026, local midnight
+const PREVIEW_QUADS = [
+  ["WILL","THEY","HEAR","BEAR"],   // MESSAGES
+  ["TIME","YEAR","WEEK","HOUR"],   // TIME & CALENDAR
+  ["QUIZ","QUIT","QUAD","QUID"],   // THE LETTER Q
+  ["GOAT","EATS","YOUR","SHOE"],   // MESSAGES
+  ["THOU","THEE","DOTH","HATH"],   // OLDE ENGLISH
+  ["FOXY","WAXY","APEX","JINX"],   // THE LETTER X
+  ["ARTS","RATS","TARS","TSAR"],   // ANAGRAMS
+  ["LAZY","ZANY","DOZE","MAZE"],   // THE LETTER Z
+  ["KEEP","CALM","STAY","WISE"],   // MESSAGES
+  ["ADDS","INNS","ERRS","MUSS"],   // DOUBLE LETTERS
+];
+
 function getDailyWords() {
   const d = new Date();
+  const dayOffset = Math.floor((d - PREVIEW_START) / 86400000);
+  if (dayOffset >= 0 && dayOffset < PREVIEW_QUADS.length) {
+    return PREVIEW_QUADS[dayOffset];
+  }
   const idx = (d.getFullYear() * 500 + (d.getMonth()+1) * 31 + d.getDate()) % ALL_WORDS_4.length;
-  return ALL_WORDS_4[idx];
+  return ALL_WORDS_4[DAILY_ORDER[idx]];
 }
 
 function dateKey() {
