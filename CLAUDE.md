@@ -109,7 +109,9 @@ caused "my purchase disappeared" bugs. The economy client wrappers already do th
 
 `wf_profile`, `wf_balance`, `wf_career`, `wf_inv_*` (power-up counts), `wf_achievements`,
 `wf_ach_paid`, `wf_rewards_claimed`, `wf_rewards_seen`, `wf_games_played`, `wf_tileback`,
-`wf_career_migrated_<uid>`, and date-scoped `<dateKey>_done` / `_helps` / `_undo`.
+`wf_career_migrated_<uid>`, and date-scoped `<dateKey>_done` / `_helps` (every
+power-up use today — Hint, Mega Hint, X-ray **and** Undo — capped by `DAILY_HELP_LIMIT`;
+`0` is what earns the leaderboard's "no hints" badge).
 
 ## Testing economy RPCs (impersonation harness)
 

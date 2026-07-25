@@ -320,7 +320,7 @@ async function grantEarnIfSignedIn(event, ref, score, refreshWallet) {
   if (refreshWallet) refreshWallet();
 }
 
-// Daily-challenge help budget: 3 combined Hint/X-ray uses per day.
+// Daily-challenge help budget: 3 combined Hint/Mega/X-ray/Undo uses per day.
 // Keyed to today's date (same pattern as _done/_best) so it resets at midnight.
 const DAILY_HELP_LIMIT = 3;
 function getDailyHelps() {
@@ -2619,13 +2619,13 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setTimeout(() => setMegaHintIds([]), 1800);
   }
 
-  // ↩️ Undo: take back your last flipped tile (fix a mistap). It doesn't reveal
-  // anything, so it stays FREE of the 3-per-day daily help LIMIT — but it IS a
-  // purchased power-up, so using it disqualifies the "no power-ups" achievements
-  // (Perfection / Lucky Four / Unassisted). We flag it per-game (usedUndoRef) and,
-  // for the daily, a date-keyed flag so it survives a leave-and-resume.
+  // ↩️ Undo: take back your last flipped tile (fix a mistap). It's a purchased
+  // power-up like any other, so it counts as a HELP: it spends one of the
+  // DAILY_HELP_LIMIT daily uses and clears the leaderboard's "no hints" badge.
+  // The daily counter is date-keyed, so it survives a leave-and-resume; solo is
+  // unlimited and tracked per-game via usedUndoRef (feeds usedHelp).
   function useUndo() {
-    if (getInv('wf_inv_undo') < 1) return;
+    if (getInv('wf_inv_undo') < 1 || helpsLeft < 1) return;
     if (processingRef.current || hasEndedRef.current) return;
     const cur = flippedRef.current;
     if (!cur.length) return;
@@ -2634,8 +2634,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setFlipped([...next]);
     setInvUndo(addInv('wf_inv_undo', -1));
     usedUndoRef.current = true;
-    if (isDaily) { try { localStorage.setItem(dateKey()+"_undo", "1"); } catch {} }
     syncUseItem('undo'); // account-level consume (no-op for guests)
+    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
   }
 
   function handleTileClick(tile) {
@@ -2815,7 +2815,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
         const hintOk = invHint>0 && helpsLeft>0;
         const xrayOk = invXray>0 && helpsLeft>0;
         const megaOk = invMega>0 && helpsLeft>0;
-        const undoOk = invUndo>0 && flipped.length>0 && flipped.length<4; // fix a mistap; not a "help"
+        const undoOk = invUndo>0 && helpsLeft>0 && flipped.length>0 && flipped.length<4;
         const chip = (extra) => ({padding:"4px 9px",fontSize:"0.68rem",borderRadius:9,...extra});
         return (
           <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",minHeight:28,marginBottom:6}}>
@@ -6808,14 +6808,10 @@ function WordFlip() {
     // Achievements (daily + solo). Evaluated from the finished game plus running
     // counters; unlock-once, and any freshly unlocked ones raise a toast.
     const gamesPlayed = bumpGamesPlayed();
-    // No-hints truth: daily counts every help used today (survives resume);
-    // solo uses this game's own flag. Undo is a power-up too but is exempt from
-    // the daily help counter/limit, so fold it in separately here: daily reads a
-    // date-keyed flag (survives resume), solo uses this game's usedUndo flag.
-    const undoUsed = mode==="daily"
-      ? (()=>{ try { return localStorage.getItem(dateKey()+"_undo")==="1"; } catch { return false; } })()
-      : !!result.usedUndo;
-    const helpsUsed = (mode==="daily" ? getDailyHelps() : (result.usedHelp ? 1 : 0)) + (undoUsed ? 1 : 0);
+    // No-hints truth: daily counts every help used today (survives resume), solo
+    // uses this game's own flag. Undo is a help like the rest — it's already in
+    // both the daily counter and usedHelp, so there's nothing to fold in here.
+    const helpsUsed = mode==="daily" ? getDailyHelps() : (result.usedHelp ? 1 : 0);
     const earned = evaluateAchievements({
       wordResults: wordResultsArr,
       turns: result.turns,
