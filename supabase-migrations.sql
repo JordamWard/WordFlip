@@ -1021,3 +1021,55 @@ REVOKE EXECUTE ON FUNCTION public.add_tokens(integer, text)     FROM PUBLIC, ano
 REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text)   FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer)       FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.add_career_points(integer)    FROM PUBLIC, anon, authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 21. LEADERBOARD ARCHIVE. A safety net for score history, plus the record of one
+--     reset that was applied and then deliberately rolled back.
+--
+--     2026-07-31: the scoring formula changed twice in a day (power-up use now
+--     costs HELP_PENALTY, and a spare guess went 50 -> SPARE_GUESS_PTS=100), and
+--     the Jul 30 anagram quad had scored correctly-ordered words yellow. Scores
+--     from before those fixes aren't strictly comparable with scores after, so
+--     133 rows (10 players, Jun 17 - Jul 30) were archived and daily_scores was
+--     emptied. Coins (wallets), career (player_progress), inventories and
+--     achievements were NOT touched.
+--
+--     Same day, that call was reversed: all 133 rows were restored from the
+--     archive (verified — row count, sum(score)=257132 and a full EXCEPT check
+--     all matched). LIVE STATE IS "HISTORY INTACT"; nothing is currently wiped.
+--     The archive rows were kept as a backup rather than deleted.
+--
+--     Known and accepted: the leaderboard now spans three scoring eras. Five
+--     archived rows score above 2400, which is impossible under the formula that
+--     immediately preceded the change and is the fingerprint of an older
+--     wrongGuesses-based "accuracy" bonus (ceiling ~2600). Current max is 3000,
+--     so older entries sit on a lower ceiling and drift down All Time over time.
+--
+--     This table is server-side only: RLS on with no policies and all grants
+--     revoked, so neither anon nor authenticated can read it. Reach it through
+--     the SQL editor / service role.
+CREATE TABLE IF NOT EXISTS public.daily_scores_archive
+  (LIKE public.daily_scores INCLUDING DEFAULTS);
+
+ALTER TABLE public.daily_scores_archive
+  ADD COLUMN IF NOT EXISTS archived_at    timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS archive_reason text;
+
+ALTER TABLE public.daily_scores_archive ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.daily_scores_archive FROM anon, authenticated;
+
+-- To reset again later, run these two together (archive FIRST, and verify the
+-- copy before deleting — DELETE itself has no undo; the archive IS the undo):
+--   INSERT INTO public.daily_scores_archive
+--     SELECT d.*, now(), '<why>' FROM public.daily_scores d;
+--   DELETE FROM public.daily_scores;
+--
+-- To restore from the archive (this exact statement was used on 2026-07-31).
+-- The column list must be explicit — the archive carries two extra columns, so
+-- `SELECT *` will not line up. ON CONFLICT protects any score posted since the
+-- wipe from being clobbered by an older archived row:
+--   INSERT INTO public.daily_scores
+--     (id, user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, helps)
+--   SELECT id, user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, helps
+--     FROM public.daily_scores_archive
+--    ON CONFLICT (user_id, day_key) DO NOTHING;

@@ -323,6 +323,23 @@ async function grantEarnIfSignedIn(event, ref, score, refreshWallet) {
 // Daily-challenge help budget: 3 combined Hint/Mega/X-ray/Undo uses per day.
 // Keyed to today's date (same pattern as _done/_best) so it resets at midnight.
 const DAILY_HELP_LIMIT = 3;
+
+// ─── Scoring dials ───────────────────────────────────────────────────────────
+// You start the Daily with MAX_GUESSES. Four words need four of them, so 12 are
+// SPARE — and every spare guess you hand back is worth SPARE_GUESS_PTS. That's
+// the whole efficiency rule, and it's phrased that way everywhere players read
+// it, because "16 − turns" describes a 16-unused-guess run nobody can play.
+const MAX_GUESSES     = 16;
+const SPARE_GUESS_PTS = 100;
+// MUST equal SPARE_GUESS_PTS. A bonus word spends a guess like any other attempt,
+// so paying exactly one spare guess back is what keeps finding one FREE rather
+// than a hidden penalty. Change one, change both.
+const BONUS_WORD_PTS  = SPARE_GUESS_PTS;
+// Each power-up used (Hint / Mega Hint / X-ray / Undo) shaves this off the final
+// score. Deliberately smaller than a spare guess — the real cost of a hint is
+// losing the 🧠 "no hints" badge on the leaderboard and the coins it cost; this
+// just stops a hinted run from tying an identical clean one.
+const HELP_PENALTY    = 50;
 function getDailyHelps() {
   try { return Math.max(0, parseInt(localStorage.getItem(dateKey()+"_helps") || '0', 10) || 0); } catch { return 0; }
 }
@@ -838,7 +855,7 @@ const ALL_WORDS_4 = [
     ["FOND","DEAR","WARM","LOVE"],  ["SNAP","RAGE","FUME","RANT"],
     ["MEEK","MILD","SOFT","TAME"],  ["BUOY","GLAD","GLEE","BRIM"],
     ["BORE","JADE","PALL","CLOY"],  ["ARID","DULL","FLAT","GREY"],
-    ["COOL","DOUR","COLD","ALOF"],  ["FIZZ","BUZZ","HYPE","ZEAL"],
+    ["COOL","DOUR","COLD","GLUM"],  ["FIZZ","BUZZ","HYPE","ZEAL"],
     // CONCEPTS
     ["HALF","PAIR","TWIN","DUAL"],  ["ZERO","NONE","NULL","VOID"],
     ["MUCH","LOTS","HEAP","MASS"],  ["TINY","PUNY","SLIM","WIRY"],
@@ -1006,8 +1023,7 @@ const ALL_WORDS_4 = [
   ["ADDS","INNS","ERRS","MUSS"],
   // RHYMES WITH -ACK
   ["LACK","SACK","JACK","YACK"],
-  // ANAGRAMS (same 4 letters, A R S T)
-  ["ARTS","RATS","TARS","TSAR"],
+  // (the A-R-S-T anagram quad moved into the ANAGRAMS block at the end)
   // OLDE ENGLISH
   ["THOU","THEE","DOTH","HATH"],
   // GRAMMAR: MORE LINKERS
@@ -1031,6 +1047,17 @@ const ALL_WORDS_4 = [
   ["WISH","UPON","YOUR","STAR"],["STOP","DROP","THEN","ROLL"],
   ["TAKE","YOUR","TIME","HERE"],["GEEK","READ","THIS","BOOK"],
   ["OWLS","HOOT","INTO","DUSK"],["WOLF","HOWL","UNTO","MOON"],
+  // ANAGRAMS — every word in the quad is the same four letters rearranged.
+  // These only play fairly because matchWordIndex() resolves a guess to the
+  // word it spells exactly rather than the first unfound word with those
+  // letters; a plain letter-multiset scan scores correctly-ordered words
+  // yellow here. Don't add an anagram quad without that matcher in place.
+  ["ARTS","RATS","TARS","TSAR"],["MITE","EMIT","TIME","ITEM"],
+  ["SPIN","SNIP","PINS","NIPS"],["TAME","MATE","MEAT","TEAM"],
+  ["TIDE","EDIT","DIET","TIED"],["TEAS","EAST","SEAT","EATS"],
+  ["NEST","NETS","SENT","TENS"],["MANE","NAME","MEAN","AMEN"],
+  ["SNAP","PANS","SPAN","NAPS"],["POST","STOP","TOPS","SPOT"],
+  ["CAST","ACTS","CATS","SCAT"],
 ];
 
 const ALL_WORDS_9 = [
@@ -1140,21 +1167,50 @@ function buildTiles(words) {
   return shuffle(tiles);
 }
 
+const sortedLetters = w => [...w].sort().join("");
+
+// Which target word did this guess just solve?
+//
+// A guess only ever carries a *multiset* of letters, so when two words in the
+// set are anagrams of each other (the ANAGRAMS quad — ARTS/RATS/TARS/TSAR — is
+// the case that bit us) a plain "first unfound word with these letters" scan
+// always lands on the lowest index. Spell TSAR perfectly and it resolves as
+// ARTS, `letters.join("") === words[matchIdx]` is false, and a correctly
+// ordered word scores yellow.
+//
+// So: prefer the unfound word the guess spells *exactly*, and only fall back to
+// the first unfound anagram when the guess isn't in order for any of them. That
+// makes an in-order guess always green. The fallback is still arbitrary among
+// interchangeable words, but by then no ordering claim is being made.
+//
+// `isFound` takes a word index and returns whether it's already solved.
+function matchWordIndex(words, letters, isFound) {
+  const guess = letters.join("");
+  const exact = words.findIndex((w,i) => !isFound(i) && w === guess);
+  if (exact !== -1) return exact;
+  const sorted = sortedLetters(guess);
+  return words.findIndex((w,i) => !isFound(i) && sortedLetters(w) === sorted);
+}
+
 function formatTime(ms) {
   const s = Math.floor(ms/1000), m = Math.floor(s/60);
   return `${m}:${String(s%60).padStart(2,"0")}`;
 }
 
-function scoreCalc(ms, wordResults, turns, bonusPts = 0) {
+function scoreCalc(ms, wordResults, turns, bonusPts = 0, helpsUsed = 0) {
   const greenPts = wordResults.filter(r=>r==="green").length * 300;
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
   // "missed" words score 0 — no bonus for unfound words
-  const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec over 6 min
-  // Efficiency: you start with 16 guesses; EVERY attempt (right, wrong, or bonus)
-  // spends one. You're rewarded 50 per UNUSED guess: (16 − turns) × 50.
-  const guessBonus = Math.max(0, (16 - (turns||0)) * 50);
-  // A bonus word spends a guess (−50 here) but pays +50 below → net 0, no special case.
-  return greenPts + yellowPts + timeBonus + guessBonus + bonusPts;
+  const timeBonus = Math.max(0, 600 - Math.floor(ms/1000)); // 600 pts, -1/sec, gone at 10 min
+  // Efficiency: you start with MAX_GUESSES; EVERY attempt (right, wrong, or bonus)
+  // spends one. You're rewarded SPARE_GUESS_PTS per guess you DON'T use. Four
+  // words need four guesses, so 12 of the 16 are genuinely spare → max 1,200.
+  const guessBonus = Math.max(0, (MAX_GUESSES - (turns||0)) * SPARE_GUESS_PTS);
+  // A bonus word spends a guess (−SPARE_GUESS_PTS here) but pays BONUS_WORD_PTS
+  // into bonusPts → net 0 while the two constants match. No special case needed.
+  const helpPenalty = Math.max(0, helpsUsed||0) * HELP_PENALTY;
+  // Clamped at 0 so the penalty can never produce a negative score.
+  return Math.max(0, greenPts + yellowPts + timeBonus + guessBonus + bonusPts - helpPenalty);
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -2028,15 +2084,20 @@ function Fireworks({ active }) {
 }
 
 // ─── Score Info Tooltip ───────────────────────────────────────────────────────
-function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
+// NOTE: not currently rendered anywhere — the live breakdown players actually
+// see is ScoreReceipt. Kept in sync with scoreCalc anyway so it isn't a trap if
+// it ever gets wired back up. (It had drifted: it was scoring efficiency off
+// wrongGuesses, but scoreCalc pays SPARE_GUESS_PTS per UNUSED guess.)
+function ScoreInfoTip({ words, wordResults, elapsed, turns, helpsUsed = 0 }) {
   const [open, setOpen] = useState(false);
   const results = wordResults || [];
   const greens = results.filter(r=>r==="green").length;
   const yellows = results.filter(r=>r==="yellow").length;
   const secs = Math.floor(elapsed/1000);
   const timeBonus = Math.max(0, 600 - secs);
-  const guessBonus = Math.max(0, 800 - (wrongGuesses||0)*50);
-  const current = greens*300 + yellows*100 + timeBonus + guessBonus;
+  const guessBonus = Math.max(0, (MAX_GUESSES - (turns||0)) * SPARE_GUESS_PTS);
+  const helpPenalty = Math.max(0, helpsUsed) * HELP_PENALTY;
+  const current = Math.max(0, greens*300 + yellows*100 + timeBonus + guessBonus - helpPenalty);
   return (
     <span style={{ position:"relative", display:"inline-flex", alignItems:"center", marginLeft:4 }}>
       <button onClick={e=>{ e.stopPropagation(); setOpen(o=>!o); }}
@@ -2061,7 +2122,8 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"var(--wf-accent)"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"var(--wf-accent2)"},
             {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"var(--wf-text-mute)"},
-            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
+            {label:`🎯 Efficiency (${Math.round(guessBonus/SPARE_GUESS_PTS)} × ${SPARE_GUESS_PTS} pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
+            ...(helpPenalty>0?[{label:`💡 Power-ups (${helpsUsed} × ${HELP_PENALTY})`, val:`-${helpPenalty}`, color:"#FF5E5B"}]:[]),
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>{row.label}</span>
@@ -2470,6 +2532,11 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
   const usedHintRef = useRef(false); // hint used this game
   const usedXrayRef = useRef(false); // x-ray used this game
   const usedUndoRef = useRef(false); // undo used this game (a power-up → disqualifies "no power-ups" achievements)
+  // Count (not just "did you") of power-ups used this game — drives the HELP_PENALTY.
+  // The daily has its own date-keyed counter that survives a leave-and-resume; this
+  // per-game one is what makes the penalty work in solo too, where there's no
+  // date-keyed budget. Restored from saved progress so a resumed daily keeps it.
+  const helpsUsedRef = useRef(savedProg ? (savedProg.helpsUsed || 0) : 0);
 
   useEffect(()=>{
     if (!started) return;
@@ -2491,8 +2558,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       tiles, found, foundTileIds:[...foundTileIds], turns, wrongGuesses,
       wordResults, foundInOrderSet:[...foundInOrderSet],
       foundBonusWords, bonusPts, elapsed:stateRef.current.elapsed||elapsed, started,
+      helpsUsed:helpsUsedRef.current,
     });
-  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started]);
+  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started, dailyHelpsUsed]);
 
   // Keep the saved elapsed time roughly current (within ~5s) while playing.
   useEffect(()=>{
@@ -2520,7 +2588,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
       bonusPts:s.bonusPts, bonusWords:s.foundBonusWords,
       usedHint:usedHintRef.current, usedXray:usedXrayRef.current, usedUndo:usedUndoRef.current,
-      usedHelp:usedHintRef.current||usedXrayRef.current||usedUndoRef.current, ...extraProps
+      usedHelp:usedHintRef.current||usedXrayRef.current||usedUndoRef.current,
+      helpsUsed:helpsUsedRef.current, ...extraProps
     }), 600);
   }
 
@@ -2575,6 +2644,14 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
   const [dailyHelpsUsed, setDailyHelpsUsed] = useState(() => isDaily ? getDailyHelps() : 0);
   const helpsLeft = isDaily ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed) : Infinity;
 
+  // Every power-up use funnels through here: bumps the per-game count (feeds the
+  // HELP_PENALTY at scoring time) and, on the daily, the date-keyed budget that
+  // enforces DAILY_HELP_LIMIT and clears the 🧠 "no hints" badge.
+  function countHelp() {
+    helpsUsedRef.current += 1;
+    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+  }
+
   // 💡 Hint: infer which word you're building from the letters you've flipped
   // (order doesn't matter), then wiggle a tile for that word's next missing letter.
   //   B flipped, BOWL unfound   → wiggles an O (next letter in order)
@@ -2593,7 +2670,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvHint(addInv('wf_inv_hint', -1));
     usedHintRef.current = true;
     syncUseItem('hint'); // account-level consume (no-op for guests)
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
     setHintTileId(tid);
     setTimeout(() => setHintTileId(null), 1600);
   }
@@ -2614,7 +2691,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvMega(addInv('wf_inv_megahint', -1));
     usedHintRef.current = true;
     syncUseItem('megahint');
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
     setMegaHintIds(ids);
     setTimeout(() => setMegaHintIds([]), 1800);
   }
@@ -2635,7 +2712,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvUndo(addInv('wf_inv_undo', -1));
     usedUndoRef.current = true;
     syncUseItem('undo'); // account-level consume (no-op for guests)
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
   }
 
   function handleTileClick(tile) {
@@ -2649,7 +2726,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       setInvXray(addInv('wf_inv_xray', -1));
       usedXrayRef.current = true;
       syncUseItem('xray'); // account-level consume (no-op for guests)
-      if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+      countHelp();
       setXrayTiles(new Set([tile.id]));
       setTimeout(() => setXrayTiles(new Set()), 1300);
       return;
@@ -2682,7 +2759,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       const letters = ft.map(t=>t.letter);
       const sorted = [...letters].sort().join("");
       const s = stateRef.current;
-      const matchIdx = words.findIndex((w,i)=>!s.found.includes(i)&&[...w].sort().join("")===sorted);
+      const matchIdx = matchWordIndex(words, letters, i => s.found.includes(i));
 
       if (matchIdx===-1) {
         // Check for bonus word
@@ -2692,14 +2769,15 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
         if (bonusWord && !foundBonusWords.includes(bonusWord)) {
           soundManager.bonus();
           const bfid = ++floatIdRef.current;
-          setFloatingScores(prev=>[...prev,{id:bfid,pts:50,color:"#9B5DE5"}]);
+          setFloatingScores(prev=>[...prev,{id:bfid,pts:BONUS_WORD_PTS,color:"#9B5DE5"}]);
           setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==bfid)),1500);
           setFoundBonusWords(b=>[...b,bonusWord]);
           setLastBonusWord(bonusWord);
-          setBonusPts(p=>p+50);
-          // A bonus word is a clean +50 reward. It does NOT count as a wrong guess
-          // (it's a valid word — so it never breaks the "every guess valid"
-          // achievement and doesn't cost accuracy). It still consumes a turn.
+          setBonusPts(p=>p+BONUS_WORD_PTS);
+          // A bonus word pays BONUS_WORD_PTS and consumes a turn, which costs
+          // exactly one spare guess — so it's net 0, a freebie rather than a
+          // reward you can farm. It does NOT count as a wrong guess (it's a valid
+          // word, so it never breaks the "every guess valid" achievement).
           setFlash("bonus");
           if (onGuessResolved) onGuessResolved({kind:"bonus", bonusWord});
           setTimeout(()=>unlock(), 1200);
@@ -2803,7 +2881,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
             color:flash==="good"?"var(--wf-accent)":flash==="goodYellow"?"var(--wf-accent2)":flash==="bonus"?"#9B5DE5":"#FF5E5B"}}>
             {flash==="good"&&"🟩 Nice — bonus points!"}
             {flash==="goodYellow"&&"🟨 Found! Try in order for more pts"}
-            {flash==="bonus"&&`✨ Bonus word: ${lastBonusWord.toUpperCase()}! +50 pts`}
+            {flash==="bonus"&&`✨ Bonus word: ${lastBonusWord.toUpperCase()}! +${BONUS_WORD_PTS} pts`}
             {flash==="bad"&&"✗ Not a valid word here"}
           </span>
         )}
@@ -2879,7 +2957,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
           return tileEl;
         })}
       </div>
-      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} turns max · `:""}🟩 +300 · 🟨 +100 · time & accuracy bonus revealed at end</p>
+      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} guesses · `:""}🟩 +300 · 🟨 +100 · time & efficiency bonus revealed at end</p>
     </div>
   );
 }
@@ -2989,7 +3067,7 @@ function TutorialBoard({ onExit }) {
     yellow: "👉 Flip the glowing tile — follow the highlight, one at a time.",
     green: "👉 Almost there! Flip the glowing tile in order.",
     free: "👉 Nice work! Finish the puzzle — flip the rest in any order.",
-    bonusExplain: "✨ That's a Bonus Word! It's not one of this puzzle's 4 real words, but any valid word — in any order — still earns +50.",
+    bonusExplain: `✨ That's a Bonus Word! It's not one of this puzzle's 4 real words, but any valid word — in any order — still earns +${BONUS_WORD_PTS}.`,
     row2Explain: "✨ Another bonus word! Between rows 1 and 2, we've now seen enough letters to spell some of our real words.",
     yellowExplain: "🟨 Right letters, wrong order = Yellow, +100 points.",
     greenExplain: "🟩 Right letters, right order = Green, +300 points. Now finish the puzzle!",
@@ -3042,7 +3120,7 @@ function TutorialBoard({ onExit }) {
               <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>🎉</div>
               <h2 style={{ fontFamily: "'Fraunces',serif", color: "#F5EDD6", fontSize: "1.4rem", fontWeight: 700, margin: "0 0 10px" }}>You're ready!</h2>
               <p style={{ fontFamily: "'JetBrains Mono',monospace", color: "var(--wf-text-dim)", fontSize: "0.78rem", lineHeight: 1.7, margin: 0 }}>
-                🟪 Bonus +50 · 🟨 Yellow +100 · 🟩 Green +300. That's everything you need to know.
+                🟪 Bonus +{BONUS_WORD_PTS} · 🟨 Yellow +100 · 🟩 Green +300. That's everything you need to know.
               </p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
@@ -3123,17 +3201,18 @@ function Firework({ color, trigger, large }) {
 }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], coins = 0, coinsFormula = "", onShop, shopGlow }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
   const timePts  = Math.max(0, 600 - Math.floor(elapsed/1000));
-  // Efficiency: 50 per UNUSED guess. You start with 16; every attempt spends one.
-  const remainingGuesses = Math.max(0, 16 - (turns||0));
-  const guessPts = remainingGuesses * 50;
+  // Efficiency: SPARE_GUESS_PTS per UNUSED guess. Every attempt spends one of
+  // your MAX_GUESSES — see scoreCalc, which this must stay in step with.
+  const spareGuesses = Math.max(0, MAX_GUESSES - (turns||0));
+  const guessPts = spareGuesses * SPARE_GUESS_PTS;
 
   const timeFormula  = `solved in ${formatTime(elapsed)}`;
-  const guessFormula = `${remainingGuesses} remaining guess${remainingGuesses!==1?"es":""} × 50 pts`;
+  const guessFormula = `${spareGuesses} spare guess${spareGuesses!==1?"es":""} × ${SPARE_GUESS_PTS} pts`;
 
   const rows = [
     { icon:"🔤", label:`Words (${greens}🟩 ${yellows}🟨)`,
@@ -3142,8 +3221,8 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     ...(bonusPts > 0 ? [
       { icon:"✨", label:"Bonus words",
         formula: (bonusWords && bonusWords.length)
-          ? `${bonusWords.map(w=>w.toUpperCase()).join(", ")} · ${bonusWords.length}×50`
-          : `${Math.round(bonusPts/50)}×50`,
+          ? `${bonusWords.map(w=>w.toUpperCase()).join(", ")} · ${bonusWords.length}×${BONUS_WORD_PTS}`
+          : `${Math.round(bonusPts/BONUS_WORD_PTS)}×${BONUS_WORD_PTS}`,
         pts:bonusPts, color:"var(--wf-accent2)" },
     ] : []),
     { icon:"⏱", label:"Time bonus",
@@ -3152,6 +3231,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     { icon:"🎯", label:"Efficiency bonus",
       formula:guessFormula,
       pts:guessPts, color:"#00BBF9" },
+    // Only shown when it applies — a clean run's receipt looks exactly as before.
+    ...(helpsUsed > 0 ? [
+      { icon:"💡", label:"Power-ups used",
+        formula:`${helpsUsed} × ${HELP_PENALTY} pts`,
+        pts:-helpsUsed*HELP_PENALTY, color:"#FF5E5B" },
+    ] : []),
   ];
 
   const ROW_MS   = 1200;
@@ -3316,7 +3401,7 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
 // ─── Win Screen ───────────────────────────────────────────────────────────────
 function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-  const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
+  const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
   // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
   const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloTokens(score) : 0;
@@ -3325,7 +3410,12 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
     : "win bonus";
   // Sequence the post-receipt reveals: career progress lands right after the
   // receipt's coins row, then the streak card (daily only) follows it.
-  const receiptRows = 3 + ((result.bonusPts||0) > 0 ? 1 : 0);
+  // Must match the row count ScoreReceipt actually renders: words + time +
+  // efficiency, plus the two conditional rows. Miss one and the career bar
+  // reveals while the receipt is still animating.
+  const receiptRows = 3
+    + ((result.bonusPts||0) > 0 ? 1 : 0)
+    + ((result.helpsUsed||0) > 0 ? 1 : 0);
   const careerDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
   const hasCareerGain = careerGain && careerGain.after > careerGain.before;
   const streakDelay = careerDelay + (hasCareerGain ? 1400 : 0);
@@ -3370,6 +3460,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         score={score}
         bonusPts={result.bonusPts||0}
         bonusWords={result.bonusWords||[]}
+        helpsUsed={result.helpsUsed||0}
         coins={coins}
         coinsFormula={coinsFormula}
         onShop={signedIn ? onShop : null}
@@ -3897,8 +3988,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
       setTurns(t=>t+1);
       const ft=newFlipped.map(id=>tiles.find(t=>t.id===id));
       const letters=ft.map(t=>t.letter);
-      const sorted=[...letters].sort().join("");
-      const matchIdx=words.findIndex((w,i)=>!foundWordSet.has(i)&&[...w].sort().join("")===sorted);
+      const matchIdx=matchWordIndex(words, letters, i => foundWordSet.has(i));
       if (matchIdx===-1) {
         multiProcessingRef.current=true;
         setError(newFlipped); setFlash("bad");
@@ -4476,11 +4566,10 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     if (!currentGs || !currentRoom) { processingRef.current = false; return; }
     const ft = tileIds.map(id => tiles.find(t => t.id === id)).filter(Boolean);
     const letters = ft.map(t => t.letter);
-    const sorted = [...letters].sort().join('');
     const words = currentRoom.words;
     const foundWordsList = currentGs.found_words || [];
     const foundIndices = new Set(foundWordsList.map(fw => fw.wordIndex));
-    const matchIdx = words.findIndex((w, i) => !foundIndices.has(i) && [...w].sort().join('') === sorted);
+    const matchIdx = matchWordIndex(words, letters, i => foundIndices.has(i));
     const now = new Date();
     const expires = new Date(now.getTime() + 60000);
     const myPlayerData = currentPlayers.find(p => p.id === myId);
@@ -4850,8 +4939,9 @@ function SoloSetup({ onBack, onStart }) {
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:0,lineHeight:1.9}}>
           🟩 Flip in order → <strong style={{color:"var(--wf-accent)"}}>+300 pts</strong><br/>
           🟨 Any order → <strong style={{color:"var(--wf-accent2)"}}>+100 pts</strong><br/>
-          ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec<br/>
-          🎯 Accuracy → <strong style={{color:"#00BBF9"}}>800 pts</strong>, −50/miss
+          ✨ Bonus word → <strong style={{color:"var(--wf-accent2)"}}>+{BONUS_WORD_PTS} pts</strong> (costs a guess → free)<br/>
+          ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec, gone at 10 min<br/>
+          🎯 Efficiency → <strong style={{color:"#00BBF9"}}>{SPARE_GUESS_PTS} pts</strong> per spare guess
         </p>
       </div>
       <button onClick={()=>onStart(large)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),width:"100%",padding:"14px",fontSize:"1rem",borderRadius:12,fontWeight:800}}>
@@ -5208,10 +5298,13 @@ function DailyNine({ onBack, onSolve, signedIn }) {
 function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
-  // Infer bonusPts from saved total for old entries that predate the bonusPts field
-  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.turns, 0) : 0;
+  // Infer bonusPts from saved total for old entries that predate the bonusPts field.
+  // Deliberately penalty-free: it reconstructs a score that was stored BEFORE
+  // HELP_PENALTY existed, so folding the penalty in here would inflate the
+  // inferred bonusPts by 25 per help.
+  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.turns, 0, 0) : 0;
   const bonusPts = done ? (done.bonusPts != null ? done.bonusPts : Math.max(0, (done.score||0) - basePts)) : 0;
-  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts)) : 0;
+  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts, done.helps||0)) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr2, getDailyWords().length, (done?.bonusWords||[]).length);
@@ -5236,6 +5329,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           score={score}
           bonusPts={bonusPts}
           bonusWords={done.bonusWords||[]}
+          helpsUsed={done.helps||0}
           coins={session ? dailyTokens(score) : 0}
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
         />
@@ -5336,10 +5430,10 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "⭐",
       title: "The Daily & Bonus Points",
-      body: "The Daily Challenge is 4 fresh words in 16 guesses. Finish fast for a speed bonus, keep guesses clean for an accuracy bonus, and spot a hidden extra word for +50 surprise points.",
+      body: `The Daily Challenge is 4 fresh words in ${MAX_GUESSES} guesses. Four words need four guesses, so the other ${MAX_GUESSES-4} are spare — every one you hand back is worth ${SPARE_GUESS_PTS} pts. Finish inside 10 minutes for a speed bonus, and spot a hidden extra word for +${BONUS_WORD_PTS} surprise points.`,
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
-          {[["⏱","Speed bonus","Up to +600 pts","#9B5DE5"],["🎯","Accuracy bonus","Up to +800 pts","#00BBF9"],["✨","Bonus word","Surprise +50 pts","var(--wf-accent2)"]].map(([em,label,pts,col])=>(
+          {[["⏱","Speed bonus",`Up to +600 pts`,"#9B5DE5"],["🎯","Efficiency bonus",`Up to +${(MAX_GUESSES-4)*SPARE_GUESS_PTS} pts`,"#00BBF9"],["✨","Bonus word",`Surprise +${BONUS_WORD_PTS} pts`,"var(--wf-accent2)"]].map(([em,label,pts,col])=>(
             <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--wf-surface)",borderRadius:8,border:`1px solid ${col}44`}}>
               <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",flex:1}}>{label}</span>
@@ -6721,7 +6815,7 @@ function WordFlip() {
     setFireworks(true); setTimeout(()=>setFireworks(false),4000);
     let dailyStreakCount = 0;
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-    const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
+    const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
     // Career progression: every point counts toward the rewards ladder. Fire a
     // toast for any cosmetic milestone this game just crossed. The LOCAL update
     // here is optimistic (drives the toast + immediate UI); for a signed-in user
@@ -6952,7 +7046,7 @@ function WordFlip() {
           </div>
           <div onClick={()=>setShowTutorial(true)} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" ")setShowTutorial(true);}} style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)",cursor:"pointer"}} aria-label="How to play">
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
-              <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and accuracy (1200)! <span style={{color:"var(--wf-accent)",fontWeight:700}}>▶ Full tutorial</span>
+              <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and efficiency ({(MAX_GUESSES-4)*SPARE_GUESS_PTS})! <span style={{color:"var(--wf-accent)",fontWeight:700}}>▶ Full tutorial</span>
             </p>
           </div>
           <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem",textAlign:"center",marginTop:18}}>
@@ -6981,7 +7075,7 @@ function WordFlip() {
             <button onClick={()=>setScreen("menu")} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
             <span style={{fontFamily:"'Fraunces',serif",color:"var(--wf-accent2)",fontSize:"0.9rem"}}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</span>
           </div>
-          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={16} isDaily />
+          <GameBoard words={getDailyWords()} onWin={r=>handleWin(r,"daily")} timeLimit={null} maxTurns={MAX_GUESSES} isDaily />
         </div>
       )}
 
@@ -6994,7 +7088,7 @@ function WordFlip() {
           <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
-            const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0);
+            const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0, winResult.helpsUsed||0);
             const daily = winMode==="daily";
             const wouldEarn = daily ? dailyTokens(wscore)+(winStreakBonus||0) : soloTokens(wscore);
             return (
