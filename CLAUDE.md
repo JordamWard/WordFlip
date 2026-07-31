@@ -88,14 +88,29 @@ caused "my purchase disappeared" bugs. The economy client wrappers already do th
 
 - **Daily**: `getDailyWords()` → 4 words from `ALL_WORDS_4`, date-seeded. `maxTurns=16`.
 - **Solo**: `startSolo(large)` → 4 or 9 words (`ALL_WORDS_9`). **No turn cap.**
-- **`scoreCalc(ms, wordResults, turns, bonusPts)`** =
-  `green×300 + yellow×100 + timeBonus + efficiencyBonus + bonusPts`
-  - `timeBonus = max(0, 600 − seconds)`
-  - `efficiencyBonus = max(0, (16 − turns) × 50)`
-- **The "16 guesses" model**: you start with 16 guesses; **every 4-tile attempt —
+- **Scoring dials** (one block near `DAILY_HELP_LIMIT` — change them there, never
+  inline): `MAX_GUESSES=16`, `SPARE_GUESS_PTS=100`, `BONUS_WORD_PTS=100`,
+  `HELP_PENALTY=50`.
+- **`scoreCalc(ms, wordResults, turns, bonusPts, helpsUsed)`** =
+  `green×300 + yellow×100 + timeBonus + efficiencyBonus + bonusPts − helpPenalty`,
+  clamped at 0.
+  - `timeBonus = max(0, 600 − seconds)` — −1/sec, gone at **10 minutes** (600s).
+    Neither mode has a round timer; `timeLimit` is `null` and the clock counts up.
+  - `efficiencyBonus = max(0, (MAX_GUESSES − turns) × SPARE_GUESS_PTS)`
+  - `helpPenalty = helpsUsed × HELP_PENALTY`
+- **The "spare guesses" model**: you start with 16 guesses; **every 4-tile attempt —
   correct word, wrong guess, OR bonus word — spends one.** `turns` = total attempts.
-  Efficiency = 50 per *unused* guess. A bonus word is therefore net 0 (spends a guess
-  −50, pays +50). Shown as "🎯 Efficiency bonus — N remaining guesses × 50".
+  Four words need four guesses, so **12 are spare**, and each unused one pays 100 →
+  max 1,200. Explain it that way to players: `(16 − turns)` describes a
+  16-unused-guess run nobody can play, which is how the old "800 pt" copy went wrong.
+- **`BONUS_WORD_PTS` MUST equal `SPARE_GUESS_PTS`.** A bonus word spends a guess, so
+  paying back exactly one spare guess is what keeps it net 0 — free rather than a
+  hidden penalty. Change one, change both.
+- **Maxima**: daily 3,000; solo-9 4,000 (9 words need 9 guesses → only 7 spare).
+  Both sit under the `earn_rules` ceilings (10,000 / 12,000) — worth rechecking if
+  the dials move, since daily **rejects** above ceiling while solo clamps.
+- Three places re-implement the formula independently: `scoreCalc`, `ScoreReceipt`,
+  and `ScoreInfoTip` (dead code). They all read the dials now — keep it that way.
 - `wrongGuesses` = **true misses only** (guesses forming no valid word). Used for
   achievements (`no_wrong` / Sharpshooter, `butterfingers`) — NOT for scoring.
 - Share/leaderboard show `turns` as "N guesses" (total used) + a derived bonus-word
