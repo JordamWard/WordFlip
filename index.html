@@ -1140,6 +1140,31 @@ function buildTiles(words) {
   return shuffle(tiles);
 }
 
+const sortedLetters = w => [...w].sort().join("");
+
+// Which target word did this guess just solve?
+//
+// A guess only ever carries a *multiset* of letters, so when two words in the
+// set are anagrams of each other (the ANAGRAMS quad — ARTS/RATS/TARS/TSAR — is
+// the case that bit us) a plain "first unfound word with these letters" scan
+// always lands on the lowest index. Spell TSAR perfectly and it resolves as
+// ARTS, `letters.join("") === words[matchIdx]` is false, and a correctly
+// ordered word scores yellow.
+//
+// So: prefer the unfound word the guess spells *exactly*, and only fall back to
+// the first unfound anagram when the guess isn't in order for any of them. That
+// makes an in-order guess always green. The fallback is still arbitrary among
+// interchangeable words, but by then no ordering claim is being made.
+//
+// `isFound` takes a word index and returns whether it's already solved.
+function matchWordIndex(words, letters, isFound) {
+  const guess = letters.join("");
+  const exact = words.findIndex((w,i) => !isFound(i) && w === guess);
+  if (exact !== -1) return exact;
+  const sorted = sortedLetters(guess);
+  return words.findIndex((w,i) => !isFound(i) && sortedLetters(w) === sorted);
+}
+
 function formatTime(ms) {
   const s = Math.floor(ms/1000), m = Math.floor(s/60);
   return `${m}:${String(s%60).padStart(2,"0")}`;
@@ -2682,7 +2707,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       const letters = ft.map(t=>t.letter);
       const sorted = [...letters].sort().join("");
       const s = stateRef.current;
-      const matchIdx = words.findIndex((w,i)=>!s.found.includes(i)&&[...w].sort().join("")===sorted);
+      const matchIdx = matchWordIndex(words, letters, i => s.found.includes(i));
 
       if (matchIdx===-1) {
         // Check for bonus word
@@ -3897,8 +3922,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
       setTurns(t=>t+1);
       const ft=newFlipped.map(id=>tiles.find(t=>t.id===id));
       const letters=ft.map(t=>t.letter);
-      const sorted=[...letters].sort().join("");
-      const matchIdx=words.findIndex((w,i)=>!foundWordSet.has(i)&&[...w].sort().join("")===sorted);
+      const matchIdx=matchWordIndex(words, letters, i => foundWordSet.has(i));
       if (matchIdx===-1) {
         multiProcessingRef.current=true;
         setError(newFlipped); setFlash("bad");
@@ -4476,11 +4500,10 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
     if (!currentGs || !currentRoom) { processingRef.current = false; return; }
     const ft = tileIds.map(id => tiles.find(t => t.id === id)).filter(Boolean);
     const letters = ft.map(t => t.letter);
-    const sorted = [...letters].sort().join('');
     const words = currentRoom.words;
     const foundWordsList = currentGs.found_words || [];
     const foundIndices = new Set(foundWordsList.map(fw => fw.wordIndex));
-    const matchIdx = words.findIndex((w, i) => !foundIndices.has(i) && [...w].sort().join('') === sorted);
+    const matchIdx = matchWordIndex(words, letters, i => foundIndices.has(i));
     const now = new Date();
     const expires = new Date(now.getTime() + 60000);
     const myPlayerData = currentPlayers.find(p => p.id === myId);
