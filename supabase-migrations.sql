@@ -1021,3 +1021,34 @@ REVOKE EXECUTE ON FUNCTION public.add_tokens(integer, text)     FROM PUBLIC, ano
 REVOKE EXECUTE ON FUNCTION public.spend_tokens(integer, text)   FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.buy_item(text, integer)       FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.add_career_points(integer)    FROM PUBLIC, anon, authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 21. LEADERBOARD ARCHIVE + RESET. The scoring formula changed (power-up use now
+--     costs HELP_PENALTY per help), and the Jul 30 anagram quad scored
+--     correctly-ordered words yellow, so scores from before that fix aren't
+--     comparable with scores after it. Rather than drop the history, park it
+--     here and start the live leaderboard clean.
+--
+--     Applied 2026-07-31: archived 133 rows (10 players, Jun 17 - Jul 30) and
+--     then emptied daily_scores. Coins (wallets), career (player_progress),
+--     inventories and achievements were deliberately NOT touched — players keep
+--     everything they bought or unlocked.
+--
+--     This table is server-side only: RLS on with no policies and all grants
+--     revoked, so neither anon nor authenticated can read it. Reach it through
+--     the SQL editor / service role.
+CREATE TABLE IF NOT EXISTS public.daily_scores_archive
+  (LIKE public.daily_scores INCLUDING DEFAULTS);
+
+ALTER TABLE public.daily_scores_archive
+  ADD COLUMN IF NOT EXISTS archived_at    timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS archive_reason text;
+
+ALTER TABLE public.daily_scores_archive ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.daily_scores_archive FROM anon, authenticated;
+
+-- To reset again later, run these two together (archive FIRST, and verify the
+-- copy before deleting — there is no undo):
+--   INSERT INTO public.daily_scores_archive
+--     SELECT d.*, now(), '<why>' FROM public.daily_scores d;
+--   DELETE FROM public.daily_scores;
