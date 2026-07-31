@@ -323,6 +323,11 @@ async function grantEarnIfSignedIn(event, ref, score, refreshWallet) {
 // Daily-challenge help budget: 3 combined Hint/Mega/X-ray/Undo uses per day.
 // Keyed to today's date (same pattern as _done/_best) so it resets at midnight.
 const DAILY_HELP_LIMIT = 3;
+// Each power-up used (Hint / Mega Hint / X-ray / Undo) shaves this off the final
+// score. Deliberately small — the real cost of a hint is losing the 🧠 "no hints"
+// badge on the leaderboard; this just makes a hinted run rank below an identical
+// clean one instead of tying it.
+const HELP_PENALTY = 25;
 function getDailyHelps() {
   try { return Math.max(0, parseInt(localStorage.getItem(dateKey()+"_helps") || '0', 10) || 0); } catch { return 0; }
 }
@@ -838,7 +843,7 @@ const ALL_WORDS_4 = [
     ["FOND","DEAR","WARM","LOVE"],  ["SNAP","RAGE","FUME","RANT"],
     ["MEEK","MILD","SOFT","TAME"],  ["BUOY","GLAD","GLEE","BRIM"],
     ["BORE","JADE","PALL","CLOY"],  ["ARID","DULL","FLAT","GREY"],
-    ["COOL","DOUR","COLD","ALOF"],  ["FIZZ","BUZZ","HYPE","ZEAL"],
+    ["COOL","DOUR","COLD","GLUM"],  ["FIZZ","BUZZ","HYPE","ZEAL"],
     // CONCEPTS
     ["HALF","PAIR","TWIN","DUAL"],  ["ZERO","NONE","NULL","VOID"],
     ["MUCH","LOTS","HEAP","MASS"],  ["TINY","PUNY","SLIM","WIRY"],
@@ -1006,8 +1011,7 @@ const ALL_WORDS_4 = [
   ["ADDS","INNS","ERRS","MUSS"],
   // RHYMES WITH -ACK
   ["LACK","SACK","JACK","YACK"],
-  // ANAGRAMS (same 4 letters, A R S T)
-  ["ARTS","RATS","TARS","TSAR"],
+  // (the A-R-S-T anagram quad moved into the ANAGRAMS block at the end)
   // OLDE ENGLISH
   ["THOU","THEE","DOTH","HATH"],
   // GRAMMAR: MORE LINKERS
@@ -1031,6 +1035,17 @@ const ALL_WORDS_4 = [
   ["WISH","UPON","YOUR","STAR"],["STOP","DROP","THEN","ROLL"],
   ["TAKE","YOUR","TIME","HERE"],["GEEK","READ","THIS","BOOK"],
   ["OWLS","HOOT","INTO","DUSK"],["WOLF","HOWL","UNTO","MOON"],
+  // ANAGRAMS — every word in the quad is the same four letters rearranged.
+  // These only play fairly because matchWordIndex() resolves a guess to the
+  // word it spells exactly rather than the first unfound word with those
+  // letters; a plain letter-multiset scan scores correctly-ordered words
+  // yellow here. Don't add an anagram quad without that matcher in place.
+  ["ARTS","RATS","TARS","TSAR"],["MITE","EMIT","TIME","ITEM"],
+  ["SPIN","SNIP","PINS","NIPS"],["TAME","MATE","MEAT","TEAM"],
+  ["TIDE","EDIT","DIET","TIED"],["TEAS","EAST","SEAT","EATS"],
+  ["NEST","NETS","SENT","TENS"],["MANE","NAME","MEAN","AMEN"],
+  ["SNAP","PANS","SPAN","NAPS"],["POST","STOP","TOPS","SPOT"],
+  ["CAST","ACTS","CATS","SCAT"],
 ];
 
 const ALL_WORDS_9 = [
@@ -1170,7 +1185,7 @@ function formatTime(ms) {
   return `${m}:${String(s%60).padStart(2,"0")}`;
 }
 
-function scoreCalc(ms, wordResults, turns, bonusPts = 0) {
+function scoreCalc(ms, wordResults, turns, bonusPts = 0, helpsUsed = 0) {
   const greenPts = wordResults.filter(r=>r==="green").length * 300;
   const yellowPts = wordResults.filter(r=>r==="yellow").length * 100;
   // "missed" words score 0 — no bonus for unfound words
@@ -1179,7 +1194,9 @@ function scoreCalc(ms, wordResults, turns, bonusPts = 0) {
   // spends one. You're rewarded 50 per UNUSED guess: (16 − turns) × 50.
   const guessBonus = Math.max(0, (16 - (turns||0)) * 50);
   // A bonus word spends a guess (−50 here) but pays +50 below → net 0, no special case.
-  return greenPts + yellowPts + timeBonus + guessBonus + bonusPts;
+  const helpPenalty = Math.max(0, helpsUsed||0) * HELP_PENALTY;
+  // Clamped at 0 so the penalty can never produce a negative score.
+  return Math.max(0, greenPts + yellowPts + timeBonus + guessBonus + bonusPts - helpPenalty);
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -2053,15 +2070,20 @@ function Fireworks({ active }) {
 }
 
 // ─── Score Info Tooltip ───────────────────────────────────────────────────────
-function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
+// NOTE: not currently rendered anywhere — the live breakdown players actually
+// see is ScoreReceipt. Kept in sync with scoreCalc anyway so it isn't a trap if
+// it ever gets wired back up. (It had drifted: it was scoring efficiency off
+// wrongGuesses, but scoreCalc pays 50 per UNUSED guess of the 16.)
+function ScoreInfoTip({ words, wordResults, elapsed, turns, helpsUsed = 0 }) {
   const [open, setOpen] = useState(false);
   const results = wordResults || [];
   const greens = results.filter(r=>r==="green").length;
   const yellows = results.filter(r=>r==="yellow").length;
   const secs = Math.floor(elapsed/1000);
   const timeBonus = Math.max(0, 600 - secs);
-  const guessBonus = Math.max(0, 800 - (wrongGuesses||0)*50);
-  const current = greens*300 + yellows*100 + timeBonus + guessBonus;
+  const guessBonus = Math.max(0, (16 - (turns||0)) * 50);
+  const helpPenalty = Math.max(0, helpsUsed) * HELP_PENALTY;
+  const current = Math.max(0, greens*300 + yellows*100 + timeBonus + guessBonus - helpPenalty);
   return (
     <span style={{ position:"relative", display:"inline-flex", alignItems:"center", marginLeft:4 }}>
       <button onClick={e=>{ e.stopPropagation(); setOpen(o=>!o); }}
@@ -2086,7 +2108,8 @@ function ScoreInfoTip({ words, wordResults, elapsed, wrongGuesses }) {
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"var(--wf-accent)"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"var(--wf-accent2)"},
             {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"var(--wf-text-mute)"},
-            {label:`🎯 Accuracy (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
+            {label:`🎯 Efficiency (${Math.round(guessBonus/50)} × 50 pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
+            ...(helpPenalty>0?[{label:`💡 Power-ups (${helpsUsed} × ${HELP_PENALTY})`, val:`-${helpPenalty}`, color:"#FF5E5B"}]:[]),
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.65rem"}}>{row.label}</span>
@@ -2495,6 +2518,11 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
   const usedHintRef = useRef(false); // hint used this game
   const usedXrayRef = useRef(false); // x-ray used this game
   const usedUndoRef = useRef(false); // undo used this game (a power-up → disqualifies "no power-ups" achievements)
+  // Count (not just "did you") of power-ups used this game — drives the HELP_PENALTY.
+  // The daily has its own date-keyed counter that survives a leave-and-resume; this
+  // per-game one is what makes the penalty work in solo too, where there's no
+  // date-keyed budget. Restored from saved progress so a resumed daily keeps it.
+  const helpsUsedRef = useRef(savedProg ? (savedProg.helpsUsed || 0) : 0);
 
   useEffect(()=>{
     if (!started) return;
@@ -2516,8 +2544,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       tiles, found, foundTileIds:[...foundTileIds], turns, wrongGuesses,
       wordResults, foundInOrderSet:[...foundInOrderSet],
       foundBonusWords, bonusPts, elapsed:stateRef.current.elapsed||elapsed, started,
+      helpsUsed:helpsUsedRef.current,
     });
-  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started]);
+  },[found, foundTileIds, turns, wrongGuesses, wordResults, foundInOrderSet, foundBonusWords, bonusPts, started, dailyHelpsUsed]);
 
   // Keep the saved elapsed time roughly current (within ~5s) while playing.
   useEffect(()=>{
@@ -2545,7 +2574,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       wordResults:s.wordResults, wrongGuesses:s.wrongGuesses,
       bonusPts:s.bonusPts, bonusWords:s.foundBonusWords,
       usedHint:usedHintRef.current, usedXray:usedXrayRef.current, usedUndo:usedUndoRef.current,
-      usedHelp:usedHintRef.current||usedXrayRef.current||usedUndoRef.current, ...extraProps
+      usedHelp:usedHintRef.current||usedXrayRef.current||usedUndoRef.current,
+      helpsUsed:helpsUsedRef.current, ...extraProps
     }), 600);
   }
 
@@ -2600,6 +2630,14 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
   const [dailyHelpsUsed, setDailyHelpsUsed] = useState(() => isDaily ? getDailyHelps() : 0);
   const helpsLeft = isDaily ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed) : Infinity;
 
+  // Every power-up use funnels through here: bumps the per-game count (feeds the
+  // HELP_PENALTY at scoring time) and, on the daily, the date-keyed budget that
+  // enforces DAILY_HELP_LIMIT and clears the 🧠 "no hints" badge.
+  function countHelp() {
+    helpsUsedRef.current += 1;
+    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+  }
+
   // 💡 Hint: infer which word you're building from the letters you've flipped
   // (order doesn't matter), then wiggle a tile for that word's next missing letter.
   //   B flipped, BOWL unfound   → wiggles an O (next letter in order)
@@ -2618,7 +2656,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvHint(addInv('wf_inv_hint', -1));
     usedHintRef.current = true;
     syncUseItem('hint'); // account-level consume (no-op for guests)
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
     setHintTileId(tid);
     setTimeout(() => setHintTileId(null), 1600);
   }
@@ -2639,7 +2677,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvMega(addInv('wf_inv_megahint', -1));
     usedHintRef.current = true;
     syncUseItem('megahint');
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
     setMegaHintIds(ids);
     setTimeout(() => setMegaHintIds([]), 1800);
   }
@@ -2660,7 +2698,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     setInvUndo(addInv('wf_inv_undo', -1));
     usedUndoRef.current = true;
     syncUseItem('undo'); // account-level consume (no-op for guests)
-    if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+    countHelp();
   }
 
   function handleTileClick(tile) {
@@ -2674,7 +2712,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       setInvXray(addInv('wf_inv_xray', -1));
       usedXrayRef.current = true;
       syncUseItem('xray'); // account-level consume (no-op for guests)
-      if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
+      countHelp();
       setXrayTiles(new Set([tile.id]));
       setTimeout(() => setXrayTiles(new Set()), 1300);
       return;
@@ -3148,7 +3186,7 @@ function Firework({ color, trigger, large }) {
 }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], coins = 0, coinsFormula = "", onShop, shopGlow }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -3177,6 +3215,12 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     { icon:"🎯", label:"Efficiency bonus",
       formula:guessFormula,
       pts:guessPts, color:"#00BBF9" },
+    // Only shown when it applies — a clean run's receipt looks exactly as before.
+    ...(helpsUsed > 0 ? [
+      { icon:"💡", label:"Power-ups used",
+        formula:`${helpsUsed} × ${HELP_PENALTY} pts`,
+        pts:-helpsUsed*HELP_PENALTY, color:"#FF5E5B" },
+    ] : []),
   ];
 
   const ROW_MS   = 1200;
@@ -3341,7 +3385,7 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
 // ─── Win Screen ───────────────────────────────────────────────────────────────
 function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-  const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
+  const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
   // streakBonus comes from handleWin (week-boundary crossing) so it matches the grant.
   const coins = !signedIn ? 0 : mode==="daily" ? dailyTokens(score) + streakBonus : mode==="solo" ? soloTokens(score) : 0;
@@ -3395,6 +3439,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         score={score}
         bonusPts={result.bonusPts||0}
         bonusWords={result.bonusWords||[]}
+        helpsUsed={result.helpsUsed||0}
         coins={coins}
         coinsFormula={coinsFormula}
         onShop={signedIn ? onShop : null}
@@ -5231,10 +5276,13 @@ function DailyNine({ onBack, onSolve, signedIn }) {
 function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
-  // Infer bonusPts from saved total for old entries that predate the bonusPts field
-  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.turns, 0) : 0;
+  // Infer bonusPts from saved total for old entries that predate the bonusPts field.
+  // Deliberately penalty-free: it reconstructs a score that was stored BEFORE
+  // HELP_PENALTY existed, so folding the penalty in here would inflate the
+  // inferred bonusPts by 25 per help.
+  const basePts = done ? scoreCalc(done.elapsed, wordResultsArr2, done.turns, 0, 0) : 0;
   const bonusPts = done ? (done.bonusPts != null ? done.bonusPts : Math.max(0, (done.score||0) - basePts)) : 0;
-  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts)) : 0;
+  const score = done ? (done.score || scoreCalc(done.elapsed, wordResultsArr2, done.turns, bonusPts, done.helps||0)) : 0;
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr2, getDailyWords().length, (done?.bonusWords||[]).length);
@@ -5259,6 +5307,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           score={score}
           bonusPts={bonusPts}
           bonusWords={done.bonusWords||[]}
+          helpsUsed={done.helps||0}
           coins={session ? dailyTokens(score) : 0}
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
         />
@@ -6744,7 +6793,7 @@ function WordFlip() {
     setFireworks(true); setTimeout(()=>setFireworks(false),4000);
     let dailyStreakCount = 0;
     const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
-    const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0);
+    const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
     // Career progression: every point counts toward the rewards ladder. Fire a
     // toast for any cosmetic milestone this game just crossed. The LOCAL update
     // here is optimistic (drives the toast + immediate UI); for a signed-in user
@@ -7017,7 +7066,7 @@ function WordFlip() {
           <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
-            const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0);
+            const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0, winResult.helpsUsed||0);
             const daily = winMode==="daily";
             const wouldEarn = daily ? dailyTokens(wscore)+(winStreakBonus||0) : soloTokens(wscore);
             return (
