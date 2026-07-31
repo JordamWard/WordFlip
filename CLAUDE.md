@@ -54,7 +54,9 @@ Postgres + Auth (JWT) + Realtime + Edge Functions. Edge functions in
 - `powerup_rewards(reward_id, item, amount, points_required)` — career reward ladder.
 - `daily_scores(user_id, day_key, score, turns, elapsed, wrong_guesses, blocks, helps)`
   — leaderboard rows. `blocks` is the 🟩🟨🟥 emoji string.
-- `profiles(user_id, username)`, `promo_codes`.
+- `profiles(id, username, display_name)` — note the PK is **`id`**, not `user_id`;
+  join it as `profiles.id = daily_scores.user_id`. `promo_codes`.
+- `daily_scores_archive` — service-role-only backup of `daily_scores` (§21).
 
 ## Economy — SERVER IS AUTHORITATIVE (core security invariant)
 
