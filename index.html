@@ -1815,8 +1815,11 @@ async function claimPowerupReward(entry, signedIn) {
   }
 }
 // Grant every power-up reward the player has earned but not yet claimed.
+// Returns a promise resolving once all claims have settled, so callers that
+// need the account inventory to reflect fresh grants (e.g. a sync read right
+// after) can await it instead of racing the claim RPC.
 function claimEarnedPowerups(signedIn, career) {
-  REWARD_LADDER.forEach(r => { if (r.type === 'powerup' && career >= r.points) claimPowerupReward(r, signedIn); });
+  return Promise.all(REWARD_LADDER.filter(r => r.type === 'powerup' && career >= r.points).map(r => claimPowerupReward(r, signedIn)));
 }
 
 // Redeem a promo code. The code and its value live SERVER-SIDE (redeem_code
@@ -6326,7 +6329,10 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
   return (
     <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
-      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={onApplyTheme} onApplyTileBack={onApplyTileBack} onClose={()=>setPreview(null)} />}
+      {/* Shop swatches are always unowned (owned ones move to Inventory) — preview
+          only, no onApplyTheme/onApplyTileBack, so "tap to preview" can't be used
+          to equip a theme/back for free without buying it. */}
+      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onClose={()=>setPreview(null)} />}
       <button onClick={onBack} style={{...btnStyle('var(--wf-border)','var(--wf-text-dim)'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
 
       {/* Balance header — same source of truth as the menu pill */}
@@ -6749,10 +6755,11 @@ function WordFlip() {
         //    about, ONCE, through grant_earn (adds_career; no coins, no ceiling).
         //    Idempotent on a stable per-user ref, so it can't re-transfer.
         const server = await fetchCareerRemote(uid);
+        let total = null;
         if (server != null) {
           const local = getCareerPoints();
           const migKey = 'wf_career_migrated_' + uid;
-          let total = server;
+          total = server;
           if (!localStorage.getItem(migKey) && local > server) {
             const res = await grantEarn('guest_migrate', 'career-migrate-' + uid, local - server);
             if (res && res.career != null) total = res.career;
@@ -6761,7 +6768,14 @@ function WordFlip() {
           try { localStorage.setItem('wf_career', String(total)); } catch (e) {}
           setCareer(total);
         }
-        // 3. Pull account inventory + cosmetics down to this device.
+        // 3. Grant any career-ladder power-up rewards BEFORE pulling the account
+        //    inventory down. Both hit the same wf_inv_* localStorage keys, and
+        //    the sync below is a plain SELECT — if it isn't sequenced after the
+        //    claim's INSERT/UPDATE, its stale (pre-reward) read can land last
+        //    and silently erase the hint/xray/mega-hint the player just earned
+        //    from the local cache (the DB stays correct; only the device cache
+        //    goes stale until the next sync). This was that bug.
+        await claimEarnedPowerups(true, total ?? getCareerPoints());
         syncInventoryFromServer(uid); // power-ups follow the account
         fetchOwnedThemes(uid).then(setOwnedThemes); // themes follow the account
         fetchOwnedTileBacks(uid).then(setOwnedTileBacks); // tile backs too
