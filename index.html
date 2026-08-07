@@ -6329,7 +6329,10 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
 
   return (
     <div style={{maxWidth:440, margin:'0 auto', width:'100%'}}>
-      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={onApplyTheme} onApplyTileBack={onApplyTileBack} onClose={()=>setPreview(null)} />}
+      {/* Shop swatches are always unowned (owned ones move to Inventory) — preview
+          only, no onApplyTheme/onApplyTileBack, so "tap to preview" can't be used
+          to equip a theme/back for free without buying it. */}
+      {preview && <ComboPreview themeId={preview.themeId} backId={preview.backId} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onClose={()=>setPreview(null)} />}
       <button onClick={onBack} style={{...btnStyle('var(--wf-border)','var(--wf-text-dim)'), marginBottom:16, fontSize:'0.8rem'}}>← Back</button>
 
       {/* Balance header — same source of truth as the menu pill */}
