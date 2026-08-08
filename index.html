@@ -3144,70 +3144,23 @@ function TutorialBoard({ onExit }) {
 
 // ─── Count-up number animation ──────────────────────────────────────────────────────
 function CountUp({ to, active, color, large, unit = "pts" }) {
-  const [val, setVal] = useState(0);
-  const [big, setBig] = useState(false);
-  const started = useRef(false);
-  useEffect(() => {
-    if (!active || started.current) return;
-    started.current = true;
-    if (to === 0) { setVal(0); return; }
-    const DURATION = large ? 800 : 620;
-    const FRAMES  = large ? 32 : 26;
-    let frame = 0;
-    const id = setInterval(() => {
-      frame++;
-      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
-      setVal(frame >= FRAMES ? to : Math.round(p * to));
-      if (frame >= FRAMES) {
-        clearInterval(id);
-        setBig(true);
-        setTimeout(() => setBig(false), large ? 400 : 300);
-      }
-    }, Math.round(DURATION / FRAMES));
-    return () => clearInterval(id);
-  }, [active]);
-  const popScale = large ? 1.45 : 1.38;
+  // No animation: the results screen renders fully-loaded, so the final value
+  // shows immediately (and stays put when you re-enter results).
   return (
     <span style={{
       fontFamily: large ? "'Fraunces',serif" : "'JetBrains Mono',monospace",
       fontWeight: 900, color,
       fontSize: large ? "1.6rem" : "0.88rem",
       display: "inline-block",
-      transform: big ? `scale(${popScale})` : "scale(1)",
-      transition: "transform 0.22s cubic-bezier(.4,2,.6,1)",
     }}>
-      +{val.toLocaleString()}{large && unit && <span style={{fontSize:"0.85rem",fontWeight:700}}> {unit}</span>}
+      +{to.toLocaleString()}{large && unit && <span style={{fontSize:"0.85rem",fontWeight:700}}> {unit}</span>}
     </span>
   );
 }
 
 // ─── Firework burst helper ────────────────────────────────────────────────────
-function Firework({ color, trigger, large }) {
-  const [particles, setParticles] = useState([]);
-  const fired = useRef(false);
-  useEffect(() => {
-    if (!trigger || fired.current) return;
-    fired.current = true;
-    const count = large ? 22 : 12;
-    setParticles(Array.from({ length: count }, (_, i) => {
-      const angle = (i / count) * 2 * Math.PI;
-      const dist = (large ? 58 : 32) + Math.random() * (large ? 28 : 14);
-      return { id: i, tx: Math.cos(angle) * dist, ty: Math.sin(angle) * dist };
-    }));
-    const t = setTimeout(() => setParticles([]), 900);
-    return () => clearTimeout(t);
-  }, [trigger]);
-  const sz = large ? 9 : 5;
-  return particles.map(p => (
-    <div key={p.id} style={{
-      position:"absolute", width:sz, height:sz, borderRadius:"50%",
-      background:color, boxShadow:`0 0 ${sz+2}px ${color}`,
-      top:"50%", right:0, marginTop:-(sz/2),
-      "--fw-tx":p.tx+"px", "--fw-ty":p.ty+"px",
-      animation:"fwParticle 0.72s ease-out forwards", pointerEvents:"none", zIndex:20,
-    }} />
-  ));
-}
+// Disabled: the results screen no longer animates, so no bursts fire.
+function Firework() { return null; }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
 function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow }) {
@@ -3248,49 +3201,22 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     ] : []),
   ];
 
-  const ROW_MS   = 1200;
-  const FW_AFTER = 700;
-  const [visibleCount, setVisibleCount] = useState(0);
-  const [firedSet,     setFiredSet]     = useState(new Set());
-
-  useEffect(() => {
-    const timers = [];
-    const fire = key => setFiredSet(s => { const n = new Set(s); n.add(key); return n; });
-    rows.forEach((_, i) => {
-      timers.push(setTimeout(() => setVisibleCount(v => Math.max(v, i+1)), 300 + i*ROW_MS));
-      timers.push(setTimeout(() => fire(i),                                300 + i*ROW_MS + FW_AFTER));
-    });
-    const totalShow = 300 + rows.length * ROW_MS;
-    timers.push(setTimeout(() => setVisibleCount(rows.length + 1), totalShow));
-    timers.push(setTimeout(() => fire("total"),                    totalShow + 900));
-    // Coins earned reveals last, after the total has landed
-    if (coins > 0) {
-      timers.push(setTimeout(() => setVisibleCount(rows.length + 2), totalShow + 1400));
-      timers.push(setTimeout(() => fire("coins"),                    totalShow + 2100));
-    }
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
-  const totalVisible = visibleCount > rows.length;
-  const coinsVisible = visibleCount > rows.length + 1;
+  // No reveal sequencing: everything shows at once so the results screen is
+  // fully loaded on entry (and stays that way when you come back to it).
+  const totalVisible = true;
+  const coinsVisible = true;
 
   return (
     <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
       {rows.map((row, i) => {
-        const visible = visibleCount > i;
         return (
-          <div key={row.label} style={{
-            marginBottom:10, opacity:visible?1:0,
-            transform:visible?"translateX(0)":"translateX(-10px)",
-            transition:"opacity 0.35s ease, transform 0.35s ease",
-          }}>
+          <div key={row.label} style={{marginBottom:10}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem"}}>
                 {row.icon} {row.label}
               </span>
               <div style={{position:"relative", display:"flex", alignItems:"center", flexShrink:0, marginLeft:12}}>
-                <Firework color={row.color} trigger={firedSet.has(i)} />
-                <CountUp to={row.pts} active={visible} color={row.color} />
+                <CountUp to={row.pts} active={true} color={row.color} />
               </div>
             </div>
             <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.68rem", marginTop:3, paddingLeft:"1.4em"}}>
@@ -3308,7 +3234,6 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
       }}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>TOTAL</span>
         <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-          <Firework color="var(--wf-accent2)" trigger={firedSet.has("total")} large />
           <CountUp to={score} active={totalVisible} color="var(--wf-accent2)" large />
         </div>
       </div>
@@ -3328,7 +3253,6 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
           </div>
           <div style={{display:"flex", alignItems:"center", gap:10}}>
             <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-              <Firework color="var(--wf-accent)" trigger={firedSet.has("coins")} large />
               <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" />
             </div>
             {onShop && (
@@ -3348,31 +3272,9 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 // from zero if this game's points pushed you into a new tier.
 function CareerProgressRow({ before, after, delay = 900, onClick }) {
   const gain = after - before;
-  const fromProg = nextRewardProgress(before);
   const toProg = nextRewardProgress(after);
-  const tierChanged = fromProg.nextIdx !== toProg.nextIdx;
-  const startPct = tierChanged ? 0 : fromProg.pct;
-  const endPct = toProg.pct;
-  const [active, setActive] = useState(false);
-  const [pct, setPct] = useState(startPct);
-  const started = useRef(false);
-  useEffect(() => {
-    const t = setTimeout(() => setActive(true), delay);
-    return () => clearTimeout(t);
-  }, []);
-  useEffect(() => {
-    if (!active || started.current) return;
-    started.current = true;
-    const DURATION = 900, FRAMES = 24;
-    let frame = 0;
-    const id = setInterval(() => {
-      frame++;
-      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
-      setPct(startPct + p * (endPct - startPct));
-      if (frame >= FRAMES) clearInterval(id);
-    }, Math.round(DURATION / FRAMES));
-    return () => clearInterval(id);
-  }, [active]);
+  // No animation: the bar shows its final fill immediately.
+  const pct = toProg.pct;
   if (gain <= 0) return null;
   return (
     <div onClick={onClick} role={onClick?"button":undefined} tabIndex={onClick?0:undefined}
@@ -3380,13 +3282,11 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
       style={{
       background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14,
       padding:"14px 16px", marginBottom:20, textAlign:"left",
-      opacity:active?1:0, transform:active?"scale(1)":"scale(0.92)",
-      transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
       cursor: onClick ? "pointer" : "default",
     }}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>🎁 CAREER PROGRESS</span>
-        <CountUp to={gain} active={active} color="var(--wf-accent2)" />
+        <CountUp to={gain} active={true} color="var(--wf-accent2)" />
       </div>
       <div style={{height:8, borderRadius:4, background:"var(--wf-border)", overflow:"hidden"}}>
         <div style={{width:`${pct}%`, height:"100%", background:"linear-gradient(90deg,#FFB703,#ff9f1c)", transition:"width 0.15s linear"}} />
@@ -3417,17 +3317,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
-  // Sequence the post-receipt reveals: career progress lands right after the
-  // receipt's coins row, then the streak card (daily only) follows it.
-  // Must match the row count ScoreReceipt actually renders: words + time +
-  // efficiency, plus the two conditional rows. Miss one and the career bar
-  // reveals while the receipt is still animating.
-  const receiptRows = 3
-    + ((result.bonusPts||0) > 0 ? 1 : 0)
-    + ((result.helpsUsed||0) > 0 ? 1 : 0);
-  const careerDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
   const hasCareerGain = careerGain && careerGain.after > careerGain.before;
-  const streakDelay = careerDelay + (hasCareerGain ? 1400 : 0);
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -3476,11 +3366,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         shopGlow={shopHasNew()}
       />
       {hasCareerGain&&(
-        <CareerProgressRow before={careerGain.before} after={careerGain.after} delay={careerDelay} onClick={onRewards} />
+        <CareerProgressRow before={careerGain.before} after={careerGain.after} onClick={onRewards} />
       )}
       {isDaily&&(
         <div style={{marginBottom:20}}>
-          <StreakCard animate delay={streakDelay} />
+          <StreakCard />
         </div>
       )}
       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
