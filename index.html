@@ -3163,7 +3163,7 @@ function CountUp({ to, active, color, large, unit = "pts" }) {
 function Firework() { return null; }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow, compact = false }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow, compact = false, onShare, shareCopied = false }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -3261,6 +3261,15 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
               </button>
             )}
           </div>
+        </div>
+      )}
+      {/* Nestled Share — lives inside the score card, right under the total/coins,
+          so it reads as part of the summary instead of a loose button row. */}
+      {onShare && (
+        <div style={{marginTop:compact?10:12, paddingTop:compact?10:12, borderTop:"1.5px solid #1e304833", display:"flex", justifyContent:"center"}}>
+          <button onClick={onShare} style={{...btnStyle(shareCopied?"#00c49f":"var(--wf-border)", shareCopied?"#0a2e24":"#F5EDD6"), width:"100%", padding:"10px", fontSize:"0.85rem"}}>
+            {shareCopied?"✓ Copied!":"📤 Share"}
+          </button>
         </div>
       )}
     </div>
@@ -5204,11 +5213,6 @@ function DailyNine({ onBack, onSolve, signedIn }) {
 // with three light PostgREST queries (leaderboard reads only — no economy), so
 // no RPC/schema change. Neighbours are found by score comparison against your
 // known local score, so it works even before your own row finishes syncing.
-function rankAvatarColor(name) {
-  const palette = ["#9B5DE5","#00BBF9","#00F5C4","#FFB703","#FF5E5B","#F15BB5"];
-  let h = 0; for (const ch of (name || "?")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return palette[h % palette.length];
-}
 function DailyRankPeek({ session, myScore, onLeaderboard, onSignIn }) {
   const [st, setSt] = useState({ loading:true, error:false, above:null, below:null, rank:null, total:null });
   useEffect(() => {
@@ -5262,22 +5266,20 @@ function DailyRankPeek({ session, myScore, onLeaderboard, onSignIn }) {
     const uname = me ? "You" : (entry.profiles?.username || "Anonymous");
     const sc = me ? myScore : entry.score;
     const medal = medalFor(rank);
-    const av = rankAvatarColor(uname);
     return (
       <div key={i} style={{
-        display:"grid", gridTemplateColumns:"22px 30px 1fr auto", gap:"0 9px", alignItems:"center",
-        background: me?"#9B5DE518":"transparent", borderRadius:9, padding:"7px 8px",
+        display:"grid", gridTemplateColumns:"28px 1fr auto", gap:"0 8px", alignItems:"center",
+        background: me?"#9B5DE515":"transparent", borderRadius:9, padding:"8px 10px",
         border: me?"1.5px solid #9B5DE5":"1.5px solid transparent",
       }}>
-        <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:medal?"0.95rem":"0.72rem", fontWeight:700, textAlign:"center", color:medal?"var(--wf-accent2)":"var(--wf-text-mute)"}}>{medal||rank}</span>
-        <span style={{width:30, height:30, borderRadius:"50%", background:av, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'JetBrains Mono',monospace", fontWeight:800, fontSize:"0.82rem", color:"#0a1520"}}>{(uname[0]||"?").toUpperCase()}</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:medal?"1rem":"0.75rem", fontWeight:700, textAlign:"center", color:medal?"var(--wf-accent2)":"var(--wf-text-mute)"}}>{medal||rank}</span>
         <div style={{minWidth:0}}>
-          <div style={{fontFamily:"'JetBrains Mono',monospace", color:me?"#c9a7ff":"#F5EDD6", fontSize:"0.8rem", fontWeight:me?700:400, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{uname}</div>
-          <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.58rem"}}>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:me?"#9B5DE5":"#F5EDD6", fontSize:"0.82rem", fontWeight:me?700:400, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{uname}</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.6rem"}}>
             {entry ? `${entry.turns} guess${entry.turns!==1?"es":""}${entry.elapsed!=null?` · ${Math.floor(entry.elapsed/1000)}s`:""}${entry.helps===0?" · 🧠":""}` : "this run"}
           </div>
         </div>
-        <span style={{fontFamily:"'Fraunces',serif", color:me?"var(--wf-accent2)":"#F5EDD6", fontWeight:700, fontSize:"0.95rem", textAlign:"right"}}>{(sc||0).toLocaleString()}</span>
+        <span style={{fontFamily:"'Fraunces',serif", color:me?"var(--wf-accent2)":"#F5EDD6", fontWeight:700, fontSize:"1rem", textAlign:"right"}}>{(sc||0).toLocaleString()}</span>
       </div>
     );
   };
@@ -5340,16 +5342,10 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine, onLeaderboard }) {
           helpsUsed={done.helps||0}
           coins={session ? dailyTokens(score) : 0}
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
+          onShare={handleShare}
+          shareCopied={copied}
         />
       )}
-      {/* Share sits right under the score so it's easy to find (matches the
-          win screen); the rank peek + streak cards follow below. */}
-      <div style={{display:"flex",gap:10,justifyContent:"center",margin:"14px 0"}}>
-        <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
-          {copied?"✓ Copied!":"📤 Share"}
-        </button>
-        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
-      </div>
       {!session&&onAuth&&(
         <div style={{
           maxWidth:340,margin:"16px auto",padding:"14px 16px",borderRadius:12,
