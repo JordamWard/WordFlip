@@ -340,6 +340,12 @@ const BONUS_WORD_PTS  = SPARE_GUESS_PTS;
 // losing the 🧠 "no hints" badge on the leaderboard and the coins it cost; this
 // just stops a hinted run from tying an identical clean one.
 const HELP_PENALTY    = 50;
+// Score-type identity colors — one source of truth so every place that shows a
+// bonus stays in sync (the in-game float, the receipt, the scoring panel, the
+// intro card). Purple means "bonus word" EVERYWHERE; the Time/Speed bonus owns
+// its own warm orange so the two never read as the same thing.
+const BONUS_WORD_COLOR = "#9B5DE5"; // purple — bonus word
+const TIME_BONUS_COLOR = "#FF8A3D"; // warm orange — Time/Speed bonus
 function getDailyHelps() {
   try { return Math.max(0, parseInt(localStorage.getItem(dateKey()+"_helps") || '0', 10) || 0); } catch { return 0; }
 }
@@ -2124,7 +2130,7 @@ function ScoreInfoTip({ words, wordResults, elapsed, turns, helpsUsed = 0 }) {
           {[
             {label:"🟩 In-order ×300", val:`+${greens*300}`, color:"var(--wf-accent)"},
             {label:"🟨 Any order ×100", val:`+${yellows*100}`, color:"var(--wf-accent2)"},
-            {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?"#9B5DE5":"var(--wf-text-mute)"},
+            {label:`⏱ Time (${secs}s of 600)`, val:`+${timeBonus}`, color:timeBonus>0?TIME_BONUS_COLOR:"var(--wf-text-mute)"},
             {label:`🎯 Efficiency (${Math.round(guessBonus/SPARE_GUESS_PTS)} × ${SPARE_GUESS_PTS} pts)`, val:`+${guessBonus}`, color:guessBonus>0?"#00BBF9":"var(--wf-text-mute)"},
             ...(helpPenalty>0?[{label:`💡 Power-ups (${helpsUsed} × ${HELP_PENALTY})`, val:`-${helpPenalty}`, color:"#FF5E5B"}]:[]),
           ].map(row=>(
@@ -2772,7 +2778,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
         if (bonusWord && !foundBonusWords.includes(bonusWord)) {
           soundManager.bonus();
           const bfid = ++floatIdRef.current;
-          setFloatingScores(prev=>[...prev,{id:bfid,pts:BONUS_WORD_PTS,color:"#9B5DE5"}]);
+          setFloatingScores(prev=>[...prev,{id:bfid,pts:BONUS_WORD_PTS,color:BONUS_WORD_COLOR}]);
           setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==bfid)),1500);
           setFoundBonusWords(b=>[...b,bonusWord]);
           setLastBonusWord(bonusWord);
@@ -2881,7 +2887,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
       >
         {flash&&(
           <span style={{fontFamily:"'Fraunces',serif",fontSize:"0.95rem",fontWeight:700,animation:"fadeInOut 0.5s ease",
-            color:flash==="good"?"var(--wf-accent)":flash==="goodYellow"?"var(--wf-accent2)":flash==="bonus"?"#9B5DE5":"#FF5E5B"}}>
+            color:flash==="good"?"var(--wf-accent)":flash==="goodYellow"?"var(--wf-accent2)":flash==="bonus"?BONUS_WORD_COLOR:"#FF5E5B"}}>
             {flash==="good"&&"🟩 Nice — bonus points!"}
             {flash==="goodYellow"&&"🟨 Found! Try in order for more pts"}
             {flash==="bonus"&&`✨ Bonus word: ${lastBonusWord.toUpperCase()}! +${BONUS_WORD_PTS} pts`}
@@ -3226,11 +3232,11 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
         formula: (bonusWords && bonusWords.length)
           ? `${bonusWords.map(w=>w.toUpperCase()).join(", ")} · ${bonusWords.length}×${BONUS_WORD_PTS}`
           : `${Math.round(bonusPts/BONUS_WORD_PTS)}×${BONUS_WORD_PTS}`,
-        pts:bonusPts, color:"var(--wf-accent2)" },
+        pts:bonusPts, color:BONUS_WORD_COLOR },
     ] : []),
     { icon:"⏱", label:"Time bonus",
       formula:timeFormula,
-      pts:timePts,  color:"#9B5DE5" },
+      pts:timePts,  color:TIME_BONUS_COLOR },
     { icon:"🎯", label:"Efficiency bonus",
       formula:guessFormula,
       pts:guessPts, color:"#00BBF9" },
@@ -4942,8 +4948,8 @@ function SoloSetup({ onBack, onStart }) {
         <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:0,lineHeight:1.9}}>
           🟩 Flip in order → <strong style={{color:"var(--wf-accent)"}}>+300 pts</strong><br/>
           🟨 Any order → <strong style={{color:"var(--wf-accent2)"}}>+100 pts</strong><br/>
-          ✨ Bonus word → <strong style={{color:"var(--wf-accent2)"}}>+{BONUS_WORD_PTS} pts</strong> (costs a guess → free)<br/>
-          ⏱ Time bonus → <strong style={{color:"#9B5DE5"}}>600 pts</strong>, −1/sec, gone at 10 min<br/>
+          ✨ Bonus word → <strong style={{color:BONUS_WORD_COLOR}}>+{BONUS_WORD_PTS} pts</strong> (costs a guess → free)<br/>
+          ⏱ Time bonus → <strong style={{color:TIME_BONUS_COLOR}}>600 pts</strong>, −1/sec, gone at 10 min<br/>
           🎯 Efficiency → <strong style={{color:"#00BBF9"}}>{SPARE_GUESS_PTS} pts</strong> per spare guess
         </p>
       </div>
@@ -5378,8 +5384,8 @@ function HowToPlay({ onClose, onFinish }) {
   const steps = [
     {
       emoji: "🧠",
-      title: "It's a Memory Game — with Words",
-      body: "Four 4-letter words are hidden across a grid of 16 face-down tiles. The whole game is remembering where each letter is.",
+      title: "Memory — with Words",
+      body: "It's classic memory — but instead of matching pairs, you're finding four 4-letter words. One letter hides under each of the sixteen face-down tiles.",
       visual: (
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,margin:"14px 0"}}>
           <div style={{display:"flex",gap:4}}>
@@ -5402,7 +5408,7 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "🎯",
       title: "Flip Four to Guess",
-      body: "A turn is 4 tiles: tap to flip them one at a time. Spell one of the words and it's yours to keep. Miss, and they flip back down — so remember what you saw.",
+      body: "Each turn, you flip four tiles. Spell one of the hidden words and it's yours to claim; miss, and the tiles flip back over — so use your memory to track where each letter is.",
       visual: (
         <div style={{display:"flex",gap:6,justifyContent:"center",margin:"12px 0"}}>
           {["W","O","R","D"].map((l,i)=>(
@@ -5414,7 +5420,7 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "🟩",
       title: "Order Matters",
-      body: "Spell a word in the right order (W→O→R→D) and it turns GREEN for +300 pts. Right letters, wrong order still counts — YELLOW for +100 pts.",
+      body: "Right letters in the right order (W→O→R→D) score GREEN, +300 pts. Right letters in the wrong order still count — YELLOW, +100 pts.",
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:8,margin:"12px 0"}}>
           {/* Literal green/yellow so these always read correctly under any theme */}
@@ -5432,11 +5438,11 @@ function HowToPlay({ onClose, onFinish }) {
     },
     {
       emoji: "⭐",
-      title: "The Daily & Bonus Points",
-      body: `The Daily Challenge is 4 fresh words in ${MAX_GUESSES} guesses. Four words need four guesses, so the other ${MAX_GUESSES-4} are spare — every one you hand back is worth ${SPARE_GUESS_PTS} pts. Finish inside 10 minutes for a speed bonus, and spot a hidden extra word for +${BONUS_WORD_PTS} surprise points.`,
+      title: "Extra Points for Speed & Accuracy",
+      body: `In single-player, you start with ${MAX_GUESSES} guesses and 600 seconds. Every guess you don't use is worth ${SPARE_GUESS_PTS} pts, and every second you don't use is worth 1 pt — plus extra for spotting hidden bonus words.`,
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
-          {[["⏱","Speed bonus",`Up to +600 pts`,"#9B5DE5"],["🎯","Efficiency bonus",`Up to +${(MAX_GUESSES-4)*SPARE_GUESS_PTS} pts`,"#00BBF9"],["✨","Bonus word",`Surprise +${BONUS_WORD_PTS} pts`,"var(--wf-accent2)"]].map(([em,label,pts,col])=>(
+          {[["⏱","Per unused second","+1",TIME_BONUS_COLOR],["🎯","Per unused guess",`+${SPARE_GUESS_PTS}`,"#00BBF9"],["✨","Per bonus word",`+${BONUS_WORD_PTS}`,BONUS_WORD_COLOR]].map(([em,label,pts,col])=>(
             <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--wf-surface)",borderRadius:8,border:`1px solid ${col}44`}}>
               <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",flex:1}}>{label}</span>
@@ -5449,7 +5455,7 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "👥",
       title: "Play with Friends",
-      body: "Prefer company? Jump into Multiplayer — create a room, share the invite link, and take turns racing to find the words. Up to 4 players per game.",
+      body: "Prefer company? In Multiplayer, create a room, share the link, and take turns finding the words — up to 4 players.",
       visual: (
         <div style={{display:"flex",gap:10,justifyContent:"center",alignItems:"center",margin:"16px 0"}}>
           {["#00c49f","#f0b429","#ff5e5b","#9b5de5"].map((c,i)=>(
@@ -5460,8 +5466,8 @@ function HowToPlay({ onClose, onFinish }) {
     },
     {
       emoji: "🪙",
-      title: "Earn Coins, Buy Power-ups",
-      body: "Every game you play earns coins. Spend them in the Shop on power-ups — a Hint, an X-ray peek, or a Streak Freeze — plus themes and tile backs. Keep a daily streak going for bonus coins! One last thing — let's try a real board together, step by step.",
+      title: "Earn Coins, Buy Themes & Power-ups",
+      body: "Earn coins by playing daily and keeping your streak alive, then spend them in the Shop on themes and power-ups — Hints, X-ray vision, or Streak Freezes. Heads up: the leaderboard flags if you used a hint, and you'll need to sign in to keep your coins and points.\n\nNow let's try a real board together, step by step.",
       visual: (
         <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0"}}>
           {[["💡","Hint"],["🔍","X-ray"],["🧊","Freeze"]].map(([em,label])=>(
@@ -5492,7 +5498,7 @@ function HowToPlay({ onClose, onFinish }) {
         <div style={{textAlign:"center",flex:1,minHeight:0,display:"flex",flexDirection:"column",justifyContent:"center",overflowY:"auto"}}>
           <div style={{fontSize:"2.5rem",marginBottom:8}}>{s.emoji}</div>
           <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.4rem",fontWeight:700,margin:"0 0 10px"}}>{s.title}</h2>
-          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem",lineHeight:1.7,margin:0}}>{s.body}</p>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem",lineHeight:1.7,margin:0,whiteSpace:"pre-line"}}>{s.body}</p>
           {s.visual}
         </div>
         <div style={{display:"flex",gap:10,marginTop:16,flexShrink:0}}>
