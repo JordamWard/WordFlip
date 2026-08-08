@@ -3163,7 +3163,7 @@ function CountUp({ to, active, color, large, unit = "pts" }) {
 function Firework() { return null; }
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow, compact = false }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -3207,10 +3207,10 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
   const coinsVisible = true;
 
   return (
-    <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:"16px 18px", marginBottom:20, textAlign:"left"}}>
+    <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:compact?"12px 14px":"16px 18px", marginBottom:compact?14:20, textAlign:"left"}}>
       {rows.map((row, i) => {
         return (
-          <div key={row.label} style={{marginBottom:10}}>
+          <div key={row.label} style={{marginBottom:compact?6:10}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem"}}>
                 {row.icon} {row.label}
@@ -3226,7 +3226,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
         );
       })}
       <div style={{
-        borderTop:"1.5px dashed #1e3048", marginTop:10, paddingTop:10,
+        borderTop:"1.5px dashed #1e3048", marginTop:compact?8:10, paddingTop:compact?8:10,
         display:"flex", justifyContent:"space-between", alignItems:"center",
         opacity:totalVisible?1:0,
         transform:totalVisible?"scale(1)":"scale(0.88)",
@@ -3239,7 +3239,7 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
       </div>
       {coins > 0 && (
         <div style={{
-          marginTop:12, paddingTop:12, borderTop:"1.5px solid #1e304833",
+          marginTop:compact?10:12, paddingTop:compact?10:12, borderTop:"1.5px solid #1e304833",
           display:"flex", justifyContent:"space-between", alignItems:"center",
           opacity:coinsVisible?1:0,
           transform:coinsVisible?"scale(1)":"scale(0.88)",
@@ -3308,7 +3308,7 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
 }
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards, onLeaderboard, onSignIn, session }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
@@ -3367,6 +3367,9 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       />
       {hasCareerGain&&(
         <CareerProgressRow before={careerGain.before} after={careerGain.after} onClick={onRewards} />
+      )}
+      {isDaily&&(
+        <DailyRankPeek session={session} myScore={score} onLeaderboard={onLeaderboard} onSignIn={onSignIn} />
       )}
       {isDaily&&(
         <div style={{marginBottom:20}}>
@@ -4884,7 +4887,7 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
 // milestone window began (start Thursday → Th F S S M T W). Streak days are
 // consecutive by definition, so the first N cells burn and the rest are dots.
 // The chip at the end shows the token bonus for completing this window.
-function StreakCard({ animate, delay = 600 }) {
+function StreakCard({ animate, delay = 600, compact = false }) {
   const live = getLiveStreak();
   const count = live.count;
   // Anchor = the most recent streak day (today, or yesterday if not yet played)
@@ -4932,17 +4935,17 @@ function StreakCard({ animate, delay = 600 }) {
       <div style={{position:"relative",display:"inline-block"}}>
         <Firework color="var(--wf-accent2)" trigger={numFw} large />
         <div style={{
-          fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:"clamp(3rem,12vw,4.2rem)",lineHeight:1,
+          fontFamily:"'Fraunces',serif",fontWeight:900,fontSize:compact?"clamp(2rem,8vw,2.8rem)":"clamp(3rem,12vw,4.2rem)",lineHeight:1,
           background:"linear-gradient(180deg,#ffcf40,#FFB703)",
           WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
           transform: pop ? "scale(1.22)" : "scale(1)",
           transition:"transform 0.3s cubic-bezier(.4,2,.6,1)",
         }}>{shownCount}</div>
       </div>
-      <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"var(--wf-accent2)",fontSize:"1.05rem",margin:"2px 0 12px"}}>
+      <div style={{fontFamily:"'Fraunces',serif",fontWeight:700,color:"var(--wf-accent2)",fontSize:compact?"0.9rem":"1.05rem",margin:compact?"0 0 8px":"2px 0 12px"}}>
         day streak
       </div>
-      <div style={{background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:14,padding:"12px 14px"}}>
+      <div style={{background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:14,padding:compact?"10px 12px":"12px 14px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
           {cells.map((c, i) => (
             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1}}>
@@ -5193,8 +5196,110 @@ function DailyNine({ onBack, onSolve, signedIn }) {
   );
 }
 
+// ─── Daily Rank Peek — condensed leaderboard slice (you ± your neighbours) ─────
+// LinkedIn-games style: the player just above and just below you on today's
+// global daily board, with your live rank. Signed-in only (a rank needs a
+// submitted score) — signed-out gets a compact sign-in nudge (or nothing, when
+// onSignIn is omitted because the caller already shows one). Read client-side
+// with three light PostgREST queries (leaderboard reads only — no economy), so
+// no RPC/schema change. Neighbours are found by score comparison against your
+// known local score, so it works even before your own row finishes syncing.
+function rankAvatarColor(name) {
+  const palette = ["#9B5DE5","#00BBF9","#00F5C4","#FFB703","#FF5E5B","#F15BB5"];
+  let h = 0; for (const ch of (name || "?")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return palette[h % palette.length];
+}
+function DailyRankPeek({ session, myScore, onLeaderboard, onSignIn }) {
+  const [st, setSt] = useState({ loading:true, error:false, above:null, below:null, rank:null, total:null });
+  useEffect(() => {
+    if (!session?.user) { setSt(s => ({ ...s, loading:false })); return; }
+    let cancelled = false;
+    setSt(s => ({ ...s, loading:true, error:false }));
+    const t = new Date();
+    const dk = `${t.getFullYear()}-${t.getMonth()+1}-${t.getDate()}`;
+    const sel = 'user_id, score, elapsed, turns, helps, profiles(username)';
+    (async () => {
+      try {
+        await ensureFreshSession();
+        const sb = getSB();
+        const [ab, be, rk, tot] = await Promise.all([
+          sb.from('daily_scores').select(sel).eq('day_key', dk).gt('score', myScore).order('score',{ascending:true}).limit(1),
+          sb.from('daily_scores').select(sel).eq('day_key', dk).lt('score', myScore).order('score',{ascending:false}).limit(1),
+          sb.from('daily_scores').select('user_id',{count:'exact',head:true}).eq('day_key', dk).gt('score', myScore),
+          sb.from('daily_scores').select('user_id',{count:'exact',head:true}).eq('day_key', dk),
+        ]);
+        if (cancelled) return;
+        setSt({ loading:false, error:false, above:ab.data?.[0]||null, below:be.data?.[0]||null, rank:(rk.count||0)+1, total:tot.count });
+      } catch { if (!cancelled) setSt(s => ({ ...s, loading:false, error:true })); }
+    })();
+    return () => { cancelled = true; };
+  }, [session?.user?.id, myScore]);
+
+  if (!session?.user) {
+    if (!onSignIn) return null;
+    return (
+      <div onClick={onSignIn} style={{cursor:"pointer", background:"linear-gradient(135deg,#9B5DE515,#FFB70315)", border:"1.5px solid #9B5DE544", borderRadius:12, padding:"11px 14px", margin:"0 0 14px", display:"flex", alignItems:"center", gap:8, textAlign:"left"}}>
+        <span style={{fontSize:"1rem"}}>🏆</span>
+        <span style={{flex:1, fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-accent2)", fontSize:"0.72rem"}}>Sign in to see where you rank today</span>
+        <span style={{color:"#9B5DE5", fontSize:"1rem"}}>→</span>
+      </div>
+    );
+  }
+  if (st.loading) {
+    return (
+      <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:"14px", margin:"0 0 14px", textAlign:"center", fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.72rem"}}>Loading your rank…</div>
+    );
+  }
+  if (st.error) return null; // fail quiet — never block the summary on a leaderboard read
+
+  const medalFor = r => r===1?"🥇":r===2?"🥈":r===3?"🥉":null;
+  const rows = [];
+  if (st.above) rows.push({ entry:st.above, rank:st.rank-1, me:false });
+  rows.push({ entry:null, rank:st.rank, me:true });
+  if (st.below) rows.push({ entry:st.below, rank:st.rank+1, me:false });
+
+  const renderRow = ({ entry, rank, me }, i) => {
+    const uname = me ? "You" : (entry.profiles?.username || "Anonymous");
+    const sc = me ? myScore : entry.score;
+    const medal = medalFor(rank);
+    const av = rankAvatarColor(uname);
+    return (
+      <div key={i} style={{
+        display:"grid", gridTemplateColumns:"22px 30px 1fr auto", gap:"0 9px", alignItems:"center",
+        background: me?"#9B5DE518":"transparent", borderRadius:9, padding:"7px 8px",
+        border: me?"1.5px solid #9B5DE5":"1.5px solid transparent",
+      }}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:medal?"0.95rem":"0.72rem", fontWeight:700, textAlign:"center", color:medal?"var(--wf-accent2)":"var(--wf-text-mute)"}}>{medal||rank}</span>
+        <span style={{width:30, height:30, borderRadius:"50%", background:av, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'JetBrains Mono',monospace", fontWeight:800, fontSize:"0.82rem", color:"#0a1520"}}>{(uname[0]||"?").toUpperCase()}</span>
+        <div style={{minWidth:0}}>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:me?"#c9a7ff":"#F5EDD6", fontSize:"0.8rem", fontWeight:me?700:400, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{uname}</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.58rem"}}>
+            {entry ? `${entry.turns} guess${entry.turns!==1?"es":""}${entry.elapsed!=null?` · ${Math.floor(entry.elapsed/1000)}s`:""}${entry.helps===0?" · 🧠":""}` : "this run"}
+          </div>
+        </div>
+        <span style={{fontFamily:"'Fraunces',serif", color:me?"var(--wf-accent2)":"#F5EDD6", fontWeight:700, fontSize:"0.95rem", textAlign:"right"}}>{(sc||0).toLocaleString()}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:"12px 12px 8px", margin:"0 0 14px", textAlign:"left"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", padding:"0 4px", marginBottom:6}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.68rem", fontWeight:700, letterSpacing:"0.08em"}}>🏆 TODAY'S RANK</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-accent2)", fontSize:"0.72rem", fontWeight:700}}>#{st.rank}{st.total?` of ${st.total}`:""}</span>
+      </div>
+      <div style={{display:"flex", flexDirection:"column", gap:2}}>
+        {rows.map(renderRow)}
+      </div>
+      {onLeaderboard && (
+        <button onClick={onLeaderboard} style={{width:"100%", marginTop:6, background:"transparent", border:"none", cursor:"pointer", fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.68rem", fontWeight:700, padding:"6px 0"}}>See full leaderboard →</button>
+      )}
+    </div>
+  );
+}
+
 // ─── Daily Already Done Screen ────────────────────────────────────────────────
-function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
+function DailyAlreadyDone({ onMenu, session, onAuth, onNine, onLeaderboard }) {
   const done = getDailyDone();
   const wordResultsArr2 = getDailyWords().map((_,i) => done?.wordResults?.[i] || (done?.outOfTurns ? "missed" : "yellow"));
   // Infer bonusPts from saved total for old entries that predate the bonusPts field.
@@ -5210,17 +5315,21 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
-    <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:20}}>
-      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:6}}>
+    <div style={{textAlign:"center",maxWidth:380,margin:"0 auto",padding:"12px 20px 24px"}}>
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:2}}>
         <button onClick={onMenu} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
       </div>
-      <div style={{fontSize:"3rem",marginBottom:12}}>✅</div>
-      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.8rem",margin:"0 0 8px"}}>Already Played!</h2>
-      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.85rem",marginBottom:16}}>
+      {/* Compact header — a small ✅ inline with the title keeps the recap tight
+          and pulls the score/rank/streak up toward the top. */}
+      <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.5rem",margin:"6px 0 2px",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <span style={{fontSize:"1.3rem"}}>✅</span> Already Played!
+      </h2>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem",marginBottom:14}}>
         Come back tomorrow for a new challenge.
       </p>
       {done&&(
         <ScoreReceipt
+          compact
           wordResults={wordResultsArr2}
           elapsed={done.elapsed}
           wrongGuesses={done.wrongGuesses||0}
@@ -5234,8 +5343,8 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
         />
       )}
       {/* Share sits right under the score so it's easy to find (matches the
-          win screen); the bonus + streak cards follow below. */}
-      <div style={{display:"flex",gap:10,justifyContent:"center",margin:"16px 0"}}>
+          win screen); the rank peek + streak cards follow below. */}
+      <div style={{display:"flex",gap:10,justifyContent:"center",margin:"14px 0"}}>
         <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
           {copied?"✓ Copied!":"📤 Share"}
         </button>
@@ -5258,8 +5367,12 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           </div>
         </div>
       )}
-      <div style={{margin:"16px 0"}}>
-        <StreakCard />
+      {/* Condensed leaderboard slice — your neighbours on today's board, above
+          the streak. Signed-in only; the guest sign-in card above already nudges
+          sign-in, so no onSignIn is passed here. */}
+      {done && <DailyRankPeek session={session} myScore={score} onLeaderboard={onLeaderboard} />}
+      <div style={{margin:"12px 0"}}>
+        <StreakCard compact />
       </div>
       {onNine && <DailyNineCard onPlay={onNine} signedIn={!!session} />}
     </div>
@@ -6989,13 +7102,13 @@ function WordFlip() {
         </div>
       )}
 
-      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} session={session} onAuth={openAuth} onNine={()=>setScreen("daily-nine")} />}
+      {screen==="daily-done"&&<DailyAlreadyDone onMenu={()=>setScreen("menu")} session={session} onAuth={openAuth} onNine={()=>setScreen("daily-nine")} onLeaderboard={()=>setScreen("leaderboard")} />}
 
       {screen==="daily-nine"&&<DailyNine onBack={()=>setScreen(getDailyDone()?"daily-done":"menu")} onSolve={handleNineSolve} signedIn={!!session} />}
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} onLeaderboard={()=>setScreen("leaderboard")} onSignIn={()=>openAuth("signup")} session={session} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
             const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0, winResult.helpsUsed||0);
