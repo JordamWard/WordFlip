@@ -1073,3 +1073,169 @@ REVOKE ALL ON public.daily_scores_archive FROM anon, authenticated;
 --   SELECT id, user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, created_at, helps
 --     FROM public.daily_scores_archive
 --    ON CONFLICT (user_id, day_key) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- §22  FRIENDS (social graph)                                          2026-08-09
+-- ─────────────────────────────────────────────────────────────────────────────
+-- A mutual friendship graph: one row per pair, direction-agnostic. `requester`
+-- and `addressee` record WHO asked; `user_low`/`user_high` (sorted uuids) give a
+-- single UNIQUE key so a pair can never be duplicated regardless of who sent the
+-- request. `status` is 'pending' until the addressee accepts, then 'accepted'.
+--
+-- Security model mirrors §20's economy RPCs: SELECT is allowed (either party may
+-- read rows involving them) but ALL WRITES go through SECURITY DEFINER RPCs that
+-- enforce auth.uid() — the client never writes the table directly and never sends
+-- relationship state, only intent (a username / a target id). Each function is
+-- REVOKEd from anon and GRANTed to authenticated (CREATE FUNCTION grants EXECUTE
+-- to PUBLIC by default, but these take no privileged action for a signed-out
+-- caller since auth.uid() is NULL → they raise 'not signed in').
+
+CREATE TABLE IF NOT EXISTS public.friendships (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester  uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  addressee  uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  status     text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted')),
+  user_low   uuid GENERATED ALWAYS AS (LEAST(requester, addressee))    STORED,
+  user_high  uuid GENERATED ALWAYS AS (GREATEST(requester, addressee)) STORED,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT friendships_no_self CHECK (requester <> addressee),
+  CONSTRAINT friendships_unique_pair UNIQUE (user_low, user_high)
+);
+CREATE INDEX IF NOT EXISTS friendships_requester_idx ON public.friendships (requester);
+CREATE INDEX IF NOT EXISTS friendships_addressee_idx ON public.friendships (addressee);
+
+ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
+-- Either party may READ a row that involves them. No INSERT/UPDATE/DELETE policy:
+-- writes are the RPCs' job (SECURITY DEFINER bypasses RLS), so leaving them out
+-- means a direct client write is denied by default.
+DROP POLICY IF EXISTS "read own friendships" ON public.friendships;
+CREATE POLICY "read own friendships" ON public.friendships FOR SELECT
+  USING (auth.uid() = requester OR auth.uid() = addressee);
+
+-- send_friend_request(p_username): create a pending request to the named user.
+-- If they already sent ME a pending one, accept it instead (mutual intent). If a
+-- relationship already exists, return its current status without erroring.
+-- Returns jsonb { status: 'pending' | 'accepted' }.
+CREATE OR REPLACE FUNCTION public.send_friend_request(p_username text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid    uuid := auth.uid();
+  v_target uuid;
+  v_row    public.friendships%ROWTYPE;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_username IS NULL OR length(trim(p_username)) = 0 THEN RAISE EXCEPTION 'missing username'; END IF;
+
+  SELECT id INTO v_target FROM public.profiles
+    WHERE lower(username) = lower(trim(p_username)) LIMIT 1;
+  IF v_target IS NULL THEN RAISE EXCEPTION 'user not found'; END IF;
+  IF v_target = v_uid  THEN RAISE EXCEPTION 'cannot add yourself'; END IF;
+
+  SELECT * INTO v_row FROM public.friendships
+    WHERE user_low = LEAST(v_uid, v_target) AND user_high = GREATEST(v_uid, v_target);
+
+  IF FOUND THEN
+    IF v_row.status = 'accepted' THEN
+      RETURN jsonb_build_object('status', 'accepted');
+    END IF;
+    -- Pending already. If THEY asked ME, this call is an acceptance.
+    IF v_row.requester = v_target THEN
+      UPDATE public.friendships SET status = 'accepted' WHERE id = v_row.id;
+      RETURN jsonb_build_object('status', 'accepted');
+    END IF;
+    -- I already asked them — still pending.
+    RETURN jsonb_build_object('status', 'pending');
+  END IF;
+
+  INSERT INTO public.friendships (requester, addressee, status)
+    VALUES (v_uid, v_target, 'pending');
+  RETURN jsonb_build_object('status', 'pending');
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.send_friend_request(text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.send_friend_request(text) TO authenticated;
+
+-- respond_friend_request(p_requester, p_accept): the ADDRESSEE accepts or
+-- declines a pending request. Only rows where I am the addressee are touched, so
+-- a caller can't accept a request that wasn't sent to them.
+CREATE OR REPLACE FUNCTION public.respond_friend_request(p_requester uuid, p_accept boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_accept THEN
+    UPDATE public.friendships SET status = 'accepted'
+      WHERE requester = p_requester AND addressee = v_uid AND status = 'pending';
+  ELSE
+    DELETE FROM public.friendships
+      WHERE requester = p_requester AND addressee = v_uid AND status = 'pending';
+  END IF;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.respond_friend_request(uuid, boolean) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.respond_friend_request(uuid, boolean) TO authenticated;
+
+-- remove_friend(p_other): delete the pair with p_other — works for either party
+-- and for either state, so it doubles as "cancel my outgoing request". No-op if
+-- no such pair exists.
+CREATE OR REPLACE FUNCTION public.remove_friend(p_other uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  DELETE FROM public.friendships
+    WHERE user_low = LEAST(v_uid, p_other) AND user_high = GREATEST(v_uid, p_other);
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.remove_friend(uuid) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.remove_friend(uuid) TO authenticated;
+
+-- list_friends(): one call for the whole Friends screen. Returns jsonb with
+-- three arrays of { id, username, display_name }:
+--   friends  — accepted, the other party in each of my accepted pairs
+--   incoming — pending requests sent TO me (I am the addressee)
+--   outgoing — pending requests I sent (I am the requester)
+CREATE OR REPLACE FUNCTION public.list_friends()
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid      uuid := auth.uid();
+  v_friends  jsonb;
+  v_incoming jsonb;
+  v_outgoing jsonb;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id, 'username', p.username, 'display_name', p.display_name
+         ) ORDER BY p.username), '[]'::jsonb)
+    INTO v_friends
+    FROM public.friendships f
+    JOIN public.profiles p
+      ON p.id = CASE WHEN f.requester = v_uid THEN f.addressee ELSE f.requester END
+   WHERE f.status = 'accepted' AND (f.requester = v_uid OR f.addressee = v_uid);
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id, 'username', p.username, 'display_name', p.display_name
+         ) ORDER BY p.username), '[]'::jsonb)
+    INTO v_incoming
+    FROM public.friendships f
+    JOIN public.profiles p ON p.id = f.requester
+   WHERE f.status = 'pending' AND f.addressee = v_uid;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id, 'username', p.username, 'display_name', p.display_name
+         ) ORDER BY p.username), '[]'::jsonb)
+    INTO v_outgoing
+    FROM public.friendships f
+    JOIN public.profiles p ON p.id = f.addressee
+   WHERE f.status = 'pending' AND f.requester = v_uid;
+
+  RETURN jsonb_build_object('friends', v_friends, 'incoming', v_incoming, 'outgoing', v_outgoing);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.list_friends() FROM anon;
+GRANT  EXECUTE ON FUNCTION public.list_friends() TO authenticated;
