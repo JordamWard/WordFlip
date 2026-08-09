@@ -5338,6 +5338,9 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
         Come back tomorrow for a new challenge.
       </p>
       {done&&(
+        // "Already Played" is a return visit, not the initial win — render the
+        // receipt fully-loaded with no reveal. The one-at-a-time animation only
+        // plays on WinScreen, right after you actually finish.
         <ScoreReceipt
           wordResults={wordResultsArr2}
           elapsed={done.elapsed}
@@ -5349,6 +5352,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine }) {
           helpsUsed={done.helps||0}
           coins={session ? dailyTokens(score) : 0}
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
+          animate={false}
         />
       )}
       {/* Share sits right under the score so it's easy to find (matches the
