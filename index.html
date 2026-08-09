@@ -714,6 +714,69 @@ function useAuth() {
   return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false), balance, refreshWallet, signOut };
 }
 
+// ─── Friends presence + game invites (Realtime) ──────────────────────────────
+// Two lightweight Realtime channels, live only while signed in. Neither needs a
+// table or any schema — presence and broadcast are pure websocket pub/sub (the
+// app already uses broadcast for tile_flip), so this touches no DB and needs no
+// migration:
+//   • presence:lobby — every signed-in client tracks its own uid; the union of
+//     tracked keys is "who's online". Exposed as a Set of user ids.
+//   • invite:<myUid>  — my personal inbox. A friend inviting me to their room
+//     broadcasts 'game_invite' here carrying the room code; we surface the latest.
+// sendInvite opens the target's invite:<theirUid> channel just long enough to
+// fire one broadcast, then drops it.
+//
+// This runs in a normal effect keyed on uid (NOT inside onAuthStateChange), so it
+// is safely outside the supabase-js auth lock that the useAuth comment warns about.
+function useFriendsPresence(session) {
+  const uid = session?.user?.id || null;
+  const [onlineIds, setOnlineIds] = useState(() => new Set());
+  const [incomingInvite, setIncomingInvite] = useState(null); // {code, fromName, fromUserId}
+
+  useEffect(() => {
+    if (!uid) { setOnlineIds(new Set()); return; }
+    let cancelled = false;
+    const db = getSB();
+
+    const presence = db.channel('presence:lobby', { config: { presence: { key: uid } } });
+    presence.on('presence', { event: 'sync' }, () => {
+      if (cancelled) return;
+      try { setOnlineIds(new Set(Object.keys(presence.presenceState()))); } catch (e) {}
+    }).subscribe(status => {
+      if (status === 'SUBSCRIBED') { try { presence.track({ user_id: uid, at: Date.now() }); } catch (e) {} }
+    });
+
+    const inbox = db.channel('invite:' + uid);
+    inbox.on('broadcast', { event: 'game_invite' }, ({ payload }) => {
+      if (cancelled || !payload?.code) return;
+      setIncomingInvite({ code: payload.code, fromName: payload.fromName || 'A friend', fromUserId: payload.fromUserId });
+    }).subscribe();
+
+    return () => {
+      cancelled = true;
+      try { presence.untrack(); } catch (e) {}
+      try { db.removeChannel(presence); } catch (e) {}
+      try { db.removeChannel(inbox); } catch (e) {}
+    };
+  }, [uid]);
+
+  // Fire a one-shot invite to a friend's personal channel, then drop the temp
+  // channel a beat later (long enough for the broadcast frame to flush).
+  const sendInvite = useCallback((toUserId, payload) => {
+    if (!toUserId) return;
+    const db = getSB();
+    const ch = db.channel('invite:' + toUserId);
+    ch.subscribe(status => {
+      if (status !== 'SUBSCRIBED') return;
+      try { ch.send({ type: 'broadcast', event: 'game_invite', payload }); } catch (e) {}
+      setTimeout(() => { try { db.removeChannel(ch); } catch (e) {} }, 1500);
+    });
+  }, []);
+
+  const clearInvite = useCallback(() => setIncomingInvite(null), []);
+  return { onlineIds, incomingInvite, clearInvite, sendInvite };
+}
+
 // Seeded PRNG — gives every client the same tile layout for a given room
 function mulberry32(seed) {
   return function() {
@@ -3837,7 +3900,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
 // Mirrors LeaderboardView's layout (maxWidth:440 card, tab row, 28px/1fr/auto
 // row grid) so it reads as part of the same family. All writes go through the
 // server RPCs wrapped above; one listFriends() call feeds every tab.
-function FriendsScreen({ onBack, session, onSignIn }) {
+function FriendsScreen({ onBack, session, onSignIn, onlineIds }) {
   const [tab, setTab] = useState("friends"); // friends | requests | add
   const [data, setData] = useState({ friends:[], incoming:[], outgoing:[] });
   const [loading, setLoading] = useState(false);
@@ -3903,13 +3966,18 @@ function FriendsScreen({ onBack, session, onSignIn }) {
     </div>
   );
 
-  // One shared row: avatar · username/display_name · action node on the right.
+  // One shared row: avatar (with presence dot) · username/display_name · action.
   const row = (u, action) => (
     <div key={u.id} style={{
       background:"var(--wf-surface)", borderRadius:10, border:"1.5px solid var(--wf-border)",
       padding:"8px 12px", display:"grid", gridTemplateColumns:"32px 1fr auto", gap:"0 10px", alignItems:"center",
     }}>
-      {avatar(u.username)}
+      <div style={{position:"relative",width:32,height:32}}>
+        {avatar(u.username)}
+        {onlineIds && onlineIds.has(u.id) && (
+          <span title="Online" style={{position:"absolute",bottom:-1,right:-1,width:10,height:10,borderRadius:"50%",background:"#00F5C4",border:"2px solid #0e1a2a",boxShadow:"0 0 5px #00F5C4"}} />
+        )}
+      </div>
       <div style={{minWidth:0}}>
         <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.username}</div>
         {u.display_name && u.display_name !== u.username && (
@@ -4349,10 +4417,12 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
+function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineIds, sendInvite, initialRoomCode }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
-  const [codeInput, setCodeInput] = useState(() => new URLSearchParams(window.location.search).get('room') || '');
+  // A code can arrive three ways, in priority order: an accepted friend invite
+  // (initialRoomCode), a ?room= deep link, or manual entry.
+  const [codeInput, setCodeInput] = useState(() => initialRoomCode || new URLSearchParams(window.location.search).get('room') || '');
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [gs, setGs] = useState(null);
@@ -4365,7 +4435,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
-  const [fromInvite, setFromInvite] = useState(!!(new URLSearchParams(window.location.search).get('room')));
+  const [fromInvite, setFromInvite] = useState(!!(initialRoomCode || new URLSearchParams(window.location.search).get('room')));
+  const [friends, setFriends] = useState([]);          // accepted friends (for lobby invites)
+  const [invited, setInvited] = useState(() => new Set()); // friend ids I've invited this session
   const [isPublic, setIsPublic] = useState(false);      // list this room in the open-games lobby
   const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
   const [browseBusy, setBrowseBusy] = useState(false);
@@ -4405,6 +4477,26 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       joinRoom();
     }
   }, []); // intentionally runs once on mount
+
+  // Load my friends once (signed-in only) so the lobby can offer to invite the
+  // online ones. Cheap single RPC; refreshes if the account changes.
+  useEffect(() => {
+    if (!session?.user) { setFriends([]); return; }
+    let cancelled = false;
+    listFriends().then(d => { if (!cancelled) setFriends(d.friends || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
+
+  // Invite a friend to THIS room: broadcast the code to their personal channel.
+  function inviteFriend(friend) {
+    if (!sendInvite || !room?.code) return;
+    sendInvite(friend.id, {
+      code: room.code,
+      fromName: (playerName || '').trim() || 'A friend',
+      fromUserId: session?.user?.id,
+    });
+    setInvited(prev => new Set([...prev, friend.id]));
+  }
 
   // Cleanup subscriptions on unmount
   useEffect(() => () => {
@@ -5065,6 +5157,43 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       }} style={{...btnStyle(linkCopied?'#0e2a1a':'#0a1520', linkCopied?'#00F5C4':'#7a9cc0'), width:'100%', padding:'10px', marginTop:12, border:`1.5px solid ${linkCopied?'#00F5C4':'#1e3048'}`, borderRadius:10, fontSize:'0.82rem', transition:'all 0.2s'}}>
         {linkCopied ? '✓ Link copied!' : '🔗 Copy invite link'}
       </button>
+
+      {/* Invite online friends — signed-in only. Presence gives us who's online;
+          the invite broadcasts this room's code straight to their inbox. */}
+      {session?.user && (() => {
+        const online = friends.filter(f => onlineIds && onlineIds.has(f.id));
+        return (
+          <div style={{marginTop:12, background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:12, padding:'10px 12px', textAlign:'left'}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.72rem', margin:'0 0 8px', letterSpacing:'0.05em'}}>
+              👥 Invite friends {online.length>0 ? `(${online.length} online)` : ''}
+            </p>
+            {friends.length === 0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+                Add friends from the menu to invite them here.
+              </p>
+            ) : online.length === 0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+                None of your friends are online right now.
+              </p>
+            ) : (
+              <div style={{display:'flex', flexDirection:'column', gap:6}}>
+                {online.map(f => (
+                  <div key={f.id} style={{display:'flex', alignItems:'center', gap:8}}>
+                    <span style={{width:7, height:7, borderRadius:'50%', background:'#00F5C4', flexShrink:0, boxShadow:'0 0 5px #00F5C4'}} />
+                    <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{f.username}</span>
+                    <button onClick={()=>inviteFriend(f)} disabled={invited.has(f.id)} style={{
+                      fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:'0.68rem', padding:'5px 12px', borderRadius:8, border:'none',
+                      cursor: invited.has(f.id)?'default':'pointer',
+                      background: invited.has(f.id)?'#0e2a1a':'#00F5C4', color: invited.has(f.id)?'#00F5C4':'#0a2e24',
+                    }}>{invited.has(f.id) ? '✓ Invited' : 'Invite'}</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div style={{marginTop:12}}>
         {isHost ? (
           <>
@@ -7098,6 +7227,15 @@ function WordFlip() {
   const [fireworks,setFireworks] = useState(false);
   const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet, signOut } = useAuth();
 
+  // Friends presence + game invites (Realtime; signed-in only). onlineIds drives
+  // the online dots and the lobby invite list; incomingInvite pops the accept
+  // prompt anywhere in the app.
+  const { onlineIds, incomingInvite, clearInvite, sendInvite } = useFriendsPresence(session);
+  // Set when a friend invite is accepted → routes into Online Play with the room
+  // code and force-remounts OnlineScreen (via key) so it auto-joins.
+  const [invitedRoom, setInvitedRoom] = useState(null);
+  function acceptInvite(code) { setInvitedRoom(code); clearInvite(); setScreen("multi-online"); }
+
   // Bumped when the server says today's daily was played on another device —
   // forces a re-render so the menu button flips to "✓ Done today".
   const [, setDailySyncTick] = useState(0);
@@ -7357,6 +7495,28 @@ function WordFlip() {
       )}
       {showTutorial && <HowToPlay onClose={closeTutorial} onFinish={()=>{ closeTutorial(); setScreen("tutorial"); }} />}
 
+      {/* Incoming game invite — pops anywhere in the app while signed in. */}
+      {incomingInvite && (
+        <div onClick={e=>e.target===e.currentTarget&&clearInvite()} style={{
+          position:"fixed",inset:0,background:"#000000bb",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",
+          padding:16,backdropFilter:"blur(4px)",
+        }}>
+          <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #00F5C4",padding:"22px 20px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 12px 40px #00000099"}}>
+            <div style={{fontSize:"2.2rem",marginBottom:8}}>🎮</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.9rem",margin:"0 0 4px",fontWeight:700}}>
+              <span style={{color:"#00F5C4"}}>{incomingInvite.fromName}</span> invited you!
+            </p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:"0 0 18px"}}>
+              Room <strong style={{color:"#F5EDD6",letterSpacing:"0.1em"}}>{incomingInvite.code}</strong> — join the game?
+            </p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={clearInvite} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,fontSize:"0.8rem"}}>Dismiss</button>
+              <button onClick={()=>acceptInvite(incomingInvite.code)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),flex:1,fontSize:"0.8rem"}}>Join →</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {screen==="menu"&&(<>
         <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"var(--wf-border)",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
@@ -7513,9 +7673,9 @@ function WordFlip() {
       )}
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")} onBack={()=>{setInvitedRoom(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} onFriends={()=>setScreen("friends")} /></div>}
-      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} /></div>}
+      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>{setScreen("menu");setRewardsJustEarned(null);}} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} justEarned={rewardsJustEarned} /></div>}
       {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}
