@@ -3817,9 +3817,13 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                       {lbGuesses != null ? `${lbGuesses} guess${lbGuesses!==1?"es":""}` : ""}
                       {lbBonus > 0 ? ` · ${lbBonus} bonus` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
-                      {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
                       {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
                     </div>
+                    {globalTab==="alltime" && entry.day_key && (
+                      <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.6rem",marginTop:1}}>
+                        {entry.day_key}
+                      </div>
+                    )}
                   </div>
                   <div style={{textAlign:"right"}}>
                     <div style={{fontFamily:"'Fraunces',serif",color:medal?"var(--wf-accent2)":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
