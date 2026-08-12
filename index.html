@@ -3807,8 +3807,15 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                     {medal || (i+1)}
                   </div>
                   <div>
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:isMe?"#9B5DE5":"#F5EDD6",fontSize:"0.82rem",fontWeight:isMe?700:400}}>
-                      {username}{isMe ? " (you)" : ""}
+                    <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                      <div style={{fontFamily:"'JetBrains Mono',monospace",color:isMe?"#9B5DE5":"#F5EDD6",fontSize:"0.82rem",fontWeight:isMe?700:400,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {username}{isMe ? " (you)" : ""}
+                      </div>
+                      {globalTab==="alltime" && entry.day_key && (
+                        <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.6rem",flexShrink:0}}>
+                          {entry.day_key}
+                        </div>
+                      )}
                     </div>
                     {entry.blocks && (
                       <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
@@ -3819,11 +3826,6 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
                       {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
                     </div>
-                    {globalTab==="alltime" && entry.day_key && (
-                      <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.6rem",marginTop:1}}>
-                        {entry.day_key}
-                      </div>
-                    )}
                   </div>
                   <div style={{textAlign:"right"}}>
                     <div style={{fontFamily:"'Fraunces',serif",color:medal?"var(--wf-accent2)":"#F5EDD6",fontWeight:700,fontSize:"1rem"}}>
