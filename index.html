@@ -3456,6 +3456,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
 
   return (
     <div role="main" aria-label="Game results" style={{textAlign:"center",maxWidth:400,margin:"0 auto",padding:20}}>
+      {/* Top-left ← Menu, matching the return summary (DailyAlreadyDone) so the
+          initial and re-entered screens share the same chrome. */}
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:2}}>
+        <button onClick={onMenu} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
+      </div>
       <div aria-hidden="true" style={{fontSize:"3rem",marginBottom:8}}>{result.outOfTurns?"😬":"🎉"}</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
         {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
@@ -3490,6 +3495,8 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         coinsFormula={coinsFormula}
         onShop={signedIn ? onShop : null}
         shopGlow={shopHasNew()}
+        onShare={isDaily ? handleShare : null}
+        shareCopied={copied}
         animate={animate}
       />
       {hasCareerGain&&(
@@ -3503,17 +3510,13 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
           <StreakCard animate={animate} delay={streakDelay} />
         </div>
       )}
-      <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-        {isDaily&&(
-          <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
-            {copied?"✓ Copied!":"📤 Share"}
-          </button>
-        )}
-        {!isDaily&&(
+      {/* Menu moved to the top-left and Share nested into the receipt (see above),
+          matching the return summary. Solo keeps Play Again as its primary CTA. */}
+      {!isDaily&&(
+        <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
           <button onClick={onPlayAgain} style={btnStyle("var(--wf-accent)","#0a2e24")}>Play Again</button>
-        )}
-        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
-      </div>
+        </div>
+      )}
       {signedIn && onRewards && !hasCareerGain && (
         <button onClick={onRewards} style={{...btnStyle("transparent","var(--wf-accent2)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline"}}>
           🎁 View your rewards →
@@ -6779,7 +6782,14 @@ function WordFlip() {
   const animatedWinRef = useRef(null);
   const animateWin = winResult != null && animatedWinRef.current !== winResult;
   useEffect(() => {
-    if (screen === "win" && winResult) animatedWinRef.current = winResult;
+    // Stamp this winResult as "already animated" only once we LEAVE the results
+    // screen — NOT while it's still on screen. Stamping on entry made animateWin
+    // flip to false on the very next re-render (the fireworks-off timer, the
+    // career/coins server reconcile, a toast clearing), which turned the in-flight
+    // CountUps' `instant` prop true mid-reveal and froze the TOTAL/COINS at +0
+    // until you re-entered the daily. Deferring the stamp keeps `animate` stable
+    // for the life of the reveal, while still suppressing a replay if you return.
+    if (screen !== "win" && winResult) animatedWinRef.current = winResult;
   }, [screen, winResult]);
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
