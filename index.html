@@ -390,6 +390,87 @@ async function buyItem(itemKey) {
   return { ok:true, count:data };
 }
 
+// ─── Friends ──────────────────────────────────────────────────────────────────
+// Server-authoritative social graph. The client sends INTENT ONLY — a username
+// or a target user id — never any relationship state; every write goes through a
+// SECURITY DEFINER RPC that enforces auth.uid() ownership (see §22). Each wrapper
+// refreshes a stale JWT first (a day-old token would 401 silently) and maps the
+// server's error text to a friendly message, mirroring buyItem / purchaseCosmetic.
+
+// Send (or auto-accept a reciprocal) friend request by username. Returns
+// { ok, status } where status is 'accepted' | 'pending', or { ok:false, msg }.
+async function sendFriendRequest(username) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false, msg:'Sign in to add friends.' };
+  const { data, error } = await getSB().rpc('send_friend_request', { p_username: username });
+  if (error) {
+    console.error('send_friend_request error:', error);
+    const m = String(error.message || '');
+    if (/user not found/i.test(m)) return { ok:false, msg:'No player with that username.' };
+    if (/yourself/i.test(m)) return { ok:false, msg:"You can't add yourself." };
+    if (/find the function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Friends upgrade pending — one more migration to run.' };
+    return { ok:false, msg:'Could not send request — please try again.' };
+  }
+  return { ok:true, status:(data && data.status) || 'pending' };
+}
+
+// Accept or decline an incoming request from p_requester (addressee-only server-side).
+async function respondFriendRequest(requester, accept) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false };
+  const { error } = await getSB().rpc('respond_friend_request', { p_requester: requester, p_accept: !!accept });
+  if (error) { console.error('respond_friend_request error:', error); return { ok:false }; }
+  return { ok:true };
+}
+
+// Remove a friend (or cancel a pending request) — either party may call it.
+async function removeFriend(other) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false };
+  const { error } = await getSB().rpc('remove_friend', { p_other: other });
+  if (error) { console.error('remove_friend error:', error); return { ok:false }; }
+  return { ok:true };
+}
+
+// One call → { friends:[], incoming:[], outgoing:[] }, each an array of
+// { id, username, display_name }. Usernames are resolved server-side.
+async function listFriends() {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { friends:[], incoming:[], outgoing:[] };
+  const { data, error } = await getSB().rpc('list_friends');
+  if (error) { console.error('list_friends error:', error); return { friends:[], incoming:[], outgoing:[] }; }
+  return { friends:data?.friends||[], incoming:data?.incoming||[], outgoing:data?.outgoing||[] };
+}
+
+// Prefix search over the (world-readable) profiles table — no RPC needed. The
+// trailing '%' makes it a prefix match; the leading term is escaped-free because
+// usernames are constrained to [a-zA-Z0-9_].
+async function searchUsers(q) {
+  const term = String(q || '').trim();
+  if (term.length < 2) return [];
+  const { data, error } = await getSB().from('profiles')
+    .select('id, username, display_name').ilike('username', term + '%').limit(10);
+  if (error) { console.error('searchUsers error:', error); return []; }
+  return data || [];
+}
+
+// Friends-scoped leaderboard: the same daily_scores + profiles(username) query
+// as fetchLeaderboard, narrowed to a set of friend ids (pass the signed-in id in
+// too so you appear on your own friends board). `daily` filters to one day_key.
+async function fetchFriendsLeaderboard(friendIds, dayKey, daily) {
+  if (!friendIds || !friendIds.length) return [];
+  let query = getSB()
+    .from('daily_scores')
+    .select('user_id, score, day_key, turns, elapsed, wrong_guesses, blocks, helps, created_at, profiles(username)')
+    .in('user_id', friendIds)
+    .order('score', { ascending: false })
+    .limit(50);
+  if (daily) query = query.eq('day_key', dayKey);
+  const { data, error } = await query;
+  if (error) { console.error("Friends leaderboard fetch error:", error); return []; }
+  return data;
+}
+
 // Pull the account's inventory into the local cache (wf_inv_*) so power-ups
 // follow the account across browsers/devices. Read-only: it mirrors the
 // account inventory DOWN to the device. It deliberately does NOT import local
@@ -631,6 +712,69 @@ function useAuth() {
   }
 
   return { session, profile, loading, refreshProfile, recovery, clearRecovery: () => setRecovery(false), balance, refreshWallet, signOut };
+}
+
+// ─── Friends presence + game invites (Realtime) ──────────────────────────────
+// Two lightweight Realtime channels, live only while signed in. Neither needs a
+// table or any schema — presence and broadcast are pure websocket pub/sub (the
+// app already uses broadcast for tile_flip), so this touches no DB and needs no
+// migration:
+//   • presence:lobby — every signed-in client tracks its own uid; the union of
+//     tracked keys is "who's online". Exposed as a Set of user ids.
+//   • invite:<myUid>  — my personal inbox. A friend inviting me to their room
+//     broadcasts 'game_invite' here carrying the room code; we surface the latest.
+// sendInvite opens the target's invite:<theirUid> channel just long enough to
+// fire one broadcast, then drops it.
+//
+// This runs in a normal effect keyed on uid (NOT inside onAuthStateChange), so it
+// is safely outside the supabase-js auth lock that the useAuth comment warns about.
+function useFriendsPresence(session) {
+  const uid = session?.user?.id || null;
+  const [onlineIds, setOnlineIds] = useState(() => new Set());
+  const [incomingInvite, setIncomingInvite] = useState(null); // {code, fromName, fromUserId}
+
+  useEffect(() => {
+    if (!uid) { setOnlineIds(new Set()); return; }
+    let cancelled = false;
+    const db = getSB();
+
+    const presence = db.channel('presence:lobby', { config: { presence: { key: uid } } });
+    presence.on('presence', { event: 'sync' }, () => {
+      if (cancelled) return;
+      try { setOnlineIds(new Set(Object.keys(presence.presenceState()))); } catch (e) {}
+    }).subscribe(status => {
+      if (status === 'SUBSCRIBED') { try { presence.track({ user_id: uid, at: Date.now() }); } catch (e) {} }
+    });
+
+    const inbox = db.channel('invite:' + uid);
+    inbox.on('broadcast', { event: 'game_invite' }, ({ payload }) => {
+      if (cancelled || !payload?.code) return;
+      setIncomingInvite({ code: payload.code, fromName: payload.fromName || 'A friend', fromUserId: payload.fromUserId });
+    }).subscribe();
+
+    return () => {
+      cancelled = true;
+      try { presence.untrack(); } catch (e) {}
+      try { db.removeChannel(presence); } catch (e) {}
+      try { db.removeChannel(inbox); } catch (e) {}
+    };
+  }, [uid]);
+
+  // Fire a one-shot invite to a friend's personal channel, then drop the temp
+  // channel a beat later (long enough for the broadcast frame to flush).
+  const sendInvite = useCallback((toUserId, payload) => {
+    if (!toUserId) return;
+    const db = getSB();
+    const ch = db.channel('invite:' + toUserId);
+    ch.subscribe(status => {
+      if (status !== 'SUBSCRIBED') return;
+      try { ch.send({ type: 'broadcast', event: 'game_invite', payload }); } catch (e) {}
+      setTimeout(() => { try { db.removeChannel(ch); } catch (e) {} }, 1500);
+    });
+  }, []);
+
+  const clearInvite = useCallback(() => setIncomingInvite(null), []);
+  return { onlineIds, incomingInvite, clearInvite, sendInvite };
 }
 
 // Seeded PRNG — gives every client the same tile layout for a given room
@@ -3546,8 +3690,8 @@ function btnStyle(bg,color) {
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
-function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
-  const [tab, setTab] = useState("global"); // global leaderboard first, then personal
+function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends }) {
+  const [tab, setTab] = useState("global"); // global / friends / personal
   const [globalTab, setGlobalTab] = useState("daily");
   const [leaderboard, setLeaderboard] = useState([]);
   const [lbLoading, setLbLoading] = useState(false);
@@ -3559,23 +3703,35 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
   const streak = getLiveStreak(); // live, not the possibly-stale stored record
 
   useEffect(() => {
-    if (tab !== "global") return;
+    if (tab !== "global" && tab !== "friends") return;
+    if (tab === "friends" && !session?.user) { setLeaderboard([]); return; }
     let cancelled = false;
     setLbLoading(true);
     setLbError(false);
     const today = new Date();
     const dk = `${today.getFullYear()}-${today.getMonth()+1}-${today.getDate()}`;
+    // Friends board = the same query narrowed to my accepted friends (+ me);
+    // global board = the whole table. Both share the row rendering below.
+    const fetcher = tab === "friends"
+      ? ensureFreshSession().then(async () => {
+          const fr = await listFriends();
+          const ids = [...(fr.friends || []).map(f => f.id), session.user.id];
+          return fetchFriendsLeaderboard(ids, dk, globalTab === "daily");
+        })
+      : ensureFreshSession().then(() => fetchLeaderboard(globalTab, dk));
     Promise.race([
       // Refresh an expired JWT first — signed-in reads 401 otherwise (the
       // "leaderboards not loading after being signed in a while" bug).
-      ensureFreshSession().then(() => fetchLeaderboard(globalTab, dk)),
+      fetcher,
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
     ]).then(data => {
       if (!cancelled) {
         setLeaderboard(data || []);
         setLbLoading(false);
         // Top-10 placement achievements: is the signed-in user in the top 10?
-        if (session?.user && data?.length) {
+        // Only the GLOBAL board counts — being top-10 among a handful of friends
+        // shouldn't mint the global achievement.
+        if (tab === "global" && session?.user && data?.length) {
           const inTop10 = data.slice(0, 10).some(r => r.user_id === session.user.id);
           if (inTop10) {
             const fresh = unlockAchievements([globalTab === 'alltime' ? 'top10_all' : 'top10_daily']);
@@ -3587,7 +3743,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
       if (!cancelled) { setLeaderboard([]); setLbLoading(false); setLbError(true); }
     });
     return () => { cancelled = true; };
-  }, [tab, globalTab, retryKey]);
+  }, [tab, globalTab, retryKey, session?.user?.id]);
 
   // When signed in, "My Scores" comes from the account (follows you across devices)
   useEffect(() => {
@@ -3628,22 +3784,29 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
     <div style={{maxWidth:440,margin:"0 auto"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
 
-      {/* Tab row — global leaderboard first, then personal scores */}
-      <div style={{display:"flex",gap:8,marginBottom:16}}>
+      {/* Tab row — global / friends / personal */}
+      <div style={{display:"flex",gap:6,marginBottom:16}}>
         <button onClick={()=>setTab("global")} style={{
           flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
-          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.75rem",
           background: tab==="global" ? "#9B5DE5" : "var(--wf-surface)",
           color: tab==="global" ? "#fff" : "var(--wf-text-mute)",
           transition:"all 0.15s",
         }}>🌍 Global</button>
+        <button onClick={()=>setTab("friends")} style={{
+          flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.75rem",
+          background: tab==="friends" ? "#9B5DE5" : "var(--wf-surface)",
+          color: tab==="friends" ? "#fff" : "var(--wf-text-mute)",
+          transition:"all 0.15s",
+        }}>👥 Friends</button>
         <button onClick={()=>setTab("personal")} style={{
           flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer",
-          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.8rem",
+          fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.75rem",
           background: tab==="personal" ? "var(--wf-accent)" : "var(--wf-surface)",
           color: tab==="personal" ? "#0a2e24" : "var(--wf-text-mute)",
           transition:"all 0.15s",
-        }}>🏅 My Scores</button>
+        }}>🏅 Mine</button>
       </div>
 
       {tab === "personal" && (<>
@@ -3731,7 +3894,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
         )}
       </>)}
 
-      {tab === "global" && (<>
+      {(tab === "global" || tab === "friends") && (<>
         <div style={{display:"flex",gap:6,marginBottom:12}}>
           <button onClick={()=>setGlobalTab("daily")} style={{
             flex:1, padding:"6px 0", borderRadius:8, border:"none", cursor:"pointer",
@@ -3753,11 +3916,25 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
             background:"linear-gradient(135deg,#9B5DE515,#FFB70315)",border:"1.5px solid #9B5DE544",
             display:"flex",alignItems:"center",gap:8,
           }}>
-            <span style={{fontSize:"1rem"}}>🏆</span>
+            <span style={{fontSize:"1rem"}}>{tab==="friends"?"👥":"🏆"}</span>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.72rem",margin:0,flex:1}}>
-              Sign in to submit your scores to the global board!
+              {tab==="friends" ? "Sign in to add friends and see their scores!" : "Sign in to submit your scores to the global board!"}
             </p>
             <span style={{color:"#9B5DE5",fontSize:"1rem"}}>→</span>
+          </div>
+        )}
+
+        {session && tab==="friends" && onFriends && (
+          <div onClick={onFriends} style={{
+            margin:"0 0 12px",padding:"9px 14px",borderRadius:10,cursor:"pointer",
+            background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",
+            display:"flex",alignItems:"center",gap:8,
+          }}>
+            <span style={{fontSize:"1rem"}}>👥</span>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",margin:0,flex:1}}>
+              Manage friends &amp; requests
+            </p>
+            <span style={{color:"var(--wf-accent)",fontSize:"1rem"}}>→</span>
           </div>
         )}
 
@@ -3774,9 +3951,11 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
           </div>
         ) : leaderboard.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
-            <div style={{fontSize:"2rem",marginBottom:8}}>🏜️</div>
+            <div style={{fontSize:"2rem",marginBottom:8}}>{tab==="friends"?"👥":"🏜️"}</div>
             <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.82rem",lineHeight:1.6}}>
-              {globalTab==="daily" ? "No scores yet today." : "No scores yet."}<br/>Be the first!
+              {tab==="friends"
+                ? (globalTab==="daily" ? <>No friend scores yet today.<br/>Add friends to compare!</> : <>No friend scores yet.<br/>Add friends to compare!</>)
+                : (globalTab==="daily" ? <>No scores yet today.<br/>Be the first!</> : <>No scores yet.<br/>Be the first!</>)}
             </p>
           </div>
         ) : (
@@ -3839,6 +4018,272 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements }) {
           </div>
         )}
       </>)}
+    </div>
+  );
+}
+
+// ─── Friends ──────────────────────────────────────────────────────────────────
+// Manage the social graph: add by username, accept/decline requests, remove.
+// Mirrors LeaderboardView's layout (maxWidth:440 card, tab row, 28px/1fr/auto
+// row grid) so it reads as part of the same family. All writes go through the
+// server RPCs wrapped above; one listFriends() call feeds every tab.
+function FriendsScreen({ onBack, session, onSignIn, onlineIds }) {
+  const [tab, setTab] = useState("friends"); // friends | requests | add
+  const [data, setData] = useState({ friends:[], incoming:[], outgoing:[] });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  const [msg, setMsg] = useState(null);            // inline confirmation banner
+  const [busy, setBusy] = useState(null);          // id/username currently acting
+  const [confirmRemove, setConfirmRemove] = useState(null); // {id, username}
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);    // null = not searched yet
+  const [searching, setSearching] = useState(false);
+
+  function flash(m) { setMsg(m); setTimeout(() => setMsg(null), 3000); }
+  function reload() { setRetryKey(k => k + 1); }
+
+  useEffect(() => {
+    if (!session?.user) return;
+    let cancelled = false;
+    setLoading(true); setError(false);
+    listFriends().then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setError(true); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [session?.user?.id, retryKey]);
+
+  async function runSearch() {
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); return; }
+    setSearching(true);
+    const r = await searchUsers(q);
+    // Flag people already in the graph so the row shows their state, not "Add".
+    const known = new Set([...data.friends, ...data.incoming, ...data.outgoing].map(u => u.id));
+    setResults(r.filter(u => u.id !== session?.user?.id).map(u => ({ ...u, known: known.has(u.id) })));
+    setSearching(false);
+  }
+
+  async function doAdd(username) {
+    setBusy(username);
+    const res = await sendFriendRequest(username);
+    setBusy(null);
+    if (!res.ok) { flash(res.msg); return; }
+    flash(res.status === 'accepted' ? "You're now friends! 🎉" : "Request sent ✓");
+    reload();
+    if (results) runSearch();
+  }
+  async function doRespond(requester, accept) {
+    setBusy(requester);
+    await respondFriendRequest(requester, accept);
+    setBusy(null);
+    flash(accept ? "Friend added 🎉" : "Request declined");
+    reload();
+  }
+  async function doRemove(id) {
+    setBusy(id);
+    await removeFriend(id);
+    setBusy(null); setConfirmRemove(null);
+    flash("Removed");
+    reload();
+  }
+
+  const avatar = (name) => (
+    <div style={{width:32,height:32,borderRadius:"50%",background:"linear-gradient(135deg,#00F5C4,#FFB703)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:"0.9rem",fontWeight:700,color:"#0a2e24",flexShrink:0}}>
+      {(name || "?")[0].toUpperCase()}
+    </div>
+  );
+
+  // One shared row: avatar (with presence dot) · username/display_name · action.
+  const row = (u, action) => (
+    <div key={u.id} style={{
+      background:"var(--wf-surface)", borderRadius:10, border:"1.5px solid var(--wf-border)",
+      padding:"8px 12px", display:"grid", gridTemplateColumns:"32px 1fr auto", gap:"0 10px", alignItems:"center",
+    }}>
+      <div style={{position:"relative",width:32,height:32}}>
+        {avatar(u.username)}
+        {onlineIds && onlineIds.has(u.id) && (
+          <span title="Online" style={{position:"absolute",bottom:-1,right:-1,width:10,height:10,borderRadius:"50%",background:"#00F5C4",border:"2px solid #0e1a2a",boxShadow:"0 0 5px #00F5C4"}} />
+        )}
+      </div>
+      <div style={{minWidth:0}}>
+        <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.username}</div>
+        {u.display_name && u.display_name !== u.username && (
+          <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.62rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.display_name}</div>
+        )}
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>{action}</div>
+    </div>
+  );
+
+  const pill = (label, onClick, colorBg, colorFg, disabled) => (
+    <button onClick={onClick} disabled={disabled} style={{
+      fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.7rem",
+      padding:"6px 12px", borderRadius:8, border:"none", cursor: disabled?"default":"pointer",
+      background: colorBg, color: colorFg, opacity: disabled?0.55:1, whiteSpace:"nowrap",
+    }}>{label}</button>
+  );
+
+  const incomingCount = data.incoming.length;
+
+  if (!session?.user) {
+    return (
+      <div style={{maxWidth:440,margin:"0 auto"}}>
+        <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+        <div onClick={onSignIn} style={{
+          margin:"24px 0",padding:"18px",borderRadius:12,cursor:"pointer",textAlign:"center",
+          background:"linear-gradient(135deg,#9B5DE515,#FFB70315)",border:"1.5px solid #9B5DE544",
+        }}>
+          <div style={{fontSize:"2rem",marginBottom:8}}>👥</div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.82rem",margin:0,lineHeight:1.6}}>
+            Sign in to add friends,<br/>compare scores, and play together.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{maxWidth:440,margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+
+      {msg && (
+        <div style={{marginBottom:12,padding:"9px 14px",borderRadius:10,textAlign:"center",
+          background:"linear-gradient(135deg,#12253a,#0a1520)",border:"1.5px solid var(--wf-accent2)",
+          fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.76rem"}}>{msg}</div>
+      )}
+
+      {/* Tab row */}
+      <div style={{display:"flex",gap:6,marginBottom:16}}>
+        {[["friends","👥 Friends"],["requests","📩 Requests"],["add","➕ Add"]].map(([id,label]) => (
+          <button key={id} onClick={()=>setTab(id)} style={{
+            flex:1, padding:"8px 0", borderRadius:10, border:"none", cursor:"pointer", position:"relative",
+            fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:"0.72rem",
+            background: tab===id ? "#9B5DE5" : "var(--wf-surface)",
+            color: tab===id ? "#fff" : "var(--wf-text-mute)", transition:"all 0.15s",
+          }}>
+            {label}
+            {id==="requests" && incomingCount>0 && (
+              <span style={{position:"absolute",top:2,right:6,background:"#FF5E5B",color:"#fff",borderRadius:"50%",
+                minWidth:16,height:16,fontSize:"0.6rem",lineHeight:"16px",padding:"0 3px",fontWeight:700}}>{incomingCount}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:"32px 0"}}>
+          <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem"}}>Loading...</p>
+        </div>
+      ) : error ? (
+        <div style={{textAlign:"center",padding:"32px 0"}}>
+          <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem",marginBottom:12}}>Couldn't load friends.</p>
+          <button onClick={reload} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.75rem"}}>Retry</button>
+        </div>
+      ) : (<>
+
+        {tab === "friends" && (
+          data.friends.length === 0 ? (
+            <div style={{textAlign:"center",padding:"32px 0"}}>
+              <div style={{fontSize:"2.5rem",marginBottom:12}}>👋</div>
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.82rem",lineHeight:1.6,marginBottom:14}}>
+                No friends yet.<br/>Add someone by their username!
+              </p>
+              <button onClick={()=>setTab("add")} style={{...btnStyle("#9B5DE5","#fff"),fontSize:"0.8rem"}}>➕ Add a friend</button>
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {data.friends.map(u => row(u, pill("Remove", ()=>setConfirmRemove(u), "var(--wf-border)", "#FF5E5B", busy===u.id)))}
+            </div>
+          )
+        )}
+
+        {tab === "requests" && (
+          (data.incoming.length === 0 && data.outgoing.length === 0) ? (
+            <div style={{textAlign:"center",padding:"32px 0"}}>
+              <div style={{fontSize:"2.5rem",marginBottom:12}}>📭</div>
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.82rem",lineHeight:1.6}}>
+                No pending requests.
+              </p>
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              {data.incoming.length > 0 && (
+                <div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",letterSpacing:"0.08em",marginBottom:6}}>INCOMING</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {data.incoming.map(u => row(u, <>
+                      {pill("✓", ()=>doRespond(u.id,true), "var(--wf-accent)", "#0a2e24", busy===u.id)}
+                      {pill("✕", ()=>doRespond(u.id,false), "var(--wf-border)", "var(--wf-text-dim)", busy===u.id)}
+                    </>))}
+                  </div>
+                </div>
+              )}
+              {data.outgoing.length > 0 && (
+                <div>
+                  <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.68rem",letterSpacing:"0.08em",marginBottom:6}}>SENT</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {data.outgoing.map(u => row(u, pill("Cancel", ()=>doRemove(u.id), "var(--wf-border)", "var(--wf-text-mute)", busy===u.id)))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        )}
+
+        {tab === "add" && (
+          <div>
+            <form onSubmit={e=>{e.preventDefault();runSearch();}} style={{display:"flex",gap:8,marginBottom:14}}>
+              <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search by username" maxLength={20}
+                autoCapitalize="none" autoCorrect="off" spellCheck={false} style={{
+                flex:1, padding:"10px 12px", borderRadius:10, border:"1.5px solid var(--wf-border)",
+                background:"var(--wf-surface)", color:"#F5EDD6", fontFamily:"'JetBrains Mono',monospace", fontSize:"0.82rem",
+              }} />
+              <button type="submit" disabled={query.trim().length<2} style={{...btnStyle("#9B5DE5","#fff"),fontSize:"0.8rem",opacity:query.trim().length<2?0.55:1}}>Search</button>
+            </form>
+            {searching ? (
+              <div style={{textAlign:"center",padding:"24px 0"}}>
+                <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem"}}>Searching...</p>
+              </div>
+            ) : results === null ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.76rem",textAlign:"center",padding:"16px 0",lineHeight:1.6}}>
+                Type a username to find players.
+              </p>
+            ) : results.length === 0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem",textAlign:"center",padding:"24px 0"}}>
+                No players found.
+              </p>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {results.map(u => row(u, u.known
+                  ? <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem"}}>Added</span>
+                  : pill(busy===u.username?"…":"Add", ()=>doAdd(u.username), "var(--wf-accent)", "#0a2e24", busy===u.username)))}
+              </div>
+            )}
+          </div>
+        )}
+
+      </>)}
+
+      {/* Remove-friend confirm (ComboPreview-style backdrop) */}
+      {confirmRemove && (
+        <div onClick={e=>e.target===e.currentTarget&&setConfirmRemove(null)} style={{
+          position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",
+          padding:16,backdropFilter:"blur(4px)",
+        }}>
+          <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"22px 20px",maxWidth:320,width:"100%",textAlign:"center"}}>
+            <div style={{fontSize:"2rem",marginBottom:10}}>💔</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.85rem",margin:"0 0 18px",lineHeight:1.5}}>
+              Remove <strong style={{color:"#9B5DE5"}}>{confirmRemove.username}</strong> from your friends?
+            </p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setConfirmRemove(null)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,fontSize:"0.8rem"}}>Cancel</button>
+              <button onClick={()=>doRemove(confirmRemove.id)} disabled={busy===confirmRemove.id} style={{...btnStyle("#FF5E5B","#fff"),flex:1,fontSize:"0.8rem",opacity:busy===confirmRemove.id?0.6:1}}>Remove</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4099,10 +4544,12 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
+function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineIds, sendInvite, initialRoomCode }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
-  const [codeInput, setCodeInput] = useState(() => new URLSearchParams(window.location.search).get('room') || '');
+  // A code can arrive three ways, in priority order: an accepted friend invite
+  // (initialRoomCode), a ?room= deep link, or manual entry.
+  const [codeInput, setCodeInput] = useState(() => initialRoomCode || new URLSearchParams(window.location.search).get('room') || '');
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [gs, setGs] = useState(null);
@@ -4115,7 +4562,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
-  const [fromInvite, setFromInvite] = useState(!!(new URLSearchParams(window.location.search).get('room')));
+  const [fromInvite, setFromInvite] = useState(!!(initialRoomCode || new URLSearchParams(window.location.search).get('room')));
+  const [friends, setFriends] = useState([]);          // accepted friends (for lobby invites)
+  const [invited, setInvited] = useState(() => new Set()); // friend ids I've invited this session
   const [isPublic, setIsPublic] = useState(false);      // list this room in the open-games lobby
   const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
   const [browseBusy, setBrowseBusy] = useState(false);
@@ -4155,6 +4604,26 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       joinRoom();
     }
   }, []); // intentionally runs once on mount
+
+  // Load my friends once (signed-in only) so the lobby can offer to invite the
+  // online ones. Cheap single RPC; refreshes if the account changes.
+  useEffect(() => {
+    if (!session?.user) { setFriends([]); return; }
+    let cancelled = false;
+    listFriends().then(d => { if (!cancelled) setFriends(d.friends || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
+
+  // Invite a friend to THIS room: broadcast the code to their personal channel.
+  function inviteFriend(friend) {
+    if (!sendInvite || !room?.code) return;
+    sendInvite(friend.id, {
+      code: room.code,
+      fromName: (playerName || '').trim() || 'A friend',
+      fromUserId: session?.user?.id,
+    });
+    setInvited(prev => new Set([...prev, friend.id]));
+  }
 
   // Cleanup subscriptions on unmount
   useEffect(() => () => {
@@ -4815,6 +5284,43 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements }) {
       }} style={{...btnStyle(linkCopied?'#0e2a1a':'#0a1520', linkCopied?'#00F5C4':'#7a9cc0'), width:'100%', padding:'10px', marginTop:12, border:`1.5px solid ${linkCopied?'#00F5C4':'#1e3048'}`, borderRadius:10, fontSize:'0.82rem', transition:'all 0.2s'}}>
         {linkCopied ? '✓ Link copied!' : '🔗 Copy invite link'}
       </button>
+
+      {/* Invite online friends — signed-in only. Presence gives us who's online;
+          the invite broadcasts this room's code straight to their inbox. */}
+      {session?.user && (() => {
+        const online = friends.filter(f => onlineIds && onlineIds.has(f.id));
+        return (
+          <div style={{marginTop:12, background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:12, padding:'10px 12px', textAlign:'left'}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.72rem', margin:'0 0 8px', letterSpacing:'0.05em'}}>
+              👥 Invite friends {online.length>0 ? `(${online.length} online)` : ''}
+            </p>
+            {friends.length === 0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+                Add friends from the menu to invite them here.
+              </p>
+            ) : online.length === 0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+                None of your friends are online right now.
+              </p>
+            ) : (
+              <div style={{display:'flex', flexDirection:'column', gap:6}}>
+                {online.map(f => (
+                  <div key={f.id} style={{display:'flex', alignItems:'center', gap:8}}>
+                    <span style={{width:7, height:7, borderRadius:'50%', background:'#00F5C4', flexShrink:0, boxShadow:'0 0 5px #00F5C4'}} />
+                    <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.78rem', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{f.username}</span>
+                    <button onClick={()=>inviteFriend(f)} disabled={invited.has(f.id)} style={{
+                      fontFamily:"'JetBrains Mono',monospace", fontWeight:700, fontSize:'0.68rem', padding:'5px 12px', borderRadius:8, border:'none',
+                      cursor: invited.has(f.id)?'default':'pointer',
+                      background: invited.has(f.id)?'#0e2a1a':'#00F5C4', color: invited.has(f.id)?'#00F5C4':'#0a2e24',
+                    }}>{invited.has(f.id) ? '✓ Invited' : 'Invite'}</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div style={{marginTop:12}}>
         {isHost ? (
           <>
@@ -6867,6 +7373,15 @@ function WordFlip() {
   const [fireworks,setFireworks] = useState(false);
   const { session, profile, loading: authLoading, refreshProfile, recovery, clearRecovery, balance, refreshWallet, signOut } = useAuth();
 
+  // Friends presence + game invites (Realtime; signed-in only). onlineIds drives
+  // the online dots and the lobby invite list; incomingInvite pops the accept
+  // prompt anywhere in the app.
+  const { onlineIds, incomingInvite, clearInvite, sendInvite } = useFriendsPresence(session);
+  // Set when a friend invite is accepted → routes into Online Play with the room
+  // code and force-remounts OnlineScreen (via key) so it auto-joins.
+  const [invitedRoom, setInvitedRoom] = useState(null);
+  function acceptInvite(code) { setInvitedRoom(code); clearInvite(); setScreen("multi-online"); }
+
   // Bumped when the server says today's daily was played on another device —
   // forces a re-render so the menu button flips to "✓ Done today".
   const [, setDailySyncTick] = useState(0);
@@ -7126,6 +7641,28 @@ function WordFlip() {
       )}
       {showTutorial && <HowToPlay onClose={closeTutorial} onFinish={()=>{ closeTutorial(); setScreen("tutorial"); }} />}
 
+      {/* Incoming game invite — pops anywhere in the app while signed in. */}
+      {incomingInvite && (
+        <div onClick={e=>e.target===e.currentTarget&&clearInvite()} style={{
+          position:"fixed",inset:0,background:"#000000bb",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",
+          padding:16,backdropFilter:"blur(4px)",
+        }}>
+          <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid #00F5C4",padding:"22px 20px",maxWidth:320,width:"100%",textAlign:"center",boxShadow:"0 12px 40px #00000099"}}>
+            <div style={{fontSize:"2.2rem",marginBottom:8}}>🎮</div>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.9rem",margin:"0 0 4px",fontWeight:700}}>
+              <span style={{color:"#00F5C4"}}>{incomingInvite.fromName}</span> invited you!
+            </p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.72rem",margin:"0 0 18px"}}>
+              Room <strong style={{color:"#F5EDD6",letterSpacing:"0.1em"}}>{incomingInvite.code}</strong> — join the game?
+            </p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={clearInvite} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),flex:1,fontSize:"0.8rem"}}>Dismiss</button>
+              <button onClick={()=>acceptInvite(incomingInvite.code)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),flex:1,fontSize:"0.8rem"}}>Join →</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {screen==="menu"&&(<>
         <button onClick={()=>setScreen(session?"profile":"auth")} style={{position:"fixed",top:"calc(16px + env(safe-area-inset-top))",left:16,background:session?"linear-gradient(135deg,#00F5C4,#FFB703)":"var(--wf-border)",border:session?"none":"1.5px solid #2a4060",borderRadius:session?"50%":10,width:session?32:"auto",height:32,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4,color:session?"#0a2e24":"var(--wf-text-dim)",fontSize:"0.75rem",fontWeight:700,padding:session?0:"0 10px",zIndex:50,fontFamily:"'JetBrains Mono',monospace"}} aria-label="Account">
           {session ? (profile?.username||"?")[0].toUpperCase() : "Sign In"}
@@ -7204,6 +7741,7 @@ function WordFlip() {
                   {metaBtn("achievements","🏅","Achievements")}
                   {metaBtn("rewards","🎁","Rewards",{glow:rewardsNew})}
                   {metaBtn("inventory","🎒","Inventory")}
+                  {session && metaBtn("friends","👥","Friends",{wide:true})}
                   {session && metaBtn("shop","🛍️","Shop",{glow:shopHasNew(), wide:true})}
                 </div>
               );
@@ -7281,8 +7819,9 @@ function WordFlip() {
       )}
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
-      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")} onBack={()=>{setInvitedRoom(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} /></div>}
+      {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} onFriends={()=>setScreen("friends")} /></div>}
+      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>{setScreen("menu");setRewardsJustEarned(null);}} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} justEarned={rewardsJustEarned} /></div>}
       {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}
