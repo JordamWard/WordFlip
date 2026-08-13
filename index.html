@@ -3287,27 +3287,76 @@ function TutorialBoard({ onExit }) {
 }
 
 // ─── Count-up number animation ──────────────────────────────────────────────────────
-function CountUp({ to, active, color, large, unit = "pts" }) {
-  // No animation: the results screen renders fully-loaded, so the final value
-  // shows immediately (and stays put when you re-enter results).
+function CountUp({ to, active, color, large, unit = "pts", instant = false }) {
+  // instant: skip the tick and show the final value (used when the results
+  // screen is re-entered — no animation the second time around).
+  const [val, setVal] = useState(instant ? to : 0);
+  const [big, setBig] = useState(false);
+  const started = useRef(false);
+  useEffect(() => {
+    if (instant || !active || started.current) return;
+    started.current = true;
+    if (to === 0) { setVal(0); return; }
+    const DURATION = large ? 800 : 620;
+    const FRAMES  = large ? 32 : 26;
+    let frame = 0;
+    const id = setInterval(() => {
+      frame++;
+      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
+      setVal(frame >= FRAMES ? to : Math.round(p * to));
+      if (frame >= FRAMES) {
+        clearInterval(id);
+        setBig(true);
+        setTimeout(() => setBig(false), large ? 400 : 300);
+      }
+    }, Math.round(DURATION / FRAMES));
+    return () => clearInterval(id);
+  }, [active]);
+  const popScale = large ? 1.45 : 1.38;
   return (
     <span style={{
       fontFamily: large ? "'Fraunces',serif" : "'JetBrains Mono',monospace",
       fontWeight: 900, color,
       fontSize: large ? "1.6rem" : "0.88rem",
       display: "inline-block",
+      transform: big ? `scale(${popScale})` : "scale(1)",
+      transition: "transform 0.22s cubic-bezier(.4,2,.6,1)",
     }}>
-      +{to.toLocaleString()}{large && unit && <span style={{fontSize:"0.85rem",fontWeight:700}}> {unit}</span>}
+      +{val.toLocaleString()}{large && unit && <span style={{fontSize:"0.85rem",fontWeight:700}}> {unit}</span>}
     </span>
   );
 }
 
 // ─── Firework burst helper ────────────────────────────────────────────────────
-// Disabled: the results screen no longer animates, so no bursts fire.
-function Firework() { return null; }
+function Firework({ color, trigger, large }) {
+  const [particles, setParticles] = useState([]);
+  const fired = useRef(false);
+  useEffect(() => {
+    if (!trigger || fired.current) return;
+    fired.current = true;
+    const count = large ? 22 : 12;
+    setParticles(Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * 2 * Math.PI;
+      const dist = (large ? 58 : 32) + Math.random() * (large ? 28 : 14);
+      return { id: i, tx: Math.cos(angle) * dist, ty: Math.sin(angle) * dist };
+    }));
+    const t = setTimeout(() => setParticles([]), 900);
+    return () => clearTimeout(t);
+  }, [trigger]);
+  const sz = large ? 9 : 5;
+  return particles.map(p => (
+    <div key={p.id} style={{
+      position:"absolute", width:sz, height:sz, borderRadius:"50%",
+      background:color, boxShadow:`0 0 ${sz+2}px ${color}`,
+      top:"50%", right:0, marginTop:-(sz/2),
+      "--fw-tx":p.tx+"px", "--fw-ty":p.ty+"px",
+      animation:"fwParticle 0.72s ease-out forwards", pointerEvents:"none", zIndex:20,
+    }} />
+  ));
+}
 
 // ─── Score Receipt ─────────────────────────────────────────────────────────────────────────────────
-function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow, compact = false, onShare, shareCopied = false }) {
+function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusPts = 0, bonusWords = [], helpsUsed = 0, coins = 0, coinsFormula = "", onShop, shopGlow, compact = false, onShare, shareCopied = false, animate = true }) {
   const greens = wordResults.filter(r=>r==="green").length;
   const yellows = wordResults.filter(r=>r==="yellow").length;
   const wordPts  = greens*300 + yellows*100;
@@ -3345,22 +3394,52 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
     ] : []),
   ];
 
-  // No reveal sequencing: everything shows at once so the results screen is
-  // fully loaded on entry (and stays that way when you come back to it).
-  const totalVisible = true;
-  const coinsVisible = true;
+  const ROW_MS   = 1200;
+  const FW_AFTER = 700;
+  // When not animating (re-entering results), everything is visible from the
+  // start so the screen is fully loaded with no reveal.
+  const [visibleCount, setVisibleCount] = useState(animate ? 0 : rows.length + 2);
+  const [firedSet,     setFiredSet]     = useState(new Set());
+
+  useEffect(() => {
+    if (!animate) return;
+    const timers = [];
+    const fire = key => setFiredSet(s => { const n = new Set(s); n.add(key); return n; });
+    rows.forEach((_, i) => {
+      timers.push(setTimeout(() => setVisibleCount(v => Math.max(v, i+1)), 300 + i*ROW_MS));
+      timers.push(setTimeout(() => fire(i),                                300 + i*ROW_MS + FW_AFTER));
+    });
+    const totalShow = 300 + rows.length * ROW_MS;
+    timers.push(setTimeout(() => setVisibleCount(rows.length + 1), totalShow));
+    timers.push(setTimeout(() => fire("total"),                    totalShow + 900));
+    // Coins earned reveals last, after the total has landed
+    if (coins > 0) {
+      timers.push(setTimeout(() => setVisibleCount(rows.length + 2), totalShow + 1400));
+      timers.push(setTimeout(() => fire("coins"),                    totalShow + 2100));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const totalVisible = visibleCount > rows.length;
+  const coinsVisible = visibleCount > rows.length + 1;
 
   return (
     <div style={{background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14, padding:compact?"12px 14px":"16px 18px", marginBottom:compact?14:20, textAlign:"left"}}>
       {rows.map((row, i) => {
+        const visible = visibleCount > i;
         return (
-          <div key={row.label} style={{marginBottom:compact?6:10}}>
+          <div key={row.label} style={{
+            marginBottom:compact?6:10, opacity:visible?1:0,
+            transform:visible?"translateX(0)":"translateX(-10px)",
+            transition:"opacity 0.35s ease, transform 0.35s ease",
+          }}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem"}}>
                 {row.icon} {row.label}
               </span>
               <div style={{position:"relative", display:"flex", alignItems:"center", flexShrink:0, marginLeft:12}}>
-                <CountUp to={row.pts} active={true} color={row.color} />
+                <Firework color={row.color} trigger={firedSet.has(i)} />
+                <CountUp to={row.pts} active={visible} color={row.color} instant={!animate} />
               </div>
             </div>
             <div style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.68rem", marginTop:3, paddingLeft:"1.4em"}}>
@@ -3378,7 +3457,8 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
       }}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>TOTAL</span>
         <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-          <CountUp to={score} active={totalVisible} color="var(--wf-accent2)" large />
+          <Firework color="var(--wf-accent2)" trigger={firedSet.has("total")} large />
+          <CountUp to={score} active={totalVisible} color="var(--wf-accent2)" large instant={!animate} />
         </div>
       </div>
       {coins > 0 && (
@@ -3397,7 +3477,8 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
           </div>
           <div style={{display:"flex", alignItems:"center", gap:10}}>
             <div style={{position:"relative", display:"flex", alignItems:"center"}}>
-              <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" />
+              <Firework color="var(--wf-accent)" trigger={firedSet.has("coins")} large />
+              <CountUp to={coins} active={coinsVisible} color="var(--wf-accent)" large unit="🪙" instant={!animate} />
             </div>
             {onShop && (
               <button onClick={onShop} style={{...btnStyle('#0e2a3a','var(--wf-accent)'), padding:'7px 12px', fontSize:'0.72rem', flexShrink:0, border:'1.5px solid #00F5C455', animation: shopGlow?'shopPulse 1.5s ease-in-out infinite':'none'}}>
@@ -3423,11 +3504,35 @@ function ScoreReceipt({ wordResults, elapsed, wrongGuesses, turns, score, bonusP
 // ─── Career Progress Row — a taste of the Rewards ladder, right on Results ─────
 // Mirrors RewardsScreen's "next reward" bar: fills within the current tier, or
 // from zero if this game's points pushed you into a new tier.
-function CareerProgressRow({ before, after, delay = 900, onClick }) {
+function CareerProgressRow({ before, after, delay = 900, onClick, animate = true }) {
   const gain = after - before;
+  const fromProg = nextRewardProgress(before);
   const toProg = nextRewardProgress(after);
-  // No animation: the bar shows its final fill immediately.
-  const pct = toProg.pct;
+  const tierChanged = fromProg.nextIdx !== toProg.nextIdx;
+  const startPct = tierChanged ? 0 : fromProg.pct;
+  const endPct = toProg.pct;
+  // Re-entering results: show the row filled to its final state immediately.
+  const [active, setActive] = useState(!animate);
+  const [pct, setPct] = useState(animate ? startPct : endPct);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!animate) return;
+    const t = setTimeout(() => setActive(true), delay);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (!animate || !active || started.current) return;
+    started.current = true;
+    const DURATION = 900, FRAMES = 24;
+    let frame = 0;
+    const id = setInterval(() => {
+      frame++;
+      const p = 1 - Math.pow(1 - frame / FRAMES, 3); // cubic ease-out
+      setPct(startPct + p * (endPct - startPct));
+      if (frame >= FRAMES) clearInterval(id);
+    }, Math.round(DURATION / FRAMES));
+    return () => clearInterval(id);
+  }, [active]);
   if (gain <= 0) return null;
   return (
     <div onClick={onClick} role={onClick?"button":undefined} tabIndex={onClick?0:undefined}
@@ -3435,11 +3540,13 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
       style={{
       background:"var(--wf-surface)", border:"1.5px solid var(--wf-border)", borderRadius:14,
       padding:"14px 16px", marginBottom:20, textAlign:"left",
+      opacity:active?1:0, transform:active?"scale(1)":"scale(0.92)",
+      transition:"opacity 0.4s cubic-bezier(.4,2,.6,1), transform 0.4s cubic-bezier(.4,2,.6,1)",
       cursor: onClick ? "pointer" : "default",
     }}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
         <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-dim)", fontSize:"0.78rem", fontWeight:700}}>🎁 CAREER PROGRESS</span>
-        <CountUp to={gain} active={true} color="var(--wf-accent2)" />
+        <CountUp to={gain} active={active} color="var(--wf-accent2)" instant={!animate} />
       </div>
       <div style={{height:8, borderRadius:4, background:"var(--wf-border)", overflow:"hidden"}}>
         <div style={{width:`${pct}%`, height:"100%", background:"linear-gradient(90deg,#FFB703,#ff9f1c)", transition:"width 0.15s linear"}} />
@@ -3461,7 +3568,7 @@ function CareerProgressRow({ before, after, delay = 900, onClick }) {
 }
 
 // ─── Win Screen ───────────────────────────────────────────────────────────────
-function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards, onLeaderboard, onSignIn, session }) {
+function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakBonus = 0, isNewBest, signedIn, onShop, careerGain, onRewards, onLeaderboard, onSignIn, session, animate = true }) {
   const wordResultsArr = result.words.map((_,i) => result.wordResults?.[i] || (result.outOfTurns ? "missed" : "yellow"));
   const score = scoreCalc(result.elapsed, wordResultsArr, result.turns, result.bonusPts||0, result.helpsUsed||0);
   // Coins are only granted server-side when signed in, so only advertise them then.
@@ -3470,7 +3577,17 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
   const coinsFormula = mode==="daily"
     ? (streakBonus ? `10% of ${score.toLocaleString()} pts + ${streakBonus} streak bonus` : `10% of ${score.toLocaleString()} pts`)
     : "win bonus";
+  // Sequence the post-receipt reveals: career progress lands right after the
+  // receipt's coins row, then the streak card (daily only) follows it.
+  // Must match the row count ScoreReceipt actually renders: words + time +
+  // efficiency, plus the two conditional rows. Miss one and the career bar
+  // reveals while the receipt is still animating.
+  const receiptRows = 3
+    + ((result.bonusPts||0) > 0 ? 1 : 0)
+    + ((result.helpsUsed||0) > 0 ? 1 : 0);
+  const careerDelay = 300 + receiptRows * 1200 + (coins > 0 ? 2600 : 1000);
   const hasCareerGain = careerGain && careerGain.after > careerGain.before;
+  const streakDelay = careerDelay + (hasCareerGain ? 1400 : 0);
   const prevBest = getPersonalBest();
   const computedNewBest = isDaily && score > prevBest;
   const showNewBest = isNewBest || computedNewBest;
@@ -3483,6 +3600,11 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
 
   return (
     <div role="main" aria-label="Game results" style={{textAlign:"center",maxWidth:400,margin:"0 auto",padding:20}}>
+      {/* Top-left ← Menu, matching the return summary (DailyAlreadyDone) so the
+          initial and re-entered screens share the same chrome. */}
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:2}}>
+        <button onClick={onMenu} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.8rem"}}>← Menu</button>
+      </div>
       <div aria-hidden="true" style={{fontSize:"3rem",marginBottom:8}}>{result.outOfTurns?"😬":"🎉"}</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"2rem",margin:"0 0 4px"}}>
         {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
@@ -3517,29 +3639,28 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
         coinsFormula={coinsFormula}
         onShop={signedIn ? onShop : null}
         shopGlow={shopHasNew()}
+        onShare={isDaily ? handleShare : null}
+        shareCopied={copied}
+        animate={animate}
       />
       {hasCareerGain&&(
-        <CareerProgressRow before={careerGain.before} after={careerGain.after} onClick={onRewards} />
+        <CareerProgressRow before={careerGain.before} after={careerGain.after} delay={careerDelay} onClick={onRewards} animate={animate} />
       )}
       {isDaily&&(
         <DailyRankPeek session={session} myScore={score} onLeaderboard={onLeaderboard} onSignIn={onSignIn} />
       )}
       {isDaily&&(
         <div style={{marginBottom:20}}>
-          <StreakCard />
+          <StreakCard animate={animate} delay={streakDelay} />
         </div>
       )}
-      <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-        {isDaily&&(
-          <button onClick={handleShare} style={{...btnStyle(copied?"#00c49f":"var(--wf-border)",copied?"#0a2e24":"#F5EDD6"),padding:"10px 20px"}}>
-            {copied?"✓ Copied!":"📤 Share"}
-          </button>
-        )}
-        {!isDaily&&(
+      {/* Menu moved to the top-left and Share nested into the receipt (see above),
+          matching the return summary. Solo keeps Play Again as its primary CTA. */}
+      {!isDaily&&(
+        <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
           <button onClick={onPlayAgain} style={btnStyle("var(--wf-accent)","#0a2e24")}>Play Again</button>
-        )}
-        <button onClick={onMenu} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
-      </div>
+        </div>
+      )}
       {signedIn && onRewards && !hasCareerGain && (
         <button onClick={onRewards} style={{...btnStyle("transparent","var(--wf-accent2)"),marginTop:14,fontSize:"0.82rem",border:"none",textDecoration:"underline"}}>
           🎁 View your rewards →
@@ -3865,8 +3986,15 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
                     {medal || (i+1)}
                   </div>
                   <div>
-                    <div style={{fontFamily:"'JetBrains Mono',monospace",color:isMe?"#9B5DE5":"#F5EDD6",fontSize:"0.82rem",fontWeight:isMe?700:400}}>
-                      {username}{isMe ? " (you)" : ""}
+                    <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                      <div style={{fontFamily:"'JetBrains Mono',monospace",color:isMe?"#9B5DE5":"#F5EDD6",fontSize:"0.82rem",fontWeight:isMe?700:400,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {username}{isMe ? " (you)" : ""}
+                      </div>
+                      {globalTab==="alltime" && entry.day_key && (
+                        <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.6rem",flexShrink:0}}>
+                          {entry.day_key}
+                        </div>
+                      )}
                     </div>
                     {entry.blocks && (
                       <div style={{fontSize:"0.7rem",letterSpacing:"0.03em",marginTop:1}}>{entry.blocks}</div>
@@ -3875,7 +4003,6 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
                       {lbGuesses != null ? `${lbGuesses} guess${lbGuesses!==1?"es":""}` : ""}
                       {lbBonus > 0 ? ` · ${lbBonus} bonus` : ""}
                       {entry.elapsed != null ? ` · ${Math.floor(entry.elapsed/1000)}s` : ""}
-                      {globalTab==="alltime" && entry.day_key ? ` · ${entry.day_key}` : ""}
                       {entry.helps === 0 && <span style={{color:"var(--wf-accent)",fontWeight:700}}> · 🧠 no hints</span>}
                     </div>
                   </div>
@@ -5491,7 +5618,7 @@ function StreakCard({ animate, delay = 600, compact = false }) {
             <span>🎉 {count}-day streak bonus:</span>
             <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
               <Firework color="var(--wf-accent)" trigger={bonusFw} large />
-              <CountUp to={streakWeekBonus(count/7)} active={bonusReveal} color="var(--wf-accent)" large unit="🪙" />
+              <CountUp to={streakWeekBonus(count/7)} active={bonusReveal} color="var(--wf-accent)" large unit="🪙" instant={!animate} />
             </span>
           </div>
         )}
@@ -5836,6 +5963,9 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine, onLeaderboard }) {
         Come back tomorrow for a new challenge.
       </p>
       {done&&(
+        // "Already Played" is a return visit, not the initial win — render the
+        // receipt fully-loaded with no reveal. The one-at-a-time animation only
+        // plays on WinScreen, right after you actually finish.
         <ScoreReceipt
           compact
           wordResults={wordResultsArr2}
@@ -5850,6 +5980,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine, onLeaderboard }) {
           coinsFormula={`10% of ${score.toLocaleString()} pts`}
           onShare={handleShare}
           shareCopied={copied}
+          animate={false}
         />
       )}
       {!session&&onAuth&&(
@@ -7157,6 +7288,21 @@ function WordFlip() {
   const [authMode,setAuthMode] = useState("signin");
   const openAuth = (m) => { setAuthMode(m || "signin"); setScreen("auth"); };
   const [winResult,setWinResult] = useState(null);
+  // Results-screen animation fires once per win. We remember which winResult has
+  // already played its reveal, so re-entering results (e.g. back from Shop)
+  // shows the finished screen instantly instead of replaying the animation.
+  const animatedWinRef = useRef(null);
+  const animateWin = winResult != null && animatedWinRef.current !== winResult;
+  useEffect(() => {
+    // Stamp this winResult as "already animated" only once we LEAVE the results
+    // screen — NOT while it's still on screen. Stamping on entry made animateWin
+    // flip to false on the very next re-render (the fireworks-off timer, the
+    // career/coins server reconcile, a toast clearing), which turned the in-flight
+    // CountUps' `instant` prop true mid-reveal and froze the TOTAL/COINS at +0
+    // until you re-entered the daily. Deferring the stamp keeps `animate` stable
+    // for the life of the reveal, while still suppressing a replay if you return.
+    if (screen !== "win" && winResult) animatedWinRef.current = winResult;
+  }, [screen, winResult]);
   const [winMode,setWinMode] = useState("");
   const [winStreak,setWinStreak] = useState(0);
   const [winStreakBonus,setWinStreakBonus] = useState(0); // milestone tokens earned this win
@@ -7642,7 +7788,7 @@ function WordFlip() {
 
       {screen==="win"&&winResult&&(
         <div style={{width:"100%",animation:"menuIn 0.4s ease"}}>
-          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} onLeaderboard={()=>setScreen("leaderboard")} onSignIn={()=>openAuth("signup")} session={session} />
+          <WinScreen result={winResult} mode={winMode} onPlayAgain={()=>startSolo(soloLarge)} onMenu={()=>setScreen("menu")} isDaily={winMode==="daily"} streak={winStreak} streakBonus={winStreakBonus} isNewBest={winIsNewBest} signedIn={!!session} onShop={()=>setScreen("shop")} careerGain={careerGain} onRewards={goToRewardsFromWin} onLeaderboard={()=>setScreen("leaderboard")} onSignIn={()=>openAuth("signup")} session={session} animate={animateWin} />
           {!session && (winMode==="daily"||winMode==="solo") && (()=>{
             const wr = winResult.words.map((_,i)=>winResult.wordResults?.[i]||(winResult.outOfTurns?"missed":"yellow"));
             const wscore = scoreCalc(winResult.elapsed, wr, winResult.turns, winResult.bonusPts||0, winResult.helpsUsed||0);
