@@ -1086,9 +1086,11 @@ REVOKE ALL ON public.daily_scores_archive FROM anon, authenticated;
 -- read rows involving them) but ALL WRITES go through SECURITY DEFINER RPCs that
 -- enforce auth.uid() — the client never writes the table directly and never sends
 -- relationship state, only intent (a username / a target id). Each function is
--- REVOKEd from anon and GRANTed to authenticated (CREATE FUNCTION grants EXECUTE
--- to PUBLIC by default, but these take no privileged action for a signed-out
--- caller since auth.uid() is NULL → they raise 'not signed in').
+-- REVOKEd from PUBLIC and GRANTed to authenticated. Revoking from PUBLIC (not just
+-- anon) is REQUIRED: CREATE FUNCTION grants EXECUTE to PUBLIC by default, and anon
+-- inherits that via PUBLIC, so `REVOKE … FROM anon` alone leaves anon able to call
+-- it. (Even then the auth.uid() NULL guard makes an anon call a harmless
+-- 'not signed in' — but locking it at the grant layer is the house convention.)
 
 CREATE TABLE IF NOT EXISTS public.friendships (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1152,7 +1154,7 @@ BEGIN
   RETURN jsonb_build_object('status', 'pending');
 END;
 $$;
-REVOKE EXECUTE ON FUNCTION public.send_friend_request(text) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.send_friend_request(text) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.send_friend_request(text) TO authenticated;
 
 -- respond_friend_request(p_requester, p_accept): the ADDRESSEE accepts or
@@ -1174,7 +1176,7 @@ BEGIN
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
-REVOKE EXECUTE ON FUNCTION public.respond_friend_request(uuid, boolean) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.respond_friend_request(uuid, boolean) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.respond_friend_request(uuid, boolean) TO authenticated;
 
 -- remove_friend(p_other): delete the pair with p_other — works for either party
@@ -1191,7 +1193,7 @@ BEGIN
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
-REVOKE EXECUTE ON FUNCTION public.remove_friend(uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.remove_friend(uuid) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.remove_friend(uuid) TO authenticated;
 
 -- list_friends(): one call for the whole Friends screen. Returns jsonb with
@@ -1237,5 +1239,5 @@ BEGIN
   RETURN jsonb_build_object('friends', v_friends, 'incoming', v_incoming, 'outgoing', v_outgoing);
 END;
 $$;
-REVOKE EXECUTE ON FUNCTION public.list_friends() FROM anon;
+REVOKE EXECUTE ON FUNCTION public.list_friends() FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.list_friends() TO authenticated;
