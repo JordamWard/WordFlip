@@ -4027,7 +4027,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
 // Mirrors LeaderboardView's layout (maxWidth:440 card, tab row, 28px/1fr/auto
 // row grid) so it reads as part of the same family. All writes go through the
 // server RPCs wrapped above; one listFriends() call feeds every tab.
-function FriendsScreen({ onBack, session, onSignIn, onlineIds }) {
+function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged }) {
   const [tab, setTab] = useState("friends"); // friends | requests | add
   const [data, setData] = useState({ friends:[], incoming:[], outgoing:[] });
   const [loading, setLoading] = useState(false);
@@ -4041,7 +4041,7 @@ function FriendsScreen({ onBack, session, onSignIn, onlineIds }) {
   const [searching, setSearching] = useState(false);
 
   function flash(m) { setMsg(m); setTimeout(() => setMsg(null), 3000); }
-  function reload() { setRetryKey(k => k + 1); }
+  function reload() { setRetryKey(k => k + 1); if (onFriendsChanged) onFriendsChanged(); }
 
   useEffect(() => {
     if (!session?.user) return;
@@ -4544,7 +4544,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineIds, sendInvite, initialRoomCode }) {
+function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineIds, sendInvite, initialRoomCode, autoInviteFriend }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
   // A code can arrive three ways, in priority order: an accepted friend invite
@@ -4565,6 +4565,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
   const [fromInvite, setFromInvite] = useState(!!(initialRoomCode || new URLSearchParams(window.location.search).get('room')));
   const [friends, setFriends] = useState([]);          // accepted friends (for lobby invites)
   const [invited, setInvited] = useState(() => new Set()); // friend ids I've invited this session
+  const [pendingInvite, setPendingInvite] = useState(autoInviteFriend || null); // one-tap "invite to play" target
   const [isPublic, setIsPublic] = useState(false);      // list this room in the open-games lobby
   const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
   const [browseBusy, setBrowseBusy] = useState(false);
@@ -4598,12 +4599,26 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
     foundTileIdsRef.current = ids;
   }, [gs]);
 
-  // Auto-join when arriving via invite link and player already has a saved name
+  // Auto-join when arriving via invite link and player already has a saved name.
+  // Or, for a one-tap "invite friend to play", auto-CREATE a room (the pending
+  // invite fires once the lobby exists — see the effect below). If no name is
+  // saved yet, we fall through to the join/create screen and the invite still
+  // goes out after the host creates the room manually.
   useEffect(() => {
     if (fromInvite && codeInput && playerName.trim()) {
       joinRoom();
+    } else if (autoInviteFriend && playerName.trim() && !fromInvite) {
+      createRoom();
     }
   }, []); // intentionally runs once on mount
+
+  // Send a queued one-tap invite the moment a room exists and we're in the lobby.
+  useEffect(() => {
+    if (phase === 'lobby' && room?.code && pendingInvite && sendInvite) {
+      inviteFriend(pendingInvite);
+      setPendingInvite(null);
+    }
+  }, [phase, room?.code, pendingInvite]);
 
   // Load my friends once (signed-in only) so the lobby can offer to invite the
   // online ones. Cheap single RPC; refreshes if the account changes.
@@ -5496,7 +5511,8 @@ function SoloSetup({ onBack, onStart }) {
 }
 
 // ─── Multi Setup ──────────────────────────────────────────────────────────────
-function MultiSetup({ onBack, onLocal, onOnline }) {
+function MultiSetup({ onBack, onLocal, onOnline, session, onlineIds, friends, onInviteFriend, onFriends }) {
+  const online = (friends || []).filter(f => onlineIds && onlineIds.has(f.id));
   return (
     <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
       <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:20,fontSize:"0.8rem"}}>← Back</button>
@@ -5520,6 +5536,36 @@ function MultiSetup({ onBack, onLocal, onOnline }) {
           </div>
         </button>
       </div>
+
+      {/* Play with a friend — one-tap: creates an online room and invites them. */}
+      {session?.user && (
+        <div style={{marginTop:18,background:"var(--wf-surface)",border:"1.5px solid var(--wf-border)",borderRadius:12,padding:"14px 16px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:online.length>0?10:0}}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#7a9cc0",fontSize:"0.76rem",fontWeight:700,letterSpacing:"0.04em",display:"flex",alignItems:"center",gap:7}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:online.length>0?"#00F5C4":"#3a5570",boxShadow:online.length>0?"0 0 5px #00F5C4":"none"}} />
+              Friends online{online.length>0?` (${online.length})`:""}
+            </span>
+            {onFriends && <button onClick={onFriends} style={{...btnStyle("transparent","var(--wf-text-dim)"),fontSize:"0.68rem",border:"none",padding:0,textDecoration:"underline"}}>Manage</button>}
+          </div>
+          {online.length > 0 ? (
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {online.map(f => (
+                <div key={f.id} style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{width:7,height:7,borderRadius:"50%",background:"#00F5C4",flexShrink:0,boxShadow:"0 0 5px #00F5C4"}} />
+                  <span style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.username}</span>
+                  <button onClick={()=>onInviteFriend(f)} style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:"0.7rem",padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",background:"#00F5C4",color:"#0a2e24"}}>Invite</button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.68rem",margin:"8px 0 0",lineHeight:1.5}}>
+              {(friends || []).length === 0
+                ? "Add friends to invite them into a game."
+                : "None of your friends are online right now."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -7382,6 +7428,23 @@ function WordFlip() {
   const [invitedRoom, setInvitedRoom] = useState(null);
   function acceptInvite(code) { setInvitedRoom(code); clearInvite(); setScreen("multi-online"); }
 
+  // Global friends list (signed-in) so the menu can badge how many are online and
+  // the Multiplayer hub can offer one-tap invites. refreshFriends keeps it fresh
+  // after add/accept/remove in the Friends screen.
+  const [friends, setFriends] = useState([]);
+  const refreshFriends = useCallback(() => {
+    if (!session?.user) { setFriends([]); return; }
+    listFriends().then(d => setFriends(d.friends || [])).catch(() => {});
+  }, [session?.user?.id]);
+  useEffect(() => { refreshFriends(); }, [session?.user?.id]);
+  const onlineFriendCount = friends.filter(f => onlineIds && onlineIds.has(f.id)).length;
+
+  // One-tap "invite a friend to play": queue the friend, jump into Online Play.
+  // OnlineScreen auto-creates a room (if a name is saved) and fires the invite
+  // once the room exists; otherwise the friend is invited after the host creates.
+  const [autoInvite, setAutoInvite] = useState(null); // {id, username}
+  function inviteFriendToPlay(friend) { setAutoInvite(friend); setScreen("multi-online"); }
+
   // Bumped when the server says today's daily was played on another device —
   // forces a re-render so the menu button flips to "✓ Done today".
   const [, setDailySyncTick] = useState(0);
@@ -7710,7 +7773,16 @@ function WordFlip() {
               <span>🔤 Solo Play</span><span style={{fontSize:"0.75rem",color:"var(--wf-text-dim)"}}>→</span>
             </button>
             <button onClick={()=>setScreen("multi-setup")} style={{...btnStyle("#162030","#F5EDD6"),padding:"13px 24px",fontSize:"0.95rem",borderRadius:12,border:"1.5px solid #00F5C444",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>👥 Multiplayer</span><span style={{fontSize:"0.75rem",color:"var(--wf-accent)"}}>→</span>
+              <span>👥 Multiplayer</span>
+              <span style={{display:"flex",alignItems:"center",gap:8}}>
+                {onlineFriendCount>0 && (
+                  <span style={{display:"inline-flex",alignItems:"center",gap:4,fontFamily:"'JetBrains Mono',monospace",fontSize:"0.66rem",fontWeight:700,color:"#00F5C4",background:"#00F5C41a",border:"1px solid #00F5C455",borderRadius:20,padding:"2px 8px"}}>
+                    <span style={{width:6,height:6,borderRadius:"50%",background:"#00F5C4",boxShadow:"0 0 5px #00F5C4"}} />
+                    {onlineFriendCount} online
+                  </span>
+                )}
+                <span style={{fontSize:"0.75rem",color:"var(--wf-accent)"}}>→</span>
+              </span>
             </button>
             {!session && (
               <div style={{display:"flex",gap:8}}>
@@ -7763,7 +7835,7 @@ function WordFlip() {
       {screen==="tutorial"&&<TutorialBoard onExit={()=>setScreen("menu")} />}
 
       {screen==="solo-setup"&&<SoloSetup onBack={()=>setScreen("menu")} onStart={(l)=>startSolo(l)} />}
-      {screen==="multi-setup"&&<MultiSetup onBack={()=>setScreen("menu")} onLocal={()=>setScreen("multi-local")} onOnline={()=>setScreen("multi-online")} />}
+      {screen==="multi-setup"&&<MultiSetup onBack={()=>setScreen("menu")} onLocal={()=>setScreen("multi-local")} onOnline={()=>setScreen("multi-online")} session={session} onlineIds={onlineIds} friends={friends} onInviteFriend={inviteFriendToPlay} onFriends={()=>setScreen("friends")} />}
 
       {screen==="solo"&&soloWords&&(
         <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
@@ -7819,9 +7891,9 @@ function WordFlip() {
       )}
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")} onBack={()=>{setInvitedRoom(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")+"-"+(autoInvite?.id||"")} onBack={()=>{setInvitedRoom(null);setAutoInvite(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} autoInviteFriend={autoInvite} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} onFriends={()=>setScreen("friends")} /></div>}
-      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} /></div>}
+      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} onFriendsChanged={refreshFriends} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>{setScreen("menu");setRewardsJustEarned(null);}} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} justEarned={rewardsJustEarned} /></div>}
       {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}
