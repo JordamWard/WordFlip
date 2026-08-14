@@ -4354,6 +4354,22 @@ function MpPowerupConfig({ value, onChange }) {
     </div>
   );
 }
+// Host-only room-size picker (2–4). Stored on the room so guests and the lobby
+// enforce the same cap. 4 is the ceiling (MP_COLORS/turn UI support four seats).
+function MpRoomSizeConfig({ value, onChange }) {
+  const chip = (on, label, onClick) => (
+    <button onClick={onClick} style={{...btnStyle(on?'var(--wf-accent2)':'var(--wf-border)', on?'#0D1B2A':'var(--wf-text-dim)'), padding:'7px 14px', fontSize:'0.78rem'}}>{label}</button>
+  );
+  return (
+    <div style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'12px 14px', marginBottom:16, textAlign:'left'}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', letterSpacing:'0.08em', margin:'0 0 10px'}}>ROOM SIZE</p>
+      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.72rem'}}>Max players:</span>
+        {[2,3,4].map(n => <React.Fragment key={n}>{chip(value===n, String(n), ()=>onChange(n))}</React.Fragment>)}
+      </div>
+    </div>
+  );
+}
 // In-game bar (used in both multiplayer boards). `active` = it's this device's/player's turn.
 function MpPowerupBar({ settings, usedThisGame, xrayArmed, onHint, onXrayToggle, active }) {
   const s = normMpPU(settings);
@@ -4544,9 +4560,13 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
 }
 
 // ─── Online Multiplayer ───────────────────────────────────────────────────────
-function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineIds, sendInvite, initialRoomCode, autoInviteFriend }) {
+function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile, onlineIds, sendInvite, initialRoomCode, autoInviteFriend }) {
   const [phase, setPhase] = useState('join'); // join | lobby | game | done
-  const [playerName, setPlayerName] = useState(() => localStorage.getItem('wf_online_name') || '');
+  // Signed-in players ALWAYS play as their account username (no free-text name);
+  // guests still type one. profile may load a beat after session, so we seed from
+  // it when present and keep it synced via the effect below.
+  const accountName = session?.user ? (profile?.username || '') : null;
+  const [playerName, setPlayerName] = useState(() => accountName || localStorage.getItem('wf_online_name') || '');
   // A code can arrive three ways, in priority order: an accepted friend invite
   // (initialRoomCode), a ?room= deep link, or manual entry.
   const [codeInput, setCodeInput] = useState(() => initialRoomCode || new URLSearchParams(window.location.search).get('room') || '');
@@ -4570,6 +4590,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
   const [publicRooms, setPublicRooms] = useState(null); // null = not yet loaded; [] = none open
   const [browseBusy, setBrowseBusy] = useState(false);
   const [mpPU, setMpPU] = useState(MP_PU_DEFAULT);       // host's power-up config (persisted on the room)
+  const [maxPlayers, setMaxPlayers] = useState(4);       // host picks the room size (2–4)
   const [puUsed, setPuUsed] = useState(0);               // power-ups I've used this game
   const [hintTileId, setHintTileId] = useState(null);
   const [xrayArmed, setXrayArmed] = useState(false);
@@ -4611,6 +4632,12 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
       createRoom();
     }
   }, []); // intentionally runs once on mount
+
+  // Keep a signed-in player's name locked to their account username (it may
+  // arrive after the session on a cold start, and can change in Profile).
+  useEffect(() => {
+    if (accountName) setPlayerName(accountName);
+  }, [accountName]);
 
   // Send a queued one-tap invite the moment a room exists and we're in the lobby.
   useEffect(() => {
@@ -4897,15 +4924,15 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
       // it just piggybacks on whoever happens to open the lobby.
       await db.from('rooms').update({ status:'done' }).eq('status','waiting').lt('created_at', cutoff);
       const { data, error } = await db.from('rooms')
-        .select('id, code, created_at, is_public, players(name, turn_order)')
+        .select('id, code, created_at, is_public, settings, players(name, turn_order)')
         .eq('status', 'waiting').eq('is_public', true)
         .gte('created_at', cutoff) // defensive backstop in case the cleanup above failed
         .order('created_at', { ascending: false }).limit(20);
       if (error) { setPublicRooms([]); }
       else {
         const list = (data || [])
-          .map(r => ({ id:r.id, code:r.code, players:(r.players || []) }))
-          .filter(r => r.players.length < 4); // only joinable rooms
+          .map(r => ({ id:r.id, code:r.code, settings:r.settings, players:(r.players || []) }))
+          .filter(r => r.players.length < (r.settings?.maxPlayers || 4)); // only joinable rooms
         setPublicRooms(list);
       }
     } catch (e) { setPublicRooms([]); }
@@ -4948,7 +4975,11 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
       if (isPublic) { try { await db.from('rooms').update({ is_public: true }).eq('id', r.id); r.is_public = true; } catch (e) {} }
       // On success everyone (host + guests via their room fetch) sees the same
       // settings; on failure (column absent) it stays undefined for all → off.
-      try { await db.from('rooms').update({ settings: mpPU }).eq('id', r.id); r.settings = mpPU; } catch (e) {}
+      // Room size rides in `settings` alongside the power-up config (no new
+      // column). normMpPU ignores the extra key, so guests still read power-ups
+      // fine and also get maxPlayers for the join cap / lobby count.
+      const roomSettings = { ...mpPU, maxPlayers };
+      try { await db.from('rooms').update({ settings: roomSettings }).eq('id', r.id); r.settings = roomSettings; } catch (e) {}
       setRoom(r); roomRef.current = r;
       setPlayers([{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }]);
       playersRef.current = [{ id: myId, room_id: r.id, name: playerName.trim(), turn_order: 0, score: 0 }];
@@ -4985,7 +5016,8 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
       const { data: existing } = await db.from('players').select('*').eq('room_id', r.id).order('turn_order');
       const alreadyIn = existing?.find(p => p.id === myId);
       if (!alreadyIn) {
-        if (existing && existing.length >= 4) { setErrMsg('Room is full (4 players max).'); setBusy(false); return; }
+        const cap = r.settings?.maxPlayers || 4;
+        if (existing && existing.length >= cap) { setErrMsg(`Room is full (${cap} player${cap!==1?'s':''} max).`); setBusy(false); return; }
         const { error: pe } = await db.from('players')
           .upsert({ id: myId, room_id: r.id, name: playerName.trim(), turn_order: existing?.length || 0, score: 0 },
                   { onConflict: 'id' });
@@ -5182,6 +5214,13 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
   const timeDanger = timeLeft <= 10;
 
   // ─── JOIN ─────────────────────────────────────────────────────────────────────
+  // Signed in → locked "Playing as <username>" chip; guests → editable input.
+  const nameChip = (
+    <div style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #00F5C455', background:'#0e2a1a', marginBottom:16, boxSizing:'border-box', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.85rem', color:'#7a9cc0', display:'flex', alignItems:'center', justifyContent:'center', gap:8}}>
+      <span style={{fontSize:'0.95rem'}}>👤</span> Playing as <strong style={{color:'#00F5C4'}}>{accountName}</strong>
+    </div>
+  );
+
   if (phase === 'join') return (
     <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
       <button onClick={onBack} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:20, fontSize:'0.8rem'}}>← Back</button>
@@ -5196,10 +5235,13 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
         </div>
       )}
       {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
-      <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
-        style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}}
-        onKeyDown={e => e.key==='Enter' && (fromInvite && codeInput ? joinRoom() : createRoom())} />
+      {accountName ? nameChip : (
+        <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
+          style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}}
+          onKeyDown={e => e.key==='Enter' && (fromInvite && codeInput ? joinRoom() : createRoom())} />
+      )}
       {!fromInvite && <MpPowerupConfig value={mpPU} onChange={setMpPU} />}
+      {!fromInvite && <MpRoomSizeConfig value={maxPlayers} onChange={setMaxPlayers} />}
       {!fromInvite && (
         <button onClick={createRoom} disabled={busy}
           style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), width:'100%', padding:'13px', marginBottom:8, opacity:busy?0.6:1}}>
@@ -5245,8 +5287,10 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
       <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 6px'}}>Open Games</h2>
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 16px'}}>Join a room someone left open to the public.</p>
       {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
-      <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
-        style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}} />
+      {accountName ? nameChip : (
+        <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
+          style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'#F5EDD6', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}} />
+      )}
       {publicRooms === null ? (
         <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.8rem'}}>Loading…</p>
       ) : publicRooms.length === 0 ? (
@@ -5261,7 +5305,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
             <div key={r.id} style={{display:'flex', alignItems:'center', gap:10, background:'#0a1520', borderRadius:12, padding:'12px 14px', marginBottom:8, border:'1.5px solid #1e3048'}}>
               <div style={{flex:1, textAlign:'left', minWidth:0}}>
                 <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.85rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>🎮 {hostName}'s room</div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.66rem', marginTop:2}}>{r.players.length}/4 players · {r.code}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.66rem', marginTop:2}}>{r.players.length}/{r.settings?.maxPlayers||4} players · {r.code}</div>
               </div>
               <button onClick={()=>joinRoom(r.code)} disabled={busy} style={{...btnStyle('#00F5C4','#0a2e24'), padding:'9px 16px', fontSize:'0.8rem', flexShrink:0, opacity:busy?0.6:1}}>Join</button>
             </div>
@@ -5283,7 +5327,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
         <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'6px 0 0'}}>Share with friends to join</p>
         {room?.is_public && <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#00F5C4', fontSize:'0.66rem', margin:'6px 0 0'}}>🌐 Listed in Open Games</p>}
       </div>
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', margin:'0 0 8px'}}>Players ({players.length}/4)</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', margin:'0 0 8px'}}>Players ({players.length}/{room?.settings?.maxPlayers||4})</p>
       {sortedPlayers.map((p, i) => (
         <div key={p.id} style={{display:'flex', alignItems:'center', gap:10, background:'#0a1520', borderRadius:10, padding:'10px 14px', marginBottom:6, border:`1.5px solid ${p.id===myId?MP_COLORS[i]+'66':'#1e3048'}`}}>
           <div style={{width:8, height:8, borderRadius:'50%', background:MP_COLORS[i], flexShrink:0}} />
@@ -5343,9 +5387,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, onlineId
               style={{...btnStyle(players.length>=2?'linear-gradient(90deg,#00c49f,#00F5C4)':'#1e3048', players.length>=2?'#0a2e24':'#3a5570'), width:'100%', padding:'13px', opacity:players.length<2?0.5:1}}>
               {players.length<2?'Waiting for players…':'Start Game →'}
             </button>
-            {players.length>=2&&players.length<4&&(
+            {players.length>=2&&players.length<(room?.settings?.maxPlayers||4)&&(
               <p style={{fontFamily:"'JetBrains Mono',monospace",color:'#3a5570',fontSize:'0.7rem',margin:'8px 0 0'}}>
-                You can start now or wait for more (up to 4 players). Players can join mid-game too.
+                You can start now or wait for more (up to {room?.settings?.maxPlayers||4} players). Players can join mid-game too.
               </p>
             )}
           </>
@@ -7906,7 +7950,7 @@ function WordFlip() {
       )}
 
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
-      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")+"-"+(autoInvite?.id||"")} onBack={()=>{setInvitedRoom(null);setAutoInvite(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} autoInviteFriend={autoInvite} /></div>}
+      {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")+"-"+(autoInvite?.id||"")} onBack={()=>{setInvitedRoom(null);setAutoInvite(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} profile={profile} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} autoInviteFriend={autoInvite} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} onFriends={()=>setScreen("friends")} /></div>}
       {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} onFriendsChanged={refreshFriends} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
