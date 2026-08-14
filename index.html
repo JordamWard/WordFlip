@@ -7432,11 +7432,21 @@ function WordFlip() {
   // the Multiplayer hub can offer one-tap invites. refreshFriends keeps it fresh
   // after add/accept/remove in the Friends screen.
   const [friends, setFriends] = useState([]);
+  const [incomingRequests, setIncomingRequests] = useState(0); // pending requests → Friends button pulse
   const refreshFriends = useCallback(() => {
-    if (!session?.user) { setFriends([]); return; }
-    listFriends().then(d => setFriends(d.friends || [])).catch(() => {});
+    if (!session?.user) { setFriends([]); setIncomingRequests(0); return; }
+    listFriends().then(d => { setFriends(d.friends || []); setIncomingRequests((d.incoming || []).length); }).catch(() => {});
   }, [session?.user?.id]);
   useEffect(() => { refreshFriends(); }, [session?.user?.id]);
+  // Poll every 60s while signed in so a request that arrives with the app open
+  // lights up the Friends button without a manual refresh (no realtime push for
+  // friend requests). Also re-check whenever we land back on the menu.
+  useEffect(() => {
+    if (!session?.user) return;
+    const id = setInterval(refreshFriends, 60000);
+    return () => clearInterval(id);
+  }, [session?.user?.id, refreshFriends]);
+  useEffect(() => { if (screen === "menu" && session?.user) refreshFriends(); }, [screen]);
   const onlineFriendCount = friends.filter(f => onlineIds && onlineIds.has(f.id)).length;
 
   // One-tap "invite a friend to play": queue the friend, jump into Online Play.
@@ -7685,6 +7695,7 @@ function WordFlip() {
         @keyframes xrayPulse{0%{opacity:0}18%{opacity:0.95}78%{opacity:0.95}100%{opacity:0}}
         @keyframes achIn{from{opacity:0;transform:translateY(-16px) scale(0.9)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes shopPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.09);filter:drop-shadow(0 0 6px var(--wf-accent))}}
+        @keyframes reqPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.045);filter:drop-shadow(0 0 6px #FF5E5B)}}
         @keyframes nineShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-8px)}30%{transform:translateX(7px)}45%{transform:translateX(-6px)}60%{transform:translateX(5px)}75%{transform:translateX(-3px)}90%{transform:translateX(2px)}}
         @keyframes nineWave{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-14px)}}
         @keyframes rewardPop{0%{transform:scale(0.82);box-shadow:0 0 0 transparent}45%{transform:scale(1.08);box-shadow:0 0 26px var(--wf-accent2)}72%{transform:scale(0.98)}100%{transform:scale(1);box-shadow:0 0 0 transparent}}
@@ -7796,15 +7807,19 @@ function WordFlip() {
             {(() => {
               const metaBtn = (screen, icon, label, opts={}) => (
                 <button key={screen} onClick={()=>setScreen(screen)} style={{
+                  position:"relative",
                   display:"flex", flexDirection: opts.wide?"row":"column", alignItems:"center", justifyContent:"center", gap: opts.wide?8:3,
                   background:"var(--wf-surface)", borderRadius:14, cursor:"pointer", padding:"13px 6px",
-                  border:`1.5px solid ${opts.glow?"var(--wf-accent)":"var(--wf-border)"}`,
-                  animation: opts.glow?"shopPulse 1.5s ease-in-out infinite":"none",
+                  border:`1.5px solid ${opts.alert?"#FF5E5B":opts.glow?"var(--wf-accent)":"var(--wf-border)"}`,
+                  animation: opts.alert?"reqPulse 1.5s ease-in-out infinite":opts.glow?"shopPulse 1.5s ease-in-out infinite":"none",
                   gridColumn: opts.wide?"1 / -1":"auto",
                 }}>
                   <span style={{fontSize:"1.5rem",lineHeight:1}}>{icon}</span>
-                  <span style={{fontFamily:"'JetBrains Mono',monospace", color:opts.glow?"var(--wf-accent)":"var(--wf-text-dim)", fontSize:"0.76rem", fontWeight:700}}>{label}{opts.glow?" ✨":""}</span>
+                  <span style={{fontFamily:"'JetBrains Mono',monospace", color:opts.alert?"#FF5E5B":opts.glow?"var(--wf-accent)":"var(--wf-text-dim)", fontSize:"0.76rem", fontWeight:700}}>{label}{opts.glow&&!opts.alert?" ✨":""}</span>
                   {opts.sub && <span style={{fontFamily:"'JetBrains Mono',monospace", color:"var(--wf-text-mute)", fontSize:"0.6rem"}}>{opts.sub}</span>}
+                  {opts.alert>0 && (
+                    <span aria-label={`${opts.alert} new friend request${opts.alert!==1?"s":""}`} style={{position:"absolute",top:6,right:6,minWidth:18,height:18,borderRadius:9,background:"#FF5E5B",color:"#fff",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,lineHeight:"18px",textAlign:"center",padding:"0 4px",boxShadow:"0 0 6px #FF5E5B99"}}>{opts.alert>9?"9+":opts.alert}</span>
+                  )}
                 </button>
               );
               return (
@@ -7813,7 +7828,7 @@ function WordFlip() {
                   {metaBtn("achievements","🏅","Achievements")}
                   {metaBtn("rewards","🎁","Rewards",{glow:rewardsNew})}
                   {metaBtn("inventory","🎒","Inventory")}
-                  {session && metaBtn("friends","👥","Friends",{wide:true})}
+                  {session && metaBtn("friends","👥","Friends",{wide:true, alert:incomingRequests})}
                   {session && metaBtn("shop","🛍️","Shop",{glow:shopHasNew(), wide:true})}
                 </div>
               );
