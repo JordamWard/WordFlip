@@ -4361,6 +4361,63 @@ function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged,
   );
 }
 
+// Per-round head-to-head table + running totals + lead/status. Shared by the
+// post-round summary and the tap-to-open detail on a challenge card. Opponent
+// scores are only present for rounds both have finished (server-hidden otherwise),
+// so "so far" totals compare only revealed rounds — a fair standing while waiting.
+function ChallengeBreakdown({ c, myId }) {
+  if (!c) return null;
+  const rows = c.rounds || [];
+  const revealed = rows.filter(r => r.my != null && r.their != null);
+  const myRev = revealed.reduce((s,r) => s + (r.my||0), 0);
+  const theirRev = revealed.reduce((s,r) => s + (r.their||0), 0);
+  const complete = c.status === 'complete';
+  const lead = myRev > theirRev ? 'you' : myRev < theirRev ? 'them' : 'tie';
+  const statusLine = complete
+    ? (c.is_tie ? "🤝 It's a tie — bonus for both!" : c.winner === myId ? "🏆 You won the match!" : `${c.opponent_name} won the match`)
+    : revealed.length === 0 ? `Waiting for the first head-to-head with ${c.opponent_name}…`
+    : lead === 'you' ? `You're ahead by ${(myRev-theirRev).toLocaleString()}`
+    : lead === 'them' ? `${c.opponent_name} leads by ${(theirRev-myRev).toLocaleString()}` : "Dead even so far";
+  const statusCol = complete ? (c.is_tie ? '#FFB703' : c.winner === myId ? '#00F5C4' : '#FF5E5B')
+    : lead === 'you' ? '#00F5C4' : lead === 'them' ? '#FF5E5B' : '#FFB703';
+  const cell = (v, other) => (
+    <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.82rem', fontWeight:700,
+      color: v==null ? 'var(--wf-text-mute)' : (other!=null && v>other) ? '#00F5C4' : (other!=null && v<other) ? '#7a9cc0' : '#F5EDD6'}}>
+      {v==null ? '—' : v.toLocaleString()}</span>
+  );
+  const hrow = (label, a, b, top) => (
+    <div style={{display:'grid', gridTemplateColumns:'1fr auto auto', gap:'0 18px', alignItems:'center', padding:'5px 0',
+      ...(top ? {borderTop:'1.5px solid var(--wf-border)', marginTop:6, paddingTop:8} : {})}}>{label}{a}{b}</div>
+  );
+  return (
+    <div style={{background:'var(--wf-surface)', border:'1.5px solid var(--wf-border)', borderRadius:12, padding:'12px 14px', textAlign:'left'}}>
+      {hrow(
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.62rem', letterSpacing:'0.06em'}}>ROUND</span>,
+        <span style={{textAlign:'right', fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.66rem', fontWeight:700}}>You</span>,
+        <span style={{textAlign:'right', fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.66rem', fontWeight:700, maxWidth:84, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.opponent_name}</span>
+      )}
+      <div style={{borderBottom:'1.5px solid var(--wf-border)', margin:'2px 0 4px'}} />
+      {rows.map(r => {
+        const pending = r.my != null && r.their == null;
+        return hrow(
+          <span key={'l'+r.round} style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.74rem'}}>
+            Round {r.round}{pending && <span style={{color:'#FFB703'}}> · pending</span>}
+          </span>,
+          <span key={'a'+r.round} style={{textAlign:'right'}}>{cell(r.my, r.their)}</span>,
+          <span key={'b'+r.round} style={{textAlign:'right'}}>{cell(pending ? null : r.their, r.my)}</span>
+        );
+      })}
+      {hrow(
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#F5EDD6', fontSize:'0.76rem', fontWeight:700}}>Total{!complete && revealed.length < 3 ? ' so far' : ''}</span>,
+        <span style={{textAlign:'right', fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700}}>{myRev.toLocaleString()}</span>,
+        <span style={{textAlign:'right', fontFamily:"'Fraunces',serif", color:'#F5EDD6', fontWeight:700}}>{theirRev.toLocaleString()}</span>,
+        true
+      )}
+      <div style={{marginTop:10, textAlign:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.76rem', fontWeight:700, color:statusCol}}>{statusLine}</div>
+    </div>
+  );
+}
+
 // ─── Friend Challenges (async best-of-3) ─────────────────────────────────────
 // The whole feature's hub: pending invites, your-move / waiting active duels, and
 // finished results with the winner bonus. Playing a round hands off to the
@@ -4373,6 +4430,7 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
   const [busy, setBusy] = useState(null);
   const [picking, setPicking] = useState(false);
   const [friends, setFriends] = useState([]);
+  const [detail, setDetail] = useState(null); // challenge whose per-round breakdown is open
 
   function flash(m) { setMsg(m); setTimeout(() => setMsg(null), 3000); }
   function reload() { setRetryKey(k => k + 1); if (onChanged) onChanged(); }
@@ -4455,8 +4513,8 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
   const done      = list.filter(c => c.status==="complete");
   const liveOpponentIds = new Set(list.filter(c => c.status==="pending"||c.status==="active").map(c => c.opponent_id));
 
-  const card = (children, accent) => (
-    <div style={{background:"var(--wf-surface)",borderRadius:12,border:`1.5px solid ${accent||"var(--wf-border)"}`,padding:"11px 13px",display:"flex",alignItems:"center",gap:11}}>{children}</div>
+  const card = (children, accent, onClick) => (
+    <div onClick={onClick} style={{background:"var(--wf-surface)",borderRadius:12,border:`1.5px solid ${accent||"var(--wf-border)"}`,padding:"11px 13px",display:"flex",alignItems:"center",gap:11,cursor:onClick?"pointer":"default"}}>{children}</div>
   );
   const section = (title, rows) => rows.length>0 && (
     <div style={{marginBottom:16}}>
@@ -4501,8 +4559,8 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
             <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.68rem"}}>Round {c.current_round} of 3 · your move</div>
             {pips(c.rounds)}
           </div>
-          <button onClick={()=>onPlayRound(c)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),fontSize:"0.76rem",padding:"9px 16px",flexShrink:0}}>Play ▶</button>
-        </>, "#00F5C455")))}
+          <button onClick={e=>{e.stopPropagation();onPlayRound(c);}} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),fontSize:"0.76rem",padding:"9px 16px",flexShrink:0}}>Play ▶</button>
+        </>, "#00F5C455", ()=>setDetail(c))))}
 
         {section("WAITING ON THEM", waiting.map(c => card(<>
           {avatar(c.opponent_name)}
@@ -4512,7 +4570,7 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
             {pips(c.rounds)}
           </div>
           <span style={{fontSize:"1.1rem",flexShrink:0}}>⏳</span>
-        </>)))}
+        </>, undefined, ()=>setDetail(c))))}
 
         {section("INVITES", invites.map(c => card(<>
           {avatar(c.opponent_name)}
@@ -4547,10 +4605,27 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
               <div>{totals(c)}</div>
               {pips(c.rounds)}
             </div>
-            {(iWon||tie) && <button onClick={()=>doClaim(c.id)} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
-          </>, col+"44");
+            {(iWon||tie) && <button onClick={e=>{e.stopPropagation();doClaim(c.id);}} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
+            <span style={{color:"var(--wf-text-mute)",fontSize:"0.9rem",flexShrink:0}}>›</span>
+          </>, col+"44", ()=>setDetail(c));
         }))}
       </>)}
+
+      {/* Per-round breakdown (tap any active/finished challenge) */}
+      {detail && (
+        <div onClick={e=>e.target===e.currentTarget&&setDetail(null)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
+          <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"18px",maxWidth:360,width:"100%"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.05rem",margin:0}}>⚔️ vs {detail.opponent_name}</h3>
+              <button onClick={()=>setDetail(null)} style={{...btnStyle("transparent","var(--wf-text-dim)"),border:"none",fontSize:"1rem",padding:0}}>✕</button>
+            </div>
+            <ChallengeBreakdown c={detail} myId={session.user.id} />
+            {detail.status==="active" && !detail.i_played_current && (
+              <button onClick={()=>{ const d=detail; setDetail(null); onPlayRound(d); }} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),width:"100%",marginTop:12,fontSize:"0.82rem",padding:"11px"}}>Play round {detail.current_round} ▶</button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* New-challenge friend picker */}
       {picking && (
@@ -4606,25 +4681,31 @@ function ChallengePlay({ challenge, session, refreshWallet, onExit }) {
     // Per-round payout: economically identical to a solo game (idempotent by a
     // challenge+round ref, and folds career in server-side like solo does).
     await grantEarnIfSignedIn('solo', 'ch-' + challenge.id + '-r' + challenge.round, score, refreshWallet);
-    setResult({ score, bothDone: res.bothDone }); setPhase('done');
+    // Pull the fresh challenge state so the summary can show the head-to-head.
+    let mine = null;
+    try { mine = (await listChallenges()).find(x => x.id === challenge.id) || null; } catch (e) {}
+    setResult({ score, bothDone: res.bothDone, challenge: mine }); setPhase('done');
   }
 
-  if (phase === 'done' && result) return (
-    <div style={{textAlign:'center', maxWidth:380, margin:'0 auto', animation:'menuIn 0.3s ease'}}>
-      <div style={{fontSize:'2.6rem', marginBottom:6}}>⚔️</div>
-      <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 6px'}}>Round {challenge.round} done!</h2>
-      <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontWeight:900, fontSize:'2.4rem'}}>{result.score.toLocaleString()}</div>
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', margin:'0 0 18px'}}>points vs {challenge.opponentName}</p>
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.8rem', margin:'0 0 22px', lineHeight:1.6}}>
-        {result.bothDone
-          ? (challenge.round < 3 ? `You've both finished round ${challenge.round} — the next round is ready!` : "That was the final round — see who won!")
-          : `Waiting for ${challenge.opponentName} to play round ${challenge.round}. You'll see the result once they finish.`}
-      </p>
-      <button onClick={onExit} style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), padding:'12px 28px'}}>
-        {result.bothDone ? 'See results →' : 'Back to challenges'}
-      </button>
-    </div>
-  );
+  if (phase === 'done' && result) {
+    const c = result.challenge;
+    return (
+      <div style={{textAlign:'center', maxWidth:400, margin:'0 auto', animation:'menuIn 0.3s ease'}}>
+        <div style={{fontSize:'2.4rem', marginBottom:4}}>⚔️</div>
+        <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 2px'}}>Round {challenge.round} complete</h2>
+        <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontWeight:900, fontSize:'2.2rem'}}>{result.score.toLocaleString()}</div>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.68rem', margin:'0 0 16px'}}>your points this round</p>
+        {c
+          ? <div style={{marginBottom:18}}><ChallengeBreakdown c={c} myId={session?.user?.id} /></div>
+          : <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.8rem', margin:'0 0 18px'}}>
+              {result.bothDone ? "You've both finished this round!" : `Waiting for ${challenge.opponentName} to play this round.`}
+            </p>}
+        <button onClick={onExit} style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), padding:'12px 28px'}}>
+          {c && c.status==='complete' ? 'See full results →' : result.bothDone ? 'Next round ready →' : 'Back to challenges'}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{width:'100%', animation:'menuIn 0.3s ease'}}>
