@@ -471,6 +471,65 @@ async function fetchFriendsLeaderboard(friendIds, dayKey, daily) {
   return data;
 }
 
+// ─── Friend challenges (async best-of-3) ─────────────────────────────────────
+// Server-authoritative like the friend RPCs (§24). The client sends intent only
+// (an opponent id / a challenge id / a round score); the server owns the boards,
+// the lockstep gate, reveal timing, and the winner. Each wrapper refreshes a
+// stale JWT and maps errors to friendly copy.
+
+// Challenge a friend. The server picks 3 boards from a pool of ALL_WORDS_4.length
+// (it stays word-list-agnostic; we tell it the size). Returns { ok, id } / {ok:false,msg}.
+async function createChallenge(opponentId) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false, msg:'Sign in to challenge friends.' };
+  const { data, error } = await getSB().rpc('create_challenge', { p_opponent: opponentId, p_pool: ALL_WORDS_4.length });
+  if (error) {
+    console.error('create_challenge error:', error);
+    const m = String(error.message || '');
+    if (/already exists/i.test(m)) return { ok:false, msg:'You already have a challenge going with them.' };
+    if (/not friends/i.test(m))    return { ok:false, msg:'You can only challenge friends.' };
+    if (/find the function|does not exist|schema cache|404/i.test(m)) return { ok:false, msg:'Challenges upgrade pending — one more migration to run.' };
+    return { ok:false, msg:'Could not start the challenge — try again.' };
+  }
+  return { ok:true, id:(data && data.id) };
+}
+
+async function respondChallenge(id, accept) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false };
+  const { error } = await getSB().rpc('respond_challenge', { p_challenge: id, p_accept: !!accept });
+  if (error) { console.error('respond_challenge error:', error); return { ok:false }; }
+  return { ok:true };
+}
+
+// Submit my score for the current round. Returns { ok, bothDone }.
+async function submitChallengeRound(id, round, score, turns, elapsed, blocks) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false };
+  const { data, error } = await getSB().rpc('submit_challenge_round', {
+    p_challenge: id, p_round: round, p_score: score, p_turns: turns, p_elapsed: elapsed, p_blocks: blocks });
+  if (error) { console.error('submit_challenge_round error:', error); return { ok:false }; }
+  return { ok:true, bothDone:!!(data && data.both_done) };
+}
+
+// One call → array of challenge objects (see §24 list_challenges).
+async function listChallenges() {
+  const s = await ensureFreshSession();
+  if (!s?.user) return [];
+  const { data, error } = await getSB().rpc('list_challenges');
+  if (error) { console.error('list_challenges error:', error); return []; }
+  return data || [];
+}
+
+// Claim the flat winner bonus (winner, or both on a tie). Idempotent server-side.
+async function claimChallengeBonus(id) {
+  const s = await ensureFreshSession();
+  if (!s?.user) return { ok:false };
+  const { data, error } = await getSB().rpc('claim_challenge_bonus', { p_challenge: id });
+  if (error) { console.error('claim_challenge_bonus error:', error); return { ok:false }; }
+  return { ok:true, granted:!!(data && data.granted), amount:(data && data.amount) || 0, balance:(data && data.balance) };
+}
+
 // Pull the account's inventory into the local cache (wf_inv_*) so power-ups
 // follow the account across browsers/devices. Read-only: it mirrors the
 // account inventory DOWN to the device. It deliberately does NOT import local
@@ -4027,7 +4086,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
 // Mirrors LeaderboardView's layout (maxWidth:440 card, tab row, 28px/1fr/auto
 // row grid) so it reads as part of the same family. All writes go through the
 // server RPCs wrapped above; one listFriends() call feeds every tab.
-function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged }) {
+function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged, onChallenges, challengeAlerts }) {
   const [tab, setTab] = useState("friends"); // friends | requests | add
   const [data, setData] = useState({ friends:[], incoming:[], outgoing:[] });
   const [loading, setLoading] = useState(false);
@@ -4170,6 +4229,20 @@ function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged 
         ))}
       </div>
 
+      {/* Challenges entry — the async best-of-3 hub lives one tap away. */}
+      {onChallenges && (
+        <button onClick={onChallenges} style={{width:"100%",marginBottom:16,padding:"11px 14px",borderRadius:10,cursor:"pointer",
+          background:"linear-gradient(135deg,#9B5DE51a,#00F5C41a)",border:"1.5px solid #9B5DE555",
+          display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:"1.1rem"}}>⚔️</span>
+          <span style={{flex:1,textAlign:"left",fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700}}>Challenges <span style={{color:"var(--wf-text-mute)",fontWeight:400}}>· best of 3</span></span>
+          {challengeAlerts>0 && (
+            <span style={{minWidth:18,height:18,borderRadius:9,background:"#FF5E5B",color:"#fff",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.62rem",fontWeight:700,lineHeight:"18px",textAlign:"center",padding:"0 4px"}}>{challengeAlerts>9?"9+":challengeAlerts}</span>
+          )}
+          <span style={{color:"#9B5DE5",fontSize:"1rem"}}>→</span>
+        </button>
+      )}
+
       {loading ? (
         <div style={{textAlign:"center",padding:"32px 0"}}>
           <div style={{fontSize:"1.5rem",marginBottom:8}}>...</div>
@@ -4284,6 +4357,284 @@ function FriendsScreen({ onBack, session, onSignIn, onlineIds, onFriendsChanged 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Friend Challenges (async best-of-3) ─────────────────────────────────────
+// The whole feature's hub: pending invites, your-move / waiting active duels, and
+// finished results with the winner bonus. Playing a round hands off to the
+// challenge-play screen (onPlayRound); everything else is one listChallenges call.
+function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, refreshWallet }) {
+  const [items, setItems] = useState(null);   // null = loading
+  const [error, setError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [picking, setPicking] = useState(false);
+  const [friends, setFriends] = useState([]);
+
+  function flash(m) { setMsg(m); setTimeout(() => setMsg(null), 3000); }
+  function reload() { setRetryKey(k => k + 1); if (onChanged) onChanged(); }
+
+  useEffect(() => {
+    if (!session?.user) return;
+    let cancelled = false;
+    setError(false);
+    listChallenges().then(d => { if (!cancelled) setItems(d); }).catch(() => { if (!cancelled) { setItems([]); setError(true); } });
+    return () => { cancelled = true; };
+  }, [session?.user?.id, retryKey]);
+
+  async function openPicker() {
+    setPicking(true);
+    const d = await listFriends();
+    setFriends(d.friends || []);
+  }
+  async function doChallenge(friend) {
+    setBusy(friend.id);
+    const res = await createChallenge(friend.id);
+    setBusy(null);
+    if (!res.ok) { flash(res.msg); return; }
+    setPicking(false); flash(`Challenge sent to ${friend.username} ⚔️`); reload();
+  }
+  async function doRespond(id, accept) {
+    setBusy(id);
+    await respondChallenge(id, accept);
+    setBusy(null);
+    flash(accept ? "Challenge accepted — round 1 awaits!" : "Challenge declined");
+    reload();
+  }
+  async function doClaim(id) {
+    setBusy(id);
+    const res = await claimChallengeBonus(id);
+    setBusy(null);
+    if (res.ok && res.granted) { flash(`🪙 +${res.amount} winner bonus!`); if (refreshWallet) refreshWallet(); }
+    else flash("Bonus already claimed.");
+  }
+
+  const avatar = (name) => (
+    <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#9B5DE5,#FFB703)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:"0.85rem",fontWeight:700,color:"#0a2e24",flexShrink:0}}>
+      {(name||"?")[0].toUpperCase()}
+    </div>
+  );
+  // Compact per-round pip row: green=you led, red=they led, grey=hidden/unplayed.
+  const pips = (rounds) => (
+    <div style={{display:"flex",gap:4,marginTop:3}}>
+      {rounds.map(r => {
+        const both = r.my!=null && r.their!=null;
+        // green = you led, red = they led, gold = round tie; muted blue = you've
+        // played but it's not revealed yet; dark = round not played.
+        const col = both ? (r.my>r.their?"#00F5C4":r.my<r.their?"#FF5E5B":"#FFB703") : (r.my!=null?"#5a7da0":"#1e3048");
+        return <span key={r.round} title={`R${r.round}`} style={{width:14,height:6,borderRadius:3,background:col}} />;
+      })}
+    </div>
+  );
+  const totals = (c) => (
+    <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.7rem",color:"var(--wf-text-mute)"}}>
+      You <strong style={{color:"#F5EDD6"}}>{c.my_total}</strong> · {c.opponent_name} <strong style={{color:"#F5EDD6"}}>{c.their_total}</strong>
+    </span>
+  );
+
+  if (!session?.user) {
+    return (
+      <div style={{maxWidth:440,margin:"0 auto"}}>
+        <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:16,fontSize:"0.8rem"}}>← Back</button>
+        <div onClick={onSignIn} style={{margin:"24px 0",padding:"18px",borderRadius:12,cursor:"pointer",textAlign:"center",background:"linear-gradient(135deg,#9B5DE515,#FFB70315)",border:"1.5px solid #9B5DE544"}}>
+          <div style={{fontSize:"2rem",marginBottom:8}}>⚔️</div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent2)",fontSize:"0.82rem",margin:0,lineHeight:1.6}}>Sign in to challenge friends to a best-of-3.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const list = items || [];
+  const invites   = list.filter(c => c.status==="pending" && c.role==="opponent");
+  const sent      = list.filter(c => c.status==="pending" && c.role==="challenger");
+  const yourMove  = list.filter(c => c.status==="active" && !c.i_played_current);
+  const waiting   = list.filter(c => c.status==="active" &&  c.i_played_current);
+  const done      = list.filter(c => c.status==="complete");
+  const liveOpponentIds = new Set(list.filter(c => c.status==="pending"||c.status==="active").map(c => c.opponent_id));
+
+  const card = (children, accent) => (
+    <div style={{background:"var(--wf-surface)",borderRadius:12,border:`1.5px solid ${accent||"var(--wf-border)"}`,padding:"11px 13px",display:"flex",alignItems:"center",gap:11}}>{children}</div>
+  );
+  const section = (title, rows) => rows.length>0 && (
+    <div style={{marginBottom:16}}>
+      <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.66rem",letterSpacing:"0.08em",margin:"0 0 7px"}}>{title}</div>
+      <div style={{display:"flex",flexDirection:"column",gap:7}}>{rows}</div>
+    </div>
+  );
+
+  return (
+    <div style={{maxWidth:440,margin:"0 auto"}}>
+      <button onClick={onBack} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),marginBottom:14,fontSize:"0.8rem"}}>← Back</button>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+        <h2 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.4rem",margin:0}}>⚔️ Challenges</h2>
+        <button onClick={openPicker} style={{...btnStyle("#9B5DE5","#fff"),fontSize:"0.76rem",padding:"8px 14px"}}>＋ New</button>
+      </div>
+      <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem",margin:"0 0 16px",lineHeight:1.5}}>
+        Best of 3 · same boards · play on your own time · most total points wins.
+      </p>
+
+      {msg && (
+        <div style={{marginBottom:12,padding:"9px 14px",borderRadius:10,textAlign:"center",background:"linear-gradient(135deg,#12253a,#0a1520)",border:"1.5px solid var(--wf-accent2)",fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.76rem"}}>{msg}</div>
+      )}
+
+      {items===null ? (
+        <div style={{textAlign:"center",padding:"32px 0"}}><p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.8rem"}}>Loading…</p></div>
+      ) : error ? (
+        <div style={{textAlign:"center",padding:"32px 0"}}>
+          <div style={{fontSize:"1.5rem",marginBottom:8}}>⚠️</div>
+          <button onClick={()=>setRetryKey(k=>k+1)} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.75rem"}}>Retry</button>
+        </div>
+      ) : list.length===0 ? (
+        <div style={{textAlign:"center",padding:"28px 0"}}>
+          <div style={{fontSize:"2.4rem",marginBottom:10}}>⚔️</div>
+          <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.82rem",lineHeight:1.6,marginBottom:14}}>No challenges yet.<br/>Challenge a friend to a best-of-3!</p>
+          <button onClick={openPicker} style={{...btnStyle("#9B5DE5","#fff"),fontSize:"0.8rem"}}>＋ New challenge</button>
+        </div>
+      ) : (<>
+        {section("YOUR MOVE", yourMove.map(c => card(<>
+          {avatar(c.opponent_name)}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700}}>{c.opponent_name}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-accent)",fontSize:"0.68rem"}}>Round {c.current_round} of 3 · your move</div>
+            {pips(c.rounds)}
+          </div>
+          <button onClick={()=>onPlayRound(c)} style={{...btnStyle("linear-gradient(90deg,#00c49f,#00F5C4)","#0a2e24"),fontSize:"0.76rem",padding:"9px 16px",flexShrink:0}}>Play ▶</button>
+        </>, "#00F5C455")))}
+
+        {section("WAITING ON THEM", waiting.map(c => card(<>
+          {avatar(c.opponent_name)}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700}}>{c.opponent_name}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem"}}>Round {c.current_round} · waiting for {c.opponent_name}</div>
+            {pips(c.rounds)}
+          </div>
+          <span style={{fontSize:"1.1rem",flexShrink:0}}>⏳</span>
+        </>)))}
+
+        {section("INVITES", invites.map(c => card(<>
+          {avatar(c.opponent_name)}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700}}>{c.opponent_name}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem"}}>challenged you to a best-of-3</div>
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            <button onClick={()=>doRespond(c.id,true)} disabled={busy===c.id} style={{...btnStyle("var(--wf-accent)","#0a2e24"),fontSize:"0.72rem",padding:"7px 12px"}}>Accept</button>
+            <button onClick={()=>doRespond(c.id,false)} disabled={busy===c.id} style={{...btnStyle("var(--wf-border)","var(--wf-text-dim)"),fontSize:"0.72rem",padding:"7px 12px"}}>✕</button>
+          </div>
+        </>, "#9B5DE555")))}
+
+        {section("SENT", sent.map(c => card(<>
+          {avatar(c.opponent_name)}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.82rem",fontWeight:700}}>{c.opponent_name}</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem"}}>waiting for them to accept…</div>
+          </div>
+          <span style={{fontSize:"1.1rem",flexShrink:0}}>✉️</span>
+        </>)))}
+
+        {section("COMPLETED", done.map(c => {
+          const iWon = c.winner === session.user.id;
+          const tie  = c.is_tie;
+          const label = tie ? "Tie!" : iWon ? "You won! 🏆" : `${c.opponent_name} won`;
+          const col = tie ? "#FFB703" : iWon ? "#00F5C4" : "#FF5E5B";
+          return card(<>
+            {avatar(c.opponent_name)}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:"'JetBrains Mono',monospace",color:col,fontSize:"0.82rem",fontWeight:700}}>{label}</div>
+              <div>{totals(c)}</div>
+              {pips(c.rounds)}
+            </div>
+            {(iWon||tie) && <button onClick={()=>doClaim(c.id)} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
+          </>, col+"44");
+        }))}
+      </>)}
+
+      {/* New-challenge friend picker */}
+      {picking && (
+        <div onClick={e=>e.target===e.currentTarget&&setPicking(false)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
+          <div style={{background:"#0e1a2a",borderRadius:16,border:"1.5px solid var(--wf-border)",padding:"18px",maxWidth:340,width:"100%",maxHeight:"70vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{fontFamily:"'Fraunces',serif",color:"#F5EDD6",fontSize:"1.05rem",margin:0}}>Challenge a friend</h3>
+              <button onClick={()=>setPicking(false)} style={{...btnStyle("transparent","var(--wf-text-dim)"),border:"none",fontSize:"1rem",padding:0}}>✕</button>
+            </div>
+            {friends.length===0 ? (
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.76rem",textAlign:"center",padding:"16px 0",lineHeight:1.6}}>No friends yet.<br/>Add some from the Friends screen first.</p>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {friends.map(f => {
+                  const live = liveOpponentIds.has(f.id);
+                  return (
+                    <div key={f.id} style={{display:"flex",alignItems:"center",gap:9,background:"var(--wf-surface)",borderRadius:10,border:"1.5px solid var(--wf-border)",padding:"7px 11px"}}>
+                      {avatar(f.username)}
+                      <span style={{flex:1,fontFamily:"'JetBrains Mono',monospace",color:"#F5EDD6",fontSize:"0.8rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.username}</span>
+                      {live
+                        ? <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.66rem"}}>In progress</span>
+                        : <button onClick={()=>doChallenge(f)} disabled={busy===f.id} style={{...btnStyle("#9B5DE5","#fff"),fontSize:"0.7rem",padding:"6px 12px"}}>{busy===f.id?"…":"Challenge"}</button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Play one challenge round. Reuses GameBoard with the SHARED seeded board
+// (buildTilesSeeded(words, quad) → byte-identical for both players) and the daily
+// 16-guess cap, but WITHOUT isDaily so it never touches the daily's saved progress.
+// On finish it submits the score and pays the round like a solo game.
+function ChallengePlay({ challenge, session, refreshWallet, onExit }) {
+  const words = React.useMemo(() => ALL_WORDS_4[challenge.quad % ALL_WORDS_4.length], [challenge.quad]);
+  const fixed = React.useMemo(() => buildTilesSeeded(words, challenge.quad), [challenge.quad]);
+  const [phase, setPhase] = useState('play'); // play | submitting | done
+  const [result, setResult] = useState(null);
+  const doneRef = useRef(false);
+
+  async function handleWin(r) {
+    if (doneRef.current) return; doneRef.current = true;
+    const wr = r.words.map((_,i) => r.wordResults?.[i] || (r.outOfTurns ? "missed" : "yellow"));
+    const score = scoreCalc(r.elapsed, wr, r.turns, r.bonusPts||0, r.helpsUsed||0);
+    const blocks = r.words.map((_,i) => { const x=r.wordResults?.[i]; return x==="green"?"🟩":x==="yellow"?"🟨":"🟥"; }).join("");
+    setPhase('submitting');
+    const res = await submitChallengeRound(challenge.id, challenge.round, score, r.turns, r.elapsed, blocks);
+    // Per-round payout: economically identical to a solo game (idempotent by a
+    // challenge+round ref, and folds career in server-side like solo does).
+    await grantEarnIfSignedIn('solo', 'ch-' + challenge.id + '-r' + challenge.round, score, refreshWallet);
+    setResult({ score, bothDone: res.bothDone }); setPhase('done');
+  }
+
+  if (phase === 'done' && result) return (
+    <div style={{textAlign:'center', maxWidth:380, margin:'0 auto', animation:'menuIn 0.3s ease'}}>
+      <div style={{fontSize:'2.6rem', marginBottom:6}}>⚔️</div>
+      <h2 style={{fontFamily:"'Fraunces',serif", color:'#F5EDD6', margin:'0 0 6px'}}>Round {challenge.round} done!</h2>
+      <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontWeight:900, fontSize:'2.4rem'}}>{result.score.toLocaleString()}</div>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', margin:'0 0 18px'}}>points vs {challenge.opponentName}</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.8rem', margin:'0 0 22px', lineHeight:1.6}}>
+        {result.bothDone
+          ? (challenge.round < 3 ? `You've both finished round ${challenge.round} — the next round is ready!` : "That was the final round — see who won!")
+          : `Waiting for ${challenge.opponentName} to play round ${challenge.round}. You'll see the result once they finish.`}
+      </p>
+      <button onClick={onExit} style={{...btnStyle('linear-gradient(90deg,#00c49f,#00F5C4)','#0a2e24'), padding:'12px 28px'}}>
+        {result.bothDone ? 'See results →' : 'Back to challenges'}
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{width:'100%', animation:'menuIn 0.3s ease'}}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', maxWidth:480, margin:'0 auto 12px'}}>
+        <button onClick={onExit} style={{...btnStyle('var(--wf-border)','var(--wf-text-dim)'), fontSize:'0.78rem'}}>← Exit</button>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#9B5DE5', fontSize:'0.82rem', fontWeight:700}}>⚔️ vs {challenge.opponentName} · R{challenge.round}/3</span>
+      </div>
+      {phase==='submitting'
+        ? <p style={{textAlign:'center', fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', padding:'32px 0'}}>Submitting…</p>
+        : <GameBoard words={words} fixedTiles={fixed} maxTurns={MAX_GUESSES} timeLimit={null} onWin={handleWin} />}
     </div>
   );
 }
@@ -5555,7 +5906,7 @@ function SoloSetup({ onBack, onStart }) {
 }
 
 // ─── Multi Setup ──────────────────────────────────────────────────────────────
-function MultiSetup({ onBack, onLocal, onOnline, session, onlineIds, friends, onInviteFriend, onFriends }) {
+function MultiSetup({ onBack, onLocal, onOnline, session, onlineIds, friends, onInviteFriend, onFriends, onChallenges, challengeAlerts }) {
   const online = (friends || []).filter(f => onlineIds && onlineIds.has(f.id));
   return (
     <div style={{width:"100%",maxWidth:360,margin:"0 auto",animation:"menuIn 0.3s ease"}}>
@@ -5609,6 +5960,21 @@ function MultiSetup({ onBack, onLocal, onOnline, session, onlineIds, friends, on
             </p>
           )}
         </div>
+      )}
+
+      {/* Async best-of-3 challenge — a different beast from live play, so it's a
+          signpost to its own screen rather than a mode here. */}
+      {session?.user && onChallenges && (
+        <button onClick={onChallenges} style={{marginTop:12, width:'100%', background:'var(--wf-surface)', border:'2px solid #9B5DE566', borderRadius:12, padding:'14px 18px', cursor:'pointer', display:'flex', alignItems:'center', gap:14, textAlign:'left', position:'relative'}}>
+          <span style={{fontSize:'1.6rem', lineHeight:1}}>⚔️</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Fraunces',serif", fontWeight:700, color:'#F5EDD6', fontSize:'1rem'}}>Challenge a friend</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', marginTop:2}}>Best of 3 · same boards · play on your own time</div>
+          </div>
+          {challengeAlerts>0
+            ? <span style={{minWidth:20,height:20,borderRadius:10,background:'#FF5E5B',color:'#fff',fontFamily:"'JetBrains Mono',monospace",fontSize:'0.66rem',fontWeight:700,lineHeight:'20px',textAlign:'center',padding:'0 5px'}}>{challengeAlerts>9?'9+':challengeAlerts}</span>
+            : <span style={{color:'#9B5DE5', fontSize:'0.8rem'}}>→</span>}
+        </button>
       )}
     </div>
   );
@@ -7493,6 +7859,33 @@ function WordFlip() {
   useEffect(() => { if (screen === "menu" && session?.user) refreshFriends(); }, [screen]);
   const onlineFriendCount = friends.filter(f => onlineIds && onlineIds.has(f.id)).length;
 
+  // Challenge to-dos → pulse the Friends button + badge the Challenges entries.
+  // "Needs me" = a pending invite sent TO me, or an active round it's my move on.
+  const [challengeAlerts, setChallengeAlerts] = useState(0);
+  const refreshChallengeAlerts = useCallback(() => {
+    if (!session?.user) { setChallengeAlerts(0); return; }
+    listChallenges().then(cs => setChallengeAlerts(
+      (cs || []).filter(c =>
+        (c.status === 'pending' && c.role === 'opponent') ||
+        (c.status === 'active'  && !c.i_played_current)
+      ).length
+    )).catch(() => {});
+  }, [session?.user?.id]);
+  useEffect(() => { refreshChallengeAlerts(); }, [session?.user?.id]);
+  useEffect(() => {
+    if (!session?.user) return;
+    const id = setInterval(refreshChallengeAlerts, 60000);
+    return () => clearInterval(id);
+  }, [session?.user?.id, refreshChallengeAlerts]);
+  useEffect(() => { if (screen === "menu" && session?.user) refreshChallengeAlerts(); }, [screen]);
+
+  // Playing a challenge round: stash the round context, jump to the play screen.
+  const [activeChallenge, setActiveChallenge] = useState(null);
+  function onPlayRound(c) {
+    setActiveChallenge({ id: c.id, round: c.current_round, quad: c.current_quad, opponentName: c.opponent_name });
+    setScreen("challenge-play");
+  }
+
   // One-tap "invite a friend to play": queue the friend, jump into Online Play.
   // OnlineScreen auto-creates a room (if a name is saved) and fires the invite
   // once the room exists; otherwise the friend is invited after the host creates.
@@ -7872,7 +8265,7 @@ function WordFlip() {
                   {metaBtn("achievements","🏅","Achievements")}
                   {metaBtn("rewards","🎁","Rewards",{glow:rewardsNew})}
                   {metaBtn("inventory","🎒","Inventory")}
-                  {session && metaBtn("friends","👥","Friends",{wide:true, alert:incomingRequests})}
+                  {session && metaBtn("friends","👥","Friends",{wide:true, alert:incomingRequests+challengeAlerts})}
                   {session && metaBtn("shop","🛍️","Shop",{glow:shopHasNew(), wide:true})}
                 </div>
               );
@@ -7894,7 +8287,7 @@ function WordFlip() {
       {screen==="tutorial"&&<TutorialBoard onExit={()=>setScreen("menu")} />}
 
       {screen==="solo-setup"&&<SoloSetup onBack={()=>setScreen("menu")} onStart={(l)=>startSolo(l)} />}
-      {screen==="multi-setup"&&<MultiSetup onBack={()=>setScreen("menu")} onLocal={()=>setScreen("multi-local")} onOnline={()=>setScreen("multi-online")} session={session} onlineIds={onlineIds} friends={friends} onInviteFriend={inviteFriendToPlay} onFriends={()=>setScreen("friends")} />}
+      {screen==="multi-setup"&&<MultiSetup onBack={()=>setScreen("menu")} onLocal={()=>setScreen("multi-local")} onOnline={()=>setScreen("multi-online")} session={session} onlineIds={onlineIds} friends={friends} onInviteFriend={inviteFriendToPlay} onFriends={()=>setScreen("friends")} onChallenges={()=>setScreen("challenges")} challengeAlerts={challengeAlerts} />}
 
       {screen==="solo"&&soloWords&&(
         <div style={{width:"100%",animation:"menuIn 0.3s ease"}}>
@@ -7952,7 +8345,9 @@ function WordFlip() {
       {screen==="multi-local"&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><LocalMultiScreen onBack={()=>setScreen("multi-setup")} refreshWallet={refreshWallet} onAchievements={showAchievements} /></div>}
       {screen==="multi-online"&&<div style={{animation:"menuIn 0.3s ease"}}><OnlineScreen key={"online-"+(invitedRoom||"")+"-"+(autoInvite?.id||"")} onBack={()=>{setInvitedRoom(null);setAutoInvite(null);setScreen("multi-setup");}} refreshWallet={refreshWallet} onAchievements={showAchievements} session={session} profile={profile} onlineIds={onlineIds} sendInvite={sendInvite} initialRoomCode={invitedRoom} autoInviteFriend={autoInvite} /></div>}
       {screen==="leaderboard"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><LeaderboardView onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onAchievements={showAchievements} onFriends={()=>setScreen("friends")} /></div>}
-      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} onFriendsChanged={refreshFriends} /></div>}
+      {screen==="friends"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><FriendsScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onlineIds={onlineIds} onFriendsChanged={refreshFriends} onChallenges={()=>setScreen("challenges")} challengeAlerts={challengeAlerts} /></div>}
+      {screen==="challenges"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><ChallengesScreen onBack={()=>setScreen("menu")} session={session} onSignIn={()=>setScreen("auth")} onPlayRound={onPlayRound} onChanged={refreshChallengeAlerts} refreshWallet={refreshWallet} /></div>}
+      {screen==="challenge-play"&&activeChallenge&&<div style={{width:"100%",animation:"menuIn 0.3s ease"}}><ChallengePlay challenge={activeChallenge} session={session} refreshWallet={refreshWallet} onExit={()=>{ setActiveChallenge(null); refreshChallengeAlerts(); setScreen("challenges"); }} /></div>}
       {screen==="achievements"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><AchievementsScreen onBack={()=>setScreen("menu")} /></div>}
       {screen==="rewards"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><RewardsScreen onBack={()=>{setScreen("menu");setRewardsJustEarned(null);}} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} justEarned={rewardsJustEarned} /></div>}
       {screen==="inventory"&&<div style={{width:"100%",maxWidth:440,animation:"menuIn 0.3s ease"}}><InventoryScreen onBack={()=>setScreen("menu")} career={career} activeThemeId={activeThemeId} activeTileBackId={activeTileBackId} ownedThemes={ownedThemes} ownedTileBacks={ownedTileBacks} onApplyTheme={applyTheme} onApplyTileBack={applyTileBack} onShop={()=>setScreen("shop")} /></div>}

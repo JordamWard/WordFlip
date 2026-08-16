@@ -1241,3 +1241,242 @@ END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.list_friends() FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.list_friends() TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- §24  FRIEND CHALLENGES (async best-of-3)                            2026-08-14
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Two accepted friends play the SAME three 4-word boards, each on their own time.
+-- LOCKSTEP: round N+1 unlocks only once BOTH have submitted round N. After 3
+-- rounds the higher TOTAL score wins; an exact tie pays both the winner bonus.
+-- Server-authoritative like §20/§22: RLS is read-only for the two participants;
+-- every write goes through a SECURITY DEFINER RPC (REVOKE FROM PUBLIC / GRANT
+-- authenticated). Boards are shared by storing three ALL_WORDS_4 indices ("quads")
+-- picked server-side at creation; the client renders ALL_WORDS_4[quad] so both
+-- players get identical words. Only the CURRENT round's quad is ever exposed (via
+-- list_challenges), so neither player can study future boards ahead of the other.
+
+CREATE TABLE IF NOT EXISTS public.challenges (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  challenger    uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  opponent      uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  status        text NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','active','complete','declined','cancelled')),
+  quads         integer[] NOT NULL,          -- 3 board indices into ALL_WORDS_4
+  current_round integer NOT NULL DEFAULT 1 CHECK (current_round BETWEEN 1 AND 3),
+  winner        uuid,                          -- set on complete; NULL on tie
+  is_tie        boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT challenges_distinct_players CHECK (challenger <> opponent)
+);
+CREATE INDEX IF NOT EXISTS challenges_challenger_idx ON public.challenges (challenger);
+CREATE INDEX IF NOT EXISTS challenges_opponent_idx   ON public.challenges (opponent);
+-- At most ONE live (pending/active) challenge per unordered pair.
+CREATE UNIQUE INDEX IF NOT EXISTS challenges_one_live_per_pair
+  ON public.challenges (LEAST(challenger,opponent), GREATEST(challenger,opponent))
+  WHERE status IN ('pending','active');
+
+CREATE TABLE IF NOT EXISTS public.challenge_scores (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  challenge_id uuid NOT NULL REFERENCES public.challenges(id) ON DELETE CASCADE,
+  user_id      uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  round        integer NOT NULL CHECK (round BETWEEN 1 AND 3),
+  score        integer NOT NULL CHECK (score >= 0),
+  turns        integer,
+  elapsed      integer,
+  blocks       text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT challenge_scores_one_per_round UNIQUE (challenge_id, user_id, round)
+);
+CREATE INDEX IF NOT EXISTS challenge_scores_cid_idx ON public.challenge_scores (challenge_id);
+
+ALTER TABLE public.challenges       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.challenge_scores ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "read own challenges" ON public.challenges;
+CREATE POLICY "read own challenges" ON public.challenges FOR SELECT
+  USING (auth.uid() = challenger OR auth.uid() = opponent);
+DROP POLICY IF EXISTS "read own challenge_scores" ON public.challenge_scores;
+CREATE POLICY "read own challenge_scores" ON public.challenge_scores FOR SELECT
+  USING (EXISTS (SELECT 1 FROM public.challenges c WHERE c.id = challenge_id
+                 AND (auth.uid() = c.challenger OR auth.uid() = c.opponent)));
+
+-- Flat winner bonus (coins, no career). Small; only claim_challenge_bonus grants
+-- it, and only to the verified winner (or both, on a tie) — so it's not farmable.
+INSERT INTO public.earn_rules (event, flat, rate, max_score) VALUES ('challenge_win', 50, 0, NULL)
+  ON CONFLICT (event) DO NOTHING;
+
+-- create_challenge(p_opponent, p_pool): p_pool = ALL_WORDS_4.length (client knows
+-- it; server stays word-list-agnostic). Picks 3 distinct board indices in
+-- [0,p_pool). Requires an accepted friendship and no existing live challenge.
+CREATE OR REPLACE FUNCTION public.create_challenge(p_opponent uuid, p_pool integer)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_uid uuid := auth.uid(); v_quads integer[]; v_id uuid;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  IF p_opponent IS NULL OR p_opponent = v_uid THEN RAISE EXCEPTION 'invalid opponent'; END IF;
+  IF p_pool IS NULL OR p_pool < 3 THEN RAISE EXCEPTION 'invalid pool'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.friendships f
+        WHERE f.status='accepted'
+          AND f.user_low  = LEAST(v_uid, p_opponent)
+          AND f.user_high = GREATEST(v_uid, p_opponent)) THEN
+    RAISE EXCEPTION 'not friends';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.challenges c
+        WHERE c.status IN ('pending','active')
+          AND LEAST(c.challenger,c.opponent)  = LEAST(v_uid, p_opponent)
+          AND GREATEST(c.challenger,c.opponent)= GREATEST(v_uid, p_opponent)) THEN
+    RAISE EXCEPTION 'challenge already exists';
+  END IF;
+  SELECT (array_agg(g ORDER BY random()))[1:3] INTO v_quads FROM generate_series(0, p_pool-1) g;
+  INSERT INTO public.challenges (challenger, opponent, status, quads)
+    VALUES (v_uid, p_opponent, 'pending', v_quads) RETURNING id INTO v_id;
+  RETURN jsonb_build_object('id', v_id, 'status', 'pending');
+END; $$;
+REVOKE EXECUTE ON FUNCTION public.create_challenge(uuid, integer) FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.create_challenge(uuid, integer) TO authenticated;
+
+-- respond_challenge(p_challenge, p_accept): opponent accepts (→active) or declines.
+CREATE OR REPLACE FUNCTION public.respond_challenge(p_challenge uuid, p_accept boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_uid uuid := auth.uid(); v_rows int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  UPDATE public.challenges
+     SET status = CASE WHEN p_accept THEN 'active' ELSE 'declined' END, updated_at = now()
+   WHERE id = p_challenge AND opponent = v_uid AND status = 'pending';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN RAISE EXCEPTION 'no pending challenge'; END IF;
+  RETURN jsonb_build_object('status', CASE WHEN p_accept THEN 'active' ELSE 'declined' END);
+END; $$;
+REVOKE EXECUTE ON FUNCTION public.respond_challenge(uuid, boolean) FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.respond_challenge(uuid, boolean) TO authenticated;
+
+-- submit_challenge_round: record my score for the CURRENT round (lockstep-gated),
+-- one attempt only. When both have submitted, advance the round or, at round 3,
+-- complete the challenge and compute the winner by total score. Score is clamped
+-- to the 4-word maximum (3000) so a forged value can't run away.
+CREATE OR REPLACE FUNCTION public.submit_challenge_round(
+  p_challenge uuid, p_round integer, p_score integer,
+  p_turns integer DEFAULT NULL, p_elapsed integer DEFAULT NULL, p_blocks text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_c   public.challenges%ROWTYPE;
+  v_rows int; v_cnt int; v_both boolean := false;
+  v_ta int; v_tb int; v_score int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  SELECT * INTO v_c FROM public.challenges WHERE id = p_challenge FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'challenge not found'; END IF;
+  IF v_uid <> v_c.challenger AND v_uid <> v_c.opponent THEN RAISE EXCEPTION 'not a participant'; END IF;
+  IF v_c.status <> 'active' THEN RAISE EXCEPTION 'challenge not active'; END IF;
+  IF p_round <> v_c.current_round THEN RAISE EXCEPTION 'wrong round'; END IF;
+
+  v_score := LEAST(GREATEST(COALESCE(p_score,0),0), 3000);
+  INSERT INTO public.challenge_scores (challenge_id, user_id, round, score, turns, elapsed, blocks)
+    VALUES (p_challenge, v_uid, p_round, v_score, p_turns, p_elapsed, p_blocks)
+    ON CONFLICT (challenge_id, user_id, round) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN RAISE EXCEPTION 'already played this round'; END IF;
+
+  SELECT count(*) INTO v_cnt FROM public.challenge_scores WHERE challenge_id = p_challenge AND round = p_round;
+  IF v_cnt >= 2 THEN
+    v_both := true;
+    IF v_c.current_round < 3 THEN
+      UPDATE public.challenges SET current_round = current_round + 1, updated_at = now() WHERE id = p_challenge;
+    ELSE
+      SELECT COALESCE(sum(score),0) INTO v_ta FROM public.challenge_scores WHERE challenge_id = p_challenge AND user_id = v_c.challenger;
+      SELECT COALESCE(sum(score),0) INTO v_tb FROM public.challenge_scores WHERE challenge_id = p_challenge AND user_id = v_c.opponent;
+      UPDATE public.challenges
+         SET status = 'complete',
+             winner = CASE WHEN v_ta > v_tb THEN v_c.challenger WHEN v_tb > v_ta THEN v_c.opponent ELSE NULL END,
+             is_tie = (v_ta = v_tb), updated_at = now()
+       WHERE id = p_challenge;
+    END IF;
+  END IF;
+  RETURN jsonb_build_object('both_done', v_both, 'round', p_round);
+END; $$;
+REVOKE EXECUTE ON FUNCTION public.submit_challenge_round(uuid, integer, integer, integer, integer, text) FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.submit_challenge_round(uuid, integer, integer, integer, integer, text) TO authenticated;
+
+-- list_challenges(): one call for the whole Challenges screen. Returns a jsonb
+-- array; each object carries opponent name, current_round, whether I've played it,
+-- ONLY the current round's quad (if it's my move), a per-round [my, their] score
+-- array (their score revealed only for rounds both have finished), running totals,
+-- and winner/tie once complete.
+CREATE OR REPLACE FUNCTION public.list_challenges()
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_out jsonb := '[]'::jsonb;
+  c RECORD; v_opp uuid; v_oppname text; v_role text;
+  v_reveal int; v_iplayed boolean; v_curquad int;
+  v_rounds jsonb; rr int; v_my int; v_their int; v_mytot int; v_theirtot int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  FOR c IN
+    SELECT * FROM public.challenges
+     WHERE (challenger = v_uid OR opponent = v_uid)
+       AND status IN ('pending','active','complete')
+     ORDER BY updated_at DESC
+  LOOP
+    IF c.challenger = v_uid THEN v_role := 'challenger'; v_opp := c.opponent;
+    ELSE v_role := 'opponent'; v_opp := c.challenger; END IF;
+    SELECT username INTO v_oppname FROM public.profiles WHERE id = v_opp;
+    v_reveal := CASE WHEN c.status = 'complete' THEN 3 ELSE c.current_round - 1 END;
+    SELECT EXISTS(SELECT 1 FROM public.challenge_scores s
+                   WHERE s.challenge_id = c.id AND s.user_id = v_uid AND s.round = c.current_round)
+      INTO v_iplayed;
+    v_curquad := CASE WHEN c.status = 'active' AND NOT v_iplayed THEN c.quads[c.current_round] ELSE NULL END;
+    v_rounds := '[]'::jsonb; v_mytot := 0; v_theirtot := 0;
+    FOR rr IN 1..3 LOOP
+      v_my := NULL; v_their := NULL;
+      SELECT score INTO v_my    FROM public.challenge_scores WHERE challenge_id = c.id AND user_id = v_uid AND round = rr;
+      SELECT score INTO v_their FROM public.challenge_scores WHERE challenge_id = c.id AND user_id = v_opp AND round = rr;
+      IF rr > v_reveal THEN v_their := NULL; END IF;
+      IF v_my    IS NOT NULL THEN v_mytot    := v_mytot + v_my; END IF;
+      IF v_their IS NOT NULL THEN v_theirtot := v_theirtot + v_their; END IF;
+      v_rounds := v_rounds || jsonb_build_object('round', rr, 'my', v_my, 'their', v_their);
+    END LOOP;
+    v_out := v_out || jsonb_build_object(
+      'id', c.id, 'status', c.status, 'role', v_role,
+      'opponent_id', v_opp, 'opponent_name', v_oppname,
+      'current_round', c.current_round, 'current_quad', v_curquad,
+      'i_played_current', v_iplayed, 'rounds', v_rounds,
+      'my_total', v_mytot, 'their_total', v_theirtot,
+      'winner', c.winner, 'is_tie', c.is_tie);
+  END LOOP;
+  RETURN v_out;
+END; $$;
+REVOKE EXECUTE ON FUNCTION public.list_challenges() FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.list_challenges() TO authenticated;
+
+-- claim_challenge_bonus(p_challenge): pay the flat winner bonus to the verified
+-- winner (or both players on a tie), once, idempotent by reason 'ch-<id>-win'.
+CREATE OR REPLACE FUNCTION public.claim_challenge_bonus(p_challenge uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid uuid := auth.uid(); v_c public.challenges%ROWTYPE;
+  v_flat int; v_reason text; v_rows int; v_bal int;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
+  SELECT * INTO v_c FROM public.challenges WHERE id = p_challenge;
+  IF NOT FOUND THEN RAISE EXCEPTION 'challenge not found'; END IF;
+  IF v_uid <> v_c.challenger AND v_uid <> v_c.opponent THEN RAISE EXCEPTION 'not a participant'; END IF;
+  IF v_c.status <> 'complete' THEN RAISE EXCEPTION 'not complete'; END IF;
+  IF NOT (v_c.is_tie OR v_c.winner = v_uid) THEN RAISE EXCEPTION 'no bonus'; END IF;
+  SELECT flat INTO v_flat FROM public.earn_rules WHERE event = 'challenge_win';
+  v_flat := COALESCE(v_flat, 0);
+  v_reason := 'ch-' || p_challenge::text || '-win';
+  INSERT INTO public.token_transactions (user_id, amount, reason)
+    VALUES (v_uid, v_flat, v_reason) ON CONFLICT (user_id, reason) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows > 0 AND v_flat > 0 THEN
+    INSERT INTO public.wallets (user_id, balance) VALUES (v_uid, v_flat)
+      ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + v_flat, updated_at = now();
+  END IF;
+  SELECT COALESCE(balance,0) INTO v_bal FROM public.wallets WHERE user_id = v_uid;
+  RETURN jsonb_build_object('balance', COALESCE(v_bal,0), 'granted', (v_rows > 0), 'amount', v_flat);
+END; $$;
+REVOKE EXECUTE ON FUNCTION public.claim_challenge_bonus(uuid) FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.claim_challenge_bonus(uuid) TO authenticated;
