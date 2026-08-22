@@ -1336,12 +1336,26 @@ function dateKey() {
 // A once-a-day bonus after the Daily: unscramble one hidden 9-letter word from a
 // 3×3 grid of its letters. Pays a small flat reward (idempotent, once per day).
 const NINE_REWARD = 40;
+// Each is exactly 9 letters (one hidden word per day, unscrambled from a 3×3
+// grid). Keep this list well ABOVE 31 entries: getDailyNine() walks it by an
+// index that steps +1 per day, so a list shorter than the longest month makes
+// the last days of a 31-day month repeat that month's opening words. Common,
+// recognizable words only — the grid gives no letter hints, so obscure words
+// aren't fun to unscramble. Add freely; just keep every entry 9 letters.
 const NINE_WORDS = [
   "ADVENTURE","ASTRONAUT","BEAUTIFUL","BLUEBERRY","BREAKFAST","BUTTERFLY",
   "CARPENTER","CHEMISTRY","CHOCOLATE","CHRISTMAS","CROCODILE","DANGEROUS",
   "DISCOVERY","EDUCATION","FANTASTIC","FIREWORKS","HAPPINESS","KNOWLEDGE",
   "LANDSCAPE","NEWSPAPER","ORCHESTRA","PINEAPPLE","SUNFLOWER","TELEPHONE",
   "VEGETABLE","WATERFALL","WONDERFUL","XYLOPHONE",
+  // Added to lift variety past a calendar month and cut down on repeats.
+  "AMBULANCE","APARTMENT","BLACKBIRD","BOOKSHELF","CARDBOARD","CELEBRATE",
+  "CHALLENGE","CORNBREAD","CROSSWORD","DELICIOUS","DETECTIVE","DINOSAURS",
+  "DUMPLINGS","EVERGREEN","FURNITURE","GLADIATOR","GOLDFINCH","HAMBURGER",
+  "HURRICANE","IMPORTANT","JELLYFISH","MECHANICS","MOONLIGHT","MOUNTAINS",
+  "NIGHTMARE","OPERATION","PARACHUTE","PATCHWORK","RASPBERRY","SAXOPHONE",
+  "SCARECROW","SNOWFLAKE","SPACESHIP","SUBMARINE","TOOTHACHE","TREEHOUSE",
+  "VOLCANOES",
 ];
 // Deterministic by date — everyone gets the same word each day.
 function getDailyNine() {
@@ -4466,8 +4480,13 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
     setBusy(id);
     const res = await claimChallengeBonus(id);
     setBusy(null);
-    if (res.ok && res.granted) { flash(`🪙 +${res.amount} winner bonus!`); if (refreshWallet) refreshWallet(); }
+    if (!res.ok) { flash("Couldn't claim — try again."); return; }
+    if (res.granted) { flash(`🪙 +${res.amount} winner bonus!`); if (refreshWallet) refreshWallet(); }
     else flash("Bonus already claimed.");
+    // Whether we just claimed it or it was already claimed, retire the button so
+    // it doesn't invite a second (no-op) tap. Optimistic — the server flag
+    // (bonus_claimed) makes this stick across reloads too.
+    setItems(cur => cur ? cur.map(c => c.id===id ? {...c, bonus_claimed:true} : c) : cur);
   }
 
   const avatar = (name) => (
@@ -4605,7 +4624,7 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
               <div>{totals(c)}</div>
               {pips(c.rounds)}
             </div>
-            {(iWon||tie) && <button onClick={e=>{e.stopPropagation();doClaim(c.id);}} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
+            {(iWon||tie) && !c.bonus_claimed && <button onClick={e=>{e.stopPropagation();doClaim(c.id);}} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
             <span style={{color:"var(--wf-text-mute)",fontSize:"0.9rem",flexShrink:0}}>›</span>
           </>, col+"44", ()=>setDetail(c));
         }))}
