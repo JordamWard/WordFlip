@@ -324,6 +324,11 @@ async function grantEarnIfSignedIn(event, ref, score, refreshWallet) {
 // Keyed to today's date (same pattern as _done/_best) so it resets at midnight.
 const DAILY_HELP_LIMIT = 3;
 
+// Friend-challenge help budget: 3 combined uses PER ROUND. Unlike the daily this
+// isn't date-keyed — each challenge round is a fresh GameBoard, so the cap is
+// enforced per-instance (helpLimit prop) and resets naturally every round.
+const CHALLENGE_HELP_LIMIT = 3;
+
 // ─── Scoring dials ───────────────────────────────────────────────────────────
 // You start the Daily with MAX_GUESSES. Four words need four of them, so 12 are
 // SPARE — and every spare guess you hand back is worth SPARE_GUESS_PTS. That's
@@ -2760,7 +2765,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
 }
 
 // ─── Game Board ───────────────────────────────────────────────────────────────
-function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved, gridRef }) {
+function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpLimit, fixedTiles, allowedTileIds, onTileFlipped, onGuessResolved, gridRef }) {
   const cols = words.length===4?4:6;
   // Resume an in-progress daily so leaving mid-game continues instead of restarting.
   const savedProg = isDaily ? getDailyProgress() : null;
@@ -2917,15 +2922,22 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
     unlock();
   }
 
-  // Daily challenge allows DAILY_HELP_LIMIT combined helps per day; solo is unlimited.
+  // Daily allows DAILY_HELP_LIMIT combined helps per day (date-keyed). Challenge
+  // rounds pass a per-round helpLimit, capped per GameBoard instance via the
+  // reactive gameHelpsUsed counter. Solo passes neither → unlimited.
   const [dailyHelpsUsed, setDailyHelpsUsed] = useState(() => isDaily ? getDailyHelps() : 0);
-  const helpsLeft = isDaily ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed) : Infinity;
+  const [gameHelpsUsed, setGameHelpsUsed] = useState(() => savedProg ? (savedProg.helpsUsed || 0) : 0);
+  const helpsLeft = isDaily
+    ? Math.max(0, DAILY_HELP_LIMIT - dailyHelpsUsed)
+    : (helpLimit != null ? Math.max(0, helpLimit - gameHelpsUsed) : Infinity);
 
   // Every power-up use funnels through here: bumps the per-game count (feeds the
-  // HELP_PENALTY at scoring time) and, on the daily, the date-keyed budget that
-  // enforces DAILY_HELP_LIMIT and clears the 🧠 "no hints" badge.
+  // HELP_PENALTY at scoring time and the per-round challenge cap) and, on the
+  // daily, the date-keyed budget that enforces DAILY_HELP_LIMIT and clears the
+  // 🧠 "no hints" badge.
   function countHelp() {
     helpsUsedRef.current += 1;
+    setGameHelpsUsed(n => n + 1);
     if (isDaily) setDailyHelpsUsed(addDailyHelps(1));
   }
 
@@ -3194,7 +3206,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, fixed
                 ↩️ ×{invUndo}
               </button>
             )}
-            {isDaily&&(
+            {Number.isFinite(helpsLeft)&&(
               <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.6rem",color:helpsLeft>0?"var(--wf-text-mute)":"#FF5E5B"}}>
                 {helpsLeft>0?`${helpsLeft} left`:"limit reached"}
               </span>
@@ -4785,7 +4797,7 @@ function ChallengePlay({ challenge, session, refreshWallet, onExit }) {
       </div>
       {phase==='submitting'
         ? <p style={{textAlign:'center', fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', padding:'32px 0'}}>Submitting…</p>
-        : <GameBoard words={words} fixedTiles={fixed} maxTurns={MAX_GUESSES} timeLimit={null} onWin={handleWin} />}
+        : <GameBoard words={words} fixedTiles={fixed} maxTurns={MAX_GUESSES} timeLimit={null} helpLimit={CHALLENGE_HELP_LIMIT} onWin={handleWin} />}
     </div>
   );
 }
