@@ -1279,6 +1279,24 @@ const ALL_WORDS_9 = [
   ["BOAT","OARS","SAIL","WAKE","WAVE","FOAM","ROPE","DECK","MAST"],
   ["CAVE","PEAK","SNOW","MELT","ROCK","MOSS","FERN","GLEN","RILL"],
   ["DAWN","MORN","PINK","ROSY","DUSK","HAZE","GLOW","STAR","HALO"],
+  // More boards so multiplayer + solo-large draw from a deeper pool (with only
+  // 9 boards a random pick repeated fast — felt like the words "never changed").
+  // Each board is 9 distinct 4-letter words; keep it that way when adding more.
+  ["NAIL","SAWS","VICE","FILE","BOLT","RASP","PICK","AWLS","HOOK"],  // TOOLS
+  ["RAIN","SNOW","HAIL","WIND","MIST","GALE","HAZE","COLD","WARM"],  // WEATHER
+  ["HAND","FOOT","HEAD","NOSE","CHIN","HAIR","KNEE","SHIN","LIPS"],  // BODY
+  ["RICE","MEAT","CORN","BEAN","SOUP","CAKE","EGGS","FISH","MILK"],  // FOOD
+  ["SODA","BEER","WINE","COLA","MEAD","BREW","PORT","GROG","FIZZ"],  // DRINKS
+  ["LION","BEAR","WOLF","DEER","GOAT","LAMB","FROG","TOAD","HARE"],  // ANIMALS
+  ["CROW","DOVE","HAWK","SWAN","WREN","OWLS","KIWI","IBIS","LARK"],  // BIRDS
+  ["CRAB","CLAM","SEAL","TUNA","BASS","CARP","EELS","SOLE","ORCA"],  // SEA LIFE
+  ["BLUE","PINK","GRAY","GOLD","TEAL","RUBY","JADE","ROSE","LIME"],  // COLORS
+  ["OAKS","PINE","ELMS","TEAK","PALM","FIRS","PLUM","PEAR","SLOE"],  // TREES
+  ["FORK","BOWL","DISH","PANS","CUPS","OVEN","MUGS","LIDS","WOKS"],  // KITCHEN
+  ["COAT","SOCK","BELT","VEST","SUIT","CAPE","BOOT","GOWN","ROBE"],  // CLOTHES
+  ["DOOR","SINK","LAMP","SOFA","DESK","BEDS","RUGS","VASE","CRIB"],  // HOME
+  ["JUMP","WALK","RUNS","SWIM","LEAP","SKIP","DIVE","KICK","SPIN"],  // ACTIONS
+  ["DRUM","HORN","BELL","HARP","LUTE","GONG","REED","TUBA","OBOE"],  // MUSIC
 ];
 
 // Daily rotation walks ALL_WORDS_4 by index (see getDailyWords below), and that
@@ -4844,9 +4862,9 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
   const [inOrderMap,setInOrderMap] = useState({});
   const [currentPlayer,setCurrentPlayer] = useState(0);
   const [gameOver,setGameOver] = useState(false);
-  const [words] = useState(()=>pickRandom(ALL_WORDS_9));
+  const [words,setWords] = useState(()=>pickRandom(ALL_WORDS_9));
   const [foundWords,setFoundWords] = useState([]);
-  const [tiles] = useState(()=>buildTiles(words));
+  const [tiles,setTiles] = useState(()=>buildTiles(words));
   const [flipped,setFlipped] = useState([]);
   const [error,setError] = useState([]);
   const [flash,setFlash] = useState(null);
@@ -4899,7 +4917,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
           ))}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-          <button onClick={()=>{ setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); setPuUsedArr({}); }} style={btnStyle("var(--wf-accent)","#0a2e24")}>Rematch</button>
+          <button onClick={()=>{ const nw=pickRandom(ALL_WORDS_9); setWords(nw); setTiles(buildTiles(nw)); setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); setPuUsedArr({}); }} style={btnStyle("var(--wf-accent)","#0a2e24")}>Rematch</button>
           <button onClick={onBack} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
         </div>
       </div>
