@@ -1279,6 +1279,24 @@ const ALL_WORDS_9 = [
   ["BOAT","OARS","SAIL","WAKE","WAVE","FOAM","ROPE","DECK","MAST"],
   ["CAVE","PEAK","SNOW","MELT","ROCK","MOSS","FERN","GLEN","RILL"],
   ["DAWN","MORN","PINK","ROSY","DUSK","HAZE","GLOW","STAR","HALO"],
+  // More boards so multiplayer + solo-large draw from a deeper pool (with only
+  // 9 boards a random pick repeated fast — felt like the words "never changed").
+  // Each board is 9 distinct 4-letter words; keep it that way when adding more.
+  ["NAIL","SAWS","VICE","FILE","BOLT","RASP","PICK","AWLS","HOOK"],  // TOOLS
+  ["RAIN","SNOW","HAIL","WIND","MIST","GALE","HAZE","COLD","WARM"],  // WEATHER
+  ["HAND","FOOT","HEAD","NOSE","CHIN","HAIR","KNEE","SHIN","LIPS"],  // BODY
+  ["RICE","MEAT","CORN","BEAN","SOUP","CAKE","EGGS","FISH","MILK"],  // FOOD
+  ["SODA","BEER","WINE","COLA","MEAD","BREW","PORT","GROG","FIZZ"],  // DRINKS
+  ["LION","BEAR","WOLF","DEER","GOAT","LAMB","FROG","TOAD","HARE"],  // ANIMALS
+  ["CROW","DOVE","HAWK","SWAN","WREN","OWLS","KIWI","IBIS","LARK"],  // BIRDS
+  ["CRAB","CLAM","SEAL","TUNA","BASS","CARP","EELS","SOLE","ORCA"],  // SEA LIFE
+  ["BLUE","PINK","GRAY","GOLD","TEAL","RUBY","JADE","ROSE","LIME"],  // COLORS
+  ["OAKS","PINE","ELMS","TEAK","PALM","FIRS","PLUM","PEAR","SLOE"],  // TREES
+  ["FORK","BOWL","DISH","PANS","CUPS","OVEN","MUGS","LIDS","WOKS"],  // KITCHEN
+  ["COAT","SOCK","BELT","VEST","SUIT","CAPE","BOOT","GOWN","ROBE"],  // CLOTHES
+  ["DOOR","SINK","LAMP","SOFA","DESK","BEDS","RUGS","VASE","CRIB"],  // HOME
+  ["JUMP","WALK","RUNS","SWIM","LEAP","SKIP","DIVE","KICK","SPIN"],  // ACTIONS
+  ["DRUM","HORN","BELL","HARP","LUTE","GONG","REED","TUBA","OBOE"],  // MUSIC
 ];
 
 // Daily rotation walks ALL_WORDS_4 by index (see getDailyWords below), and that
@@ -1336,12 +1354,26 @@ function dateKey() {
 // A once-a-day bonus after the Daily: unscramble one hidden 9-letter word from a
 // 3×3 grid of its letters. Pays a small flat reward (idempotent, once per day).
 const NINE_REWARD = 40;
+// Each is exactly 9 letters (one hidden word per day, unscrambled from a 3×3
+// grid). Keep this list well ABOVE 31 entries: getDailyNine() walks it by an
+// index that steps +1 per day, so a list shorter than the longest month makes
+// the last days of a 31-day month repeat that month's opening words. Common,
+// recognizable words only — the grid gives no letter hints, so obscure words
+// aren't fun to unscramble. Add freely; just keep every entry 9 letters.
 const NINE_WORDS = [
   "ADVENTURE","ASTRONAUT","BEAUTIFUL","BLUEBERRY","BREAKFAST","BUTTERFLY",
   "CARPENTER","CHEMISTRY","CHOCOLATE","CHRISTMAS","CROCODILE","DANGEROUS",
   "DISCOVERY","EDUCATION","FANTASTIC","FIREWORKS","HAPPINESS","KNOWLEDGE",
   "LANDSCAPE","NEWSPAPER","ORCHESTRA","PINEAPPLE","SUNFLOWER","TELEPHONE",
   "VEGETABLE","WATERFALL","WONDERFUL","XYLOPHONE",
+  // Added to lift variety past a calendar month and cut down on repeats.
+  "AMBULANCE","APARTMENT","BLACKBIRD","BOOKSHELF","CARDBOARD","CELEBRATE",
+  "CHALLENGE","CORNBREAD","CROSSWORD","DELICIOUS","DETECTIVE","DINOSAURS",
+  "DUMPLINGS","EVERGREEN","FURNITURE","GLADIATOR","GOLDFINCH","HAMBURGER",
+  "HURRICANE","IMPORTANT","JELLYFISH","MECHANICS","MOONLIGHT","MOUNTAINS",
+  "NIGHTMARE","OPERATION","PARACHUTE","PATCHWORK","RASPBERRY","SAXOPHONE",
+  "SCARECROW","SNOWFLAKE","SPACESHIP","SUBMARINE","TOOTHACHE","TREEHOUSE",
+  "VOLCANOES",
 ];
 // Deterministic by date — everyone gets the same word each day.
 function getDailyNine() {
@@ -4466,8 +4498,13 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
     setBusy(id);
     const res = await claimChallengeBonus(id);
     setBusy(null);
-    if (res.ok && res.granted) { flash(`🪙 +${res.amount} winner bonus!`); if (refreshWallet) refreshWallet(); }
+    if (!res.ok) { flash("Couldn't claim — try again."); return; }
+    if (res.granted) { flash(`🪙 +${res.amount} winner bonus!`); if (refreshWallet) refreshWallet(); }
     else flash("Bonus already claimed.");
+    // Whether we just claimed it or it was already claimed, retire the button so
+    // it doesn't invite a second (no-op) tap. Optimistic — the server flag
+    // (bonus_claimed) makes this stick across reloads too.
+    setItems(cur => cur ? cur.map(c => c.id===id ? {...c, bonus_claimed:true} : c) : cur);
   }
 
   const avatar = (name) => (
@@ -4605,7 +4642,7 @@ function ChallengesScreen({ onBack, session, onSignIn, onPlayRound, onChanged, r
               <div>{totals(c)}</div>
               {pips(c.rounds)}
             </div>
-            {(iWon||tie) && <button onClick={e=>{e.stopPropagation();doClaim(c.id);}} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
+            {(iWon||tie) && !c.bonus_claimed && <button onClick={e=>{e.stopPropagation();doClaim(c.id);}} disabled={busy===c.id} style={{...btnStyle("#FFB703","#0D1B2A"),fontSize:"0.68rem",padding:"7px 11px",flexShrink:0}}>🪙 Bonus</button>}
             <span style={{color:"var(--wf-text-mute)",fontSize:"0.9rem",flexShrink:0}}>›</span>
           </>, col+"44", ()=>setDetail(c));
         }))}
@@ -4825,9 +4862,9 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
   const [inOrderMap,setInOrderMap] = useState({});
   const [currentPlayer,setCurrentPlayer] = useState(0);
   const [gameOver,setGameOver] = useState(false);
-  const [words] = useState(()=>pickRandom(ALL_WORDS_9));
+  const [words,setWords] = useState(()=>pickRandom(ALL_WORDS_9));
   const [foundWords,setFoundWords] = useState([]);
-  const [tiles] = useState(()=>buildTiles(words));
+  const [tiles,setTiles] = useState(()=>buildTiles(words));
   const [flipped,setFlipped] = useState([]);
   const [error,setError] = useState([]);
   const [flash,setFlash] = useState(null);
@@ -4880,7 +4917,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
           ))}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-          <button onClick={()=>{ setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); setPuUsedArr({}); }} style={btnStyle("var(--wf-accent)","#0a2e24")}>Rematch</button>
+          <button onClick={()=>{ const nw=pickRandom(ALL_WORDS_9); setWords(nw); setTiles(buildTiles(nw)); setGameOver(false); setStarted(false); setFoundWords([]); setFoundTileIdsMulti(new Set()); setFlipped([]); setScores(Array(playerCount).fill(0)); setCurrentPlayer(0); setTurns(0); setPuUsedArr({}); }} style={btnStyle("var(--wf-accent)","#0a2e24")}>Rematch</button>
           <button onClick={onBack} style={btnStyle("var(--wf-border)","#F5EDD6")}>Menu</button>
         </div>
       </div>

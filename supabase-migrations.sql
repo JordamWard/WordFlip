@@ -1403,14 +1403,15 @@ GRANT  EXECUTE ON FUNCTION public.submit_challenge_round(uuid, integer, integer,
 -- array; each object carries opponent name, current_round, whether I've played it,
 -- ONLY the current round's quad (if it's my move), a per-round [my, their] score
 -- array (their score revealed only for rounds both have finished), running totals,
--- and winner/tie once complete.
+-- winner/tie once complete, and whether I've already claimed the winner bonus
+-- (bonus_claimed — lets the client hide the 🪙 Bonus button after it's claimed).
 CREATE OR REPLACE FUNCTION public.list_challenges()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_uid uuid := auth.uid();
   v_out jsonb := '[]'::jsonb;
   c RECORD; v_opp uuid; v_oppname text; v_role text;
-  v_reveal int; v_iplayed boolean; v_curquad int;
+  v_reveal int; v_iplayed boolean; v_curquad int; v_claimed boolean;
   v_rounds jsonb; rr int; v_my int; v_their int; v_mytot int; v_theirtot int;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;
@@ -1428,6 +1429,12 @@ BEGIN
                    WHERE s.challenge_id = c.id AND s.user_id = v_uid AND s.round = c.current_round)
       INTO v_iplayed;
     v_curquad := CASE WHEN c.status = 'active' AND NOT v_iplayed THEN c.quads[c.current_round] ELSE NULL END;
+    -- Has THIS user already claimed the winner bonus for this challenge? The
+    -- claim is recorded in token_transactions under reason 'ch-<id>-win' (see
+    -- claim_challenge_bonus). The client uses this to retire the 🪙 Bonus button.
+    SELECT EXISTS(SELECT 1 FROM public.token_transactions t
+                   WHERE t.user_id = v_uid AND t.reason = 'ch-' || c.id::text || '-win')
+      INTO v_claimed;
     v_rounds := '[]'::jsonb; v_mytot := 0; v_theirtot := 0;
     FOR rr IN 1..3 LOOP
       v_my := NULL; v_their := NULL;
@@ -1444,7 +1451,7 @@ BEGIN
       'current_round', c.current_round, 'current_quad', v_curquad,
       'i_played_current', v_iplayed, 'rounds', v_rounds,
       'my_total', v_mytot, 'their_total', v_theirtot,
-      'winner', c.winner, 'is_tie', c.is_tie);
+      'winner', c.winner, 'is_tie', c.is_tie, 'bonus_claimed', v_claimed);
   END LOOP;
   RETURN v_out;
 END; $$;
