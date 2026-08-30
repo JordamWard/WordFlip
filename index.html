@@ -1881,6 +1881,20 @@ const THEMES = [
           green:{bg:'linear-gradient(135deg,#34d399,#6ee7b7)',border:'#6ee7b7',text:'#04160c'},
           yellow:{bg:'linear-gradient(135deg,#e0b020,#ffd75e)',border:'#ffd75e',text:'#2a1c00'},
           face:{bg:'#dfe4f5',border:'#a0a8cc',text:'#040410'}, error:{bg:'#ff6b6b',text:'#fff'} } },
+  // Premium themes — pricier, higher-effort palettes. Lava = molten volcanic rock;
+  // its (very long) name is the longest word in English, a volcanic-dust lung disease.
+  { id:'lava', name:'Pneumonoultramicroscopicsilicovolcanoconiosis', price:2000, bg:'linear-gradient(160deg,#1c0a05 0%,#0c0402 100%)', title:'linear-gradient(90deg,#ff8c1a,#ff2d0a)', swatch:['#1c0a05','#ff8c1a','#ff3d1a'],
+    pal:{ back:{bg:'linear-gradient(135deg,#2a1008 0%,#150602 100%)',border:'#6a2810',dot:'#4a1c0a'},
+          sel:{bg:'linear-gradient(135deg,#ff7a1a,#ffa54d)',border:'#ff7a1a',text:'#2a0d00'},
+          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#ffb703,#ffd23f)',border:'#ffd23f',text:'#2a1c00'},
+          face:{bg:'#f5e2d8',border:'#c9a294',text:'#150602'}, error:{bg:'#ff2e1a',text:'#fff'} } },
+  { id:'gold', name:'Gold', price:5000, bg:'linear-gradient(160deg,#1a1608 0%,#0c0a02 100%)', title:'linear-gradient(90deg,#ffe066,#d4af37)', swatch:['#1a1608','#ffd700','#d4af37'],
+    pal:{ back:{bg:'linear-gradient(135deg,#2a2410 0%,#151206 100%)',border:'#6a5a1e',dot:'#4a3d14'},
+          sel:{bg:'linear-gradient(135deg,#ffd700,#ffe680)',border:'#ffd700',text:'#2a2000'},
+          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#d4af37,#f0d060)',border:'#f0d060',text:'#2a2000'},
+          face:{bg:'#f5efda',border:'#c9bd8e',text:'#151206'}, error:{bg:'#ff5e5b',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
 
@@ -1906,6 +1920,8 @@ const THEME_CHROME = {
   electric:  { top:'#050a2e', surface:'#08102e', border:'#1e3aaa', accent:'#5b86ff', accent2:'#ff5e6e', textDim:'#8fa0d8', textMute:'#4d5d90' },
   ruby:      { top:'#2a0512', surface:'#1e0510', border:'#5a1830', accent:'#ff7aa0', accent2:'#ffb0c4', textDim:'#c898a8', textMute:'#7a5060' },
   galaxy:    { top:'#08081e', surface:'#0a0a20', border:'#242452', accent:'#8fd0fc', accent2:'#c4a2ff', textDim:'#9098c4', textMute:'#4d5080' },
+  lava:      { top:'#1c0a05', surface:'#180804', border:'#6a2810', accent:'#ff8c1a', accent2:'#ff3d1a', textDim:'#c49a86', textMute:'#7a5548' },
+  gold:      { top:'#1a1608', surface:'#16120a', border:'#6a5a1e', accent:'#ffd700', accent2:'#e0b84a', textDim:'#c4b488', textMute:'#7a6d48' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
@@ -1952,6 +1968,9 @@ const TILE_BACKS = [
   { id:'firecracker', name:'Firecracker', price:450, bg:'linear-gradient(135deg,#d40a2a,#7a0518)', dot:'#ffd23f', symbol:'★', symbolColor:'#ffd23f' },
   { id:'vaporwave', name:'Vaporwave',  price:450, bg:'linear-gradient(135deg,#ff2e97,#7a2eff)', dot:'#00f0ff', symbol:'▲', symbolColor:'#00f0ff' },
   { id:'neonpulse', name:'Neon Pulse', price:400, bg:'linear-gradient(135deg,#1a0026,#0a0012)', dot:'#3a0f3a', symbol:'◆', symbolColor:'#39ff14' }, // companion to the Neon theme
+  // Premium — companions to the Lava & Gold themes. Priced to match their themes.
+  { id:'lava',     name:'Pneumonoultramicroscopicsilicovolcanoconiosis', price:2000, bg:'linear-gradient(135deg,#c41e0a,#5a0d04)', dot:'#ffb03f', symbol:'♨', symbolColor:'#ffd23f' }, // Lava theme
+  { id:'gold',     name:'Gold',       price:5000, bg:'linear-gradient(135deg,#a8851e,#4a3a0a)', dot:'#ffe680', symbol:'❖', symbolColor:'#ffd700' }, // Gold theme
   // Theme companions — each mirrors an earnable theme's palette (its dark
   // gradient + accent) so the face-down card belongs to that theme. Reward-only
   // (price 0, not in FREE_TILEBACKS → unlocked via the Rewards ladder, not sold).
