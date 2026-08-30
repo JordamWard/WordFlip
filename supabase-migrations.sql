@@ -712,10 +712,11 @@ INSERT INTO public.item_prices (kind, item_id, price) VALUES
   ('powerup','hint',100), ('powerup','xray',80), ('powerup','megahint',300),
   ('powerup','undo',40),  ('powerup','freeze',100),
   ('theme','firecracker',750), ('theme','electric',700), ('theme','ruby',500), ('theme','galaxy',550),
+  ('theme','lava',2000), ('theme','gold',5000),
   ('tileback','ruby',200), ('tileback','emerald',200), ('tileback','amethyst',200),
   ('tileback','tangerine',200), ('tileback','galaxy',250), ('tileback','rosegold',250),
   ('tileback','electric',400), ('tileback','neon',400), ('tileback','firecracker',450),
-  ('tileback','neonpulse',400)
+  ('tileback','neonpulse',400), ('tileback','lava',2000), ('tileback','gold',5000)
 ON CONFLICT (kind, item_id) DO UPDATE SET price = EXCLUDED.price, updated_at = now();
 
 --    amount = flat + floor(rate * score).  max_score = per-completion ceiling
