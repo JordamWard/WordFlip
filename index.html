@@ -1976,7 +1976,7 @@ const TILE_BACKS = [
   { id:'neonpulse', name:'Neon Pulse', price:400, bg:'linear-gradient(135deg,#1a0026,#0a0012)', dot:'#3a0f3a', symbol:'◆', symbolColor:'#39ff14' }, // companion to the Neon theme
   // Premium — companions to the Lava & Gold themes. Priced to match their themes.
   { id:'lava',     name:'Pneumonoultramicroscopicsilicovolcanoconiosis', price:2000, bg:'radial-gradient(circle at 50% 42%, #ff9522 0%, #ff4a12 28%, #c41e0a 52%, #6a1206 78%, #3a0a04 100%)', dot:'#ffcf6a', symbol:'♨', symbolColor:'#ffe08a' }, // Lava theme
-  { id:'gold',     name:'Gold',       price:5000, bg:'linear-gradient(135deg,#a8851e,#4a3a0a)', dot:'#ffe680', symbol:'❖', symbolColor:'#ffd700' }, // Gold theme
+  { id:'gold',     name:'Gold',       price:5000, bg:'radial-gradient(circle at 50% 42%, #e6bf52 0%, #c69a30 45%, #8a6414 100%)', dot:'#6e5010', symbol:'❖', symbolColor:'#5a3f08' }, // Gold theme — rich gold to match
   // Theme companions — each mirrors an earnable theme's palette (its dark
   // gradient + accent) so the face-down card belongs to that theme. Reward-only
   // (price 0, not in FREE_TILEBACKS → unlocked via the Rewards ladder, not sold).
@@ -7345,8 +7345,8 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[1]}} />
                     <span style={{width:9, height:9, borderRadius:'50%', background:t.swatch[2]}} />
                   </div>                </div>
-                <div style={{flex:1, textAlign:'left'}}>
-                  <span style={{fontFamily:"'Fraunces',serif", color:'var(--wf-heading)', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+                <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                  <span style={{fontFamily:"'Fraunces',serif", color:'var(--wf-heading)', fontWeight:700, fontSize:'1.02rem', overflowWrap:'anywhere', wordBreak:'break-word', display:'block'}}>{t.name}</span>
                 </div>
                 {active
                   ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
@@ -7370,8 +7370,8 @@ function InventoryScreen({ onBack, activeThemeId, activeTileBackId, ownedThemes,
                   backgroundImage:`radial-gradient(circle at 30% 30%, ${prev.dot} 1px, transparent 1px),radial-gradient(circle at 70% 70%, ${prev.dot} 1px, transparent 1px),${prev.bg}`,
                   backgroundSize:'10px 10px, 10px 10px, 100% 100%'}}>
                   <span style={{color:prev.symbolColor, fontSize:'1.2rem', fontWeight:900}}>{prev.symbol}</span>                </div>
-                <div style={{flex:1, textAlign:'left'}}>
-                  <span style={{fontFamily:"'Fraunces',serif", color:'var(--wf-heading)', fontWeight:700, fontSize:'1.02rem'}}>{t.name}</span>
+                <div style={{flex:1, textAlign:'left', minWidth:0}}>
+                  <span style={{fontFamily:"'Fraunces',serif", color:'var(--wf-heading)', fontWeight:700, fontSize:'1.02rem', overflowWrap:'anywhere', wordBreak:'break-word', display:'block'}}>{t.name}</span>
                 </div>
                 {active
                   ? <span style={{fontFamily:"'JetBrains Mono',monospace", fontSize:'0.75rem', fontWeight:700, color:'var(--wf-accent)', padding:'8px 12px', flexShrink:0}}>✓ Active</span>
