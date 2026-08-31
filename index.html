@@ -1889,12 +1889,15 @@ const THEMES = [
           green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
           yellow:{bg:'linear-gradient(135deg,#ffb703,#ffd23f)',border:'#ffd23f',text:'#2a1c00'},
           face:{bg:'#f5e2d8',border:'#c9a294',text:'#150602'}, error:{bg:'#ff2e1a',text:'#fff'} } },
-  { id:'gold', name:'Gold', price:5000, bg:'linear-gradient(160deg,#1a1608 0%,#0c0a02 100%)', title:'linear-gradient(90deg,#ffe066,#d4af37)', swatch:['#1a1608','#ffd700','#d4af37'],
-    pal:{ back:{bg:'linear-gradient(135deg,#2a2410 0%,#151206 100%)',border:'#6a5a1e',dot:'#4a3d14'},
-          sel:{bg:'linear-gradient(135deg,#ffd700,#ffe680)',border:'#ffd700',text:'#2a2000'},
-          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#6ed9b0',text:'#04160c'},
-          yellow:{bg:'linear-gradient(135deg,#d4af37,#f0d060)',border:'#f0d060',text:'#2a2000'},
-          face:{bg:'#f5efda',border:'#c9bd8e',text:'#151206'}, error:{bg:'#ff5e5b',text:'#fff'} } },
+  // Gold is inverted vs the other themes: a bright rich-gold field with dark
+  // bronze tiles/title as the "darker accents" (cards stay dark bronze so the
+  // app's cream text — hardcoded for dark surfaces — stays readable).
+  { id:'gold', name:'Gold', price:5000, bg:'radial-gradient(circle at 50% 28%, #fbe08a 0%, #ecc451 38%, #cf9f2c 72%, #b8860b 100%)', title:'linear-gradient(90deg,#3a2606,#5e4210)', swatch:['#e6bd45','#3a2606','#8a6512'],
+    pal:{ back:{bg:'linear-gradient(135deg,#5a4110,#2e2006)',border:'#1e1503',dot:'#8a6512'},
+          sel:{bg:'linear-gradient(135deg,#2e2006,#4a3410)',border:'#ffd700',text:'#ffe680'},
+          green:{bg:'linear-gradient(135deg,#3fbf8f,#6ed9b0)',border:'#2a7a5e',text:'#04160c'},
+          yellow:{bg:'linear-gradient(135deg,#b87a10,#e0a028)',border:'#7a5208',text:'#2a1c00'},
+          face:{bg:'#fff6e0',border:'#b8a668',text:'#2e2006'}, error:{bg:'#e03a2a',text:'#fff'} } },
 ];
 function activePalette() { return themeById(getActiveThemeId()).pal; }
 
@@ -1921,7 +1924,7 @@ const THEME_CHROME = {
   ruby:      { top:'#2a0512', surface:'#1e0510', border:'#5a1830', accent:'#ff7aa0', accent2:'#ffb0c4', textDim:'#c898a8', textMute:'#7a5060' },
   galaxy:    { top:'#08081e', surface:'#0a0a20', border:'#242452', accent:'#8fd0fc', accent2:'#c4a2ff', textDim:'#9098c4', textMute:'#4d5080' },
   lava:      { top:'#0a0301', surface:'#180804', border:'#6a2810', accent:'#ff8c1a', accent2:'#ff3d1a', textDim:'#c49a86', textMute:'#7a5548' },
-  gold:      { top:'#1a1608', surface:'#16120a', border:'#6a5a1e', accent:'#ffd700', accent2:'#e0b84a', textDim:'#c4b488', textMute:'#7a6d48' },
+  gold:      { top:'#f2d267', surface:'#2e2107', border:'#6a4d12', accent:'#ffd700', accent2:'#e0b84a', textDim:'#d8c48f', textMute:'#a08a55' },
 };
 function activeChrome() { return THEME_CHROME[getActiveThemeId()] || THEME_CHROME.default; }
 function themeCssVars(id) {
