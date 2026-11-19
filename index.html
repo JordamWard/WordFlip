@@ -40,6 +40,8 @@
   </style>
   <!-- Analytics: replace 'wordflipgame.netlify.app' with your domain if it changes -->
   <script defer data-domain="wordflipgame.netlify.app" src="https://plausible.io/js/script.js"></script>
+  <!-- Queue custom events fired before the Plausible script has loaded -->
+  <script>window.plausible = window.plausible || function() { (window.plausible.q = window.plausible.q || []).push(arguments) }</script>
 
   <script src="/react.min.js"></script>
   <script src="/react-dom.min.js"></script>
@@ -50,6 +52,14 @@
   <div id="root"></div>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
+// ─── Analytics ────────────────────────────────────────────────────────────────
+// Plausible custom events for playtests (where players struggle or drop off).
+// Each event needs a matching custom-event goal in the Plausible dashboard
+// before it shows there. Sends only the event name and a small prop or two:
+// never words, usernames or anything personal.
+function track(name, props) {
+  try { if (window.plausible) window.plausible(name, props ? { props } : undefined); } catch (e) {}
+}
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://vznuengepsbnmgwfyadr.supabase.co';
@@ -2858,6 +2868,9 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
   const startRef = useRef(null);
   const floatIdRef = useRef(0);
   const hasEndedRef = useRef(false); // prevents double onWin calls
+  const resumedRef = useRef(!!savedProg); // daily picked up mid-game (its start was already counted)
+  // Analytics label; the guided tutorial board isn't a real game, so it sends nothing.
+  const trackMode = isDaily ? "daily" : allowedTileIds ? null : fixedTiles ? "challenge" : "solo";
   const stateRef = useRef({});       // always holds latest state values
   const processingRef = useRef(false); // hard lock during 4-tile processing
   const flippedRef = useRef([]);       // always-current mirror of flipped state
@@ -2908,10 +2921,22 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
     return ()=>clearInterval(t);
   },[isDaily, started]);
 
+  // Analytics: a fresh daily counts as started on its first flip; leaving any
+  // real game before it ends counts as a mid-game quit.
+  useEffect(()=>{
+    if (isDaily && started && !resumedRef.current) track("Daily Start");
+  },[started]);
+  useEffect(()=>()=>{
+    if (trackMode && !hasEndedRef.current && stateRef.current.turns > 0) {
+      track("Quit Mid-Game", { mode: trackMode, guesses: stateRef.current.turns });
+    }
+  },[]);
+
   // safeOnWin: can only fire once per game, always uses fresh state from stateRef
   function safeOnWin(extraProps={}) {
     if (hasEndedRef.current) return;
     hasEndedRef.current = true;
+    if (isDaily) track("Daily Finish", { result: extraProps.outOfTurns ? "out of guesses" : "solved", guesses: stateRef.current.turns });
     clearInterval(timerRef.current);
     if (isDaily) clearDailyProgress(); // game finished — no resume next time
     setFlipped([]);
@@ -3432,7 +3457,7 @@ function TutorialBoard({ onExit }) {
         allowedTileIds={allowedTileIds}
         onTileFlipped={handleTileFlipped}
         onGuessResolved={handleGuessResolved}
-        onWin={() => setStep("complete")}
+        onWin={() => { track("Tutorial Complete"); setStep("complete"); }}
         timeLimit={null}
         gridRef={gridRef}
       />
@@ -3784,6 +3809,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
 
   function handleShare() {
     const text = buildShareText(result.turns, result.elapsed, score, wordResultsArr, result.words.length, (result.bonusWords||[]).length);
+    track("Share", { from: "results" });
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
 
@@ -6621,6 +6647,7 @@ function DailyAlreadyDone({ onMenu, session, onAuth, onNine, onLeaderboard }) {
   const [copied,setCopied] = useState(false);
   function handleShare() {
     const text = buildShareText(done?.turns ?? 0, done?.elapsed ?? 0, score, wordResultsArr2, getDailyWords().length, (done?.bonusWords||[]).length);
+    track("Share", { from: "already played" });
     shareOrCopy(text, (didCopy) => { if (didCopy) { setCopied(true); setTimeout(()=>setCopied(false),2500); } });
   }
   return (
@@ -6895,6 +6922,7 @@ function AuthScreen({ onBack, onAuth, recoveryMode, onResetDone, initialMode }) 
         if (password.length < 6) { setError("Password must be at least 6 characters"); setLoading(false); return; }
         if (usernameOk === false) { setError("Username is already taken"); setLoading(false); return; }
         const signUpData = await authSignUp(email, password, username);
+        track("Sign Up");
         if (!signUpData.session) {
           await authSignIn(email, password);
         }
