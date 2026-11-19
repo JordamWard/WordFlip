@@ -2095,6 +2095,9 @@ const REWARD_BACK_IDS  = new Set(REWARD_LADDER.filter(r=>r.type==='back').map(r=
 function unlockedRewardIds(career) { return REWARD_LADDER.filter(r => career >= r.points).map(r => r.id); }
 // Which reward-only cosmetic KEYS are unlocked (for the inventory owned-check).
 function unlockedRewardCosmeticKeys(career) { return REWARD_LADDER.filter(r => career >= r.points && (r.type==='theme'||r.type==='back')).map(r => r.key); }
+// One-time inline tip the first time a player ever scores yellow.
+function yellowTipSeen() { try { return localStorage.getItem('wf_yellow_tip_seen') === '1'; } catch (e) { return true; } }
+function markYellowTipSeen() { try { localStorage.setItem('wf_yellow_tip_seen', '1'); } catch (e) {} }
 function getSeenRewards() { try { return new Set(JSON.parse(localStorage.getItem('wf_rewards_seen')||'[]')); } catch (e) { return new Set(); } }
 function markRewardsSeen(ids) { try { const s = getSeenRewards(); ids.forEach(k=>s.add(k)); localStorage.setItem('wf_rewards_seen', JSON.stringify([...s])); } catch (e) {} }
 function newRewardIds(career) { const seen = getSeenRewards(); return unlockedRewardIds(career).filter(id => !seen.has(id)); }
@@ -2855,6 +2858,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
   const [outOfTurns, setOutOfTurns] = useState(false);
   const [floatingScores, setFloatingScores] = useState([]);
   const [scorePop, setScorePop] = useState(false);
+  const [yellowTip, setYellowTip] = useState(false); // first-ever yellow: explain how to get green
   // Shop power-ups (bought in the Token Shop, counts held per-device)
   const [invHint, setInvHint] = useState(() => getInv('wf_inv_hint'));
   const [invXray, setInvXray] = useState(() => getInv('wf_inv_xray'));
@@ -3121,6 +3125,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
       // Lock immediately — prevents ANY further input until we unlock
       processingRef.current = true;
       setTurns(t=>t+1);
+      setYellowTip(false); // the next guess clears the first-yellow tip
 
       const ft = newFlipped.map(id=>tiles.find(t=>t.id===id));
       const letters = ft.map(t=>t.letter);
@@ -3171,6 +3176,8 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
       setFloatingScores(prev=>[...prev,{id:fid,pts,color:floatColor}]);
       setTimeout(()=>setFloatingScores(prev=>prev.filter(f=>f.id!==fid)),1150);
       setFlash(inOrder ? "good" : "goodYellow");
+      // Not in the guided tutorial (it explains yellow itself).
+      if (!inOrder && !onGuessResolved && !yellowTipSeen()) { markYellowTipSeen(); setYellowTip(true); }
       setTimeout(()=>{
         setFound(f=>[...f,matchIdx]);
         setWordResults(prev=>({...prev,[matchIdx]:inOrder?"green":"yellow"}));
@@ -3253,6 +3260,17 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
           </span>
         )}
       </div>
+      {yellowTip && (
+        <div role="note" onClick={()=>setYellowTip(false)} style={{
+          margin:"0 auto 8px",maxWidth:420,padding:"8px 12px",borderRadius:10,cursor:"pointer",
+          background:"var(--wf-surface)",border:"1.5px solid var(--wf-accent2)",
+          fontFamily:"'JetBrains Mono',monospace",fontSize:"0.72rem",lineHeight:1.5,color:"var(--wf-text-dim)",textAlign:"center",
+          animation:"menuIn 0.3s ease",
+        }}>
+          🟨 <strong style={{color:"var(--wf-accent2)"}}>Yellow</strong> = right word, letters flipped out of order (+100).
+          Flip a word's letters in spelling order for 🟩 <strong style={{color:"var(--wf-accent)"}}>+300</strong>. <span style={{opacity:0.7}}>Tap to hide</span>
+        </div>
+      )}
       {/* Power-up row — only shows when the player owns items (bought in the shop).
           Compact + fixed-ish height; the reveal reserves the same space so the
           board doesn't jump when play begins. */}
