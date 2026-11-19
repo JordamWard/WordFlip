@@ -2534,6 +2534,17 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
     : isFound ? P.yellow.text
     : P.face.text;
   const selGlow = (isSelected ? P.sel.border : "var(--wf-accent2)") + "88";
+  // Keep a face-down tile's letter out of the page, so inspect-element or a
+  // screen reader can't read the board. The letter appears the moment the
+  // tile flips and lingers just long enough to cover the flip-back turn.
+  const faceUp = isFlipped || isFound;
+  const [letterShown, setLetterShown] = useState(faceUp);
+  useEffect(() => {
+    if (faceUp) { setLetterShown(true); return; }
+    const t = setTimeout(() => setLetterShown(false), 260);
+    return () => clearTimeout(t);
+  }, [faceUp]);
+  const faceLetter = (faceUp || letterShown) ? tile.letter : "";
   const label = isFound
     ? `${tile.letter} — word found`
     : isFlipped
@@ -2605,7 +2616,7 @@ function Tile({ tile, isFlipped, isFound, foundInOrder, isSelected, isError, onC
             fontFamily:"'JetBrains Mono',monospace",
             fontSize:"clamp(1.1rem,3.5vw,1.8rem)",fontWeight:800,
             color:faceText,letterSpacing:"0.05em",
-          }}>{tile.letter}</span>
+          }}>{faceLetter}</span>
           {isFlipped&&!isFound&&orderNum!==undefined&&(
             <span style={{position:"absolute",bottom:4,right:6,fontSize:"0.55em",fontWeight:700,opacity:0.5,color:faceText}}>{orderNum+1}</span>
           )}
@@ -2762,7 +2773,7 @@ function RevealGrid({ words, tiles, maxTurns, onDone }) {
                           fontFamily:"'JetBrains Mono',monospace",
                           fontSize:'clamp(1.1rem,3.5vw,1.8rem)',fontWeight:800,
                           color:P.sel.text,letterSpacing:'0.05em',
-                        }}>{tile.letter}</span>
+                        }}>{phase==='shuffle' ? '' : tile.letter /* gone once face down, so the shuffled spots can't be read from the page */}</span>
                         <span style={{
                           position:'absolute',bottom:4,right:6,
                           fontSize:'0.55em',fontWeight:700,opacity:0.5,color:P.sel.text,
