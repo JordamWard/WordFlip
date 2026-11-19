@@ -1679,7 +1679,7 @@ const ACHIEVEMENTS = [
   { id:'games_100',   icon:'💯', name:'Centurion',     desc:'Play 100 games', tier:'Dedication', reward:300 },
   // Just for Fun — the "so bad it's impressive" hall of shame
   { id:'butterfingers', icon:'🧈', name:'Butterfingers', desc:'Rack up 10+ wrong guesses in one game', tier:'Just for Fun', reward:50 },
-  { id:'blank_slate',   icon:'🫥', name:'Blank Slate',   desc:'Run out of turns without finding a word', tier:'Just for Fun', reward:50 },
+  { id:'blank_slate',   icon:'🫥', name:'Blank Slate',   desc:'Run out of guesses without finding a word', tier:'Just for Fun', reward:50 },
   { id:'scenic_route',  icon:'🐌', name:'Scenic Route',  desc:'Take over 10 minutes to finish a game',   tier:'Just for Fun', reward:40 },
   { id:'kitchen_sink',  icon:'🧰', name:'Kitchen Sink',  desc:'Use a Hint and an X-ray in the same game', tier:'Just for Fun', reward:40 },
 ];
@@ -3169,7 +3169,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.78rem"}}>
                 {maxTurns ? (
-                  <>Turns: <strong aria-live={turnsDanger?"assertive":"off"} style={{color:turnsLeft<=3?"#FF5E5B":"var(--wf-accent2)",transition:"color 0.3s"}}>{turnsLeft}</strong> left</>
+                  <>Guesses: <strong aria-live={turnsDanger?"assertive":"off"} style={{color:turnsLeft<=3?"#FF5E5B":"var(--wf-accent2)",transition:"color 0.3s"}}>{turnsLeft}</strong> left</>
                 ) : (
                   <>Guesses: <strong style={{color:"var(--wf-accent2)"}}>{turns}</strong></>
                 )}
@@ -3384,7 +3384,7 @@ function TutorialBoard({ onExit }) {
     yellow: "👉 Flip the glowing tile — follow the highlight, one at a time.",
     green: "👉 Almost there! Flip the glowing tile in order.",
     free: "👉 Nice work! Finish the puzzle — flip the rest in any order.",
-    bonusExplain: `✨ That's a Bonus Word! It's not one of this puzzle's 4 real words, but any valid word — in any order — still earns +${BONUS_WORD_PTS}.`,
+    bonusExplain: `✨ That's a Bonus Word! It's not one of this puzzle's 4 real words, but any valid word — in any order — pays +${BONUS_WORD_PTS}, which covers the guess it used. Bonus words are free.`,
     row2Explain: "✨ Another bonus word! Between rows 1 and 2, we've now seen enough letters to spell some of our real words.",
     yellowExplain: "🟨 Right letters, wrong order = Yellow, +100 points.",
     greenExplain: "🟩 Right letters, right order = Green, +300 points. Now finish the puzzle!",
@@ -3771,7 +3771,7 @@ function WinScreen({ result, mode, onPlayAgain, onMenu, isDaily, streak, streakB
       </div>
       <div aria-hidden="true" style={{fontSize:"3rem",marginBottom:8}}>{result.outOfTurns?"😬":"🎉"}</div>
       <h2 style={{fontFamily:"'Fraunces',serif",color:"var(--wf-heading)",fontSize:"2rem",margin:"0 0 4px"}}>
-        {result.outOfTurns?"Out of turns!":mode==="daily"?"Daily Complete!":"You Win!"}
+        {result.outOfTurns?"Out of guesses!":mode==="daily"?"Daily Complete!":"You Win!"}
       </h2>
       <p style={{color:"var(--wf-text-dim)",fontFamily:"'JetBrains Mono',monospace",fontSize:"0.9rem",marginBottom:8}}>
         {result.words.join(" · ")}
@@ -6724,10 +6724,10 @@ function HowToPlay({ onClose, onFinish }) {
     {
       emoji: "⭐",
       title: "Extra Points for Speed & Accuracy",
-      body: `In single-player, you start with ${MAX_GUESSES} guesses and 600 seconds. Every guess you don't use is worth ${SPARE_GUESS_PTS} pts, and every second you don't use is worth 1 pt — plus extra for spotting hidden bonus words.`,
+      body: `In single-player, you start with ${MAX_GUESSES} guesses and 600 seconds. Every guess you don't use is worth ${SPARE_GUESS_PTS} pts, and every second you don't use is worth 1 pt. Spotting a hidden bonus word is free: it pays back the guess it used.`,
       visual: (
         <div style={{display:"flex",flexDirection:"column",gap:6,margin:"12px 0"}}>
-          {[["⏱","Per unused second","+1",TIME_BONUS_COLOR],["🎯","Per unused guess",`+${SPARE_GUESS_PTS}`,"#00BBF9"],["✨","Per bonus word",`+${BONUS_WORD_PTS}`,BONUS_WORD_COLOR]].map(([em,label,pts,col])=>(
+          {[["⏱","Per unused second","+1",TIME_BONUS_COLOR],["🎯","Per unused guess",`+${SPARE_GUESS_PTS}`,"#00BBF9"],["✨","Bonus word (pays back its guess)",`+${BONUS_WORD_PTS}`,BONUS_WORD_COLOR]].map(([em,label,pts,col])=>(
             <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--wf-surface)",borderRadius:8,border:`1px solid ${col}44`}}>
               <span style={{fontSize:"1.1rem",width:24}}>{em}</span>
               <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.72rem",flex:1}}>{label}</span>
