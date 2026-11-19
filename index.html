@@ -8566,19 +8566,25 @@ function WordFlip() {
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
+        // A first-time visitor has no controlling service worker yet, so the
+        // very first install fires "updatefound" too. Only an older worker
+        // already in control means this is a real update worth announcing.
+        const hadController = !!navigator.serviceWorker.controller;
         navigator.serviceWorker.register("/sw.js").then(reg => {
           console.log("WordFlip SW registered:", reg.scope);
 
           // When a new SW is found, prompt the user to update
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
+            if (!newWorker || !hadController) return;
             newWorker.addEventListener("statechange", () => {
-              if (newWorker.state === "activated") {
+              if (newWorker.state === "activated" && !document.getElementById("wf-update-banner")) {
                 // Show an update banner. It stays up until tapped — it used to
                 // auto-dismiss after 10s, which meant an easy-to-miss deploy
                 // (e.g. a bug fix) could sit unapplied indefinitely on a tab
                 // that was left open, since nothing else ever forces a reload.
                 const banner = document.createElement("div");
+                banner.id = "wf-update-banner";
                 banner.innerHTML = `
                   <div style="
                     position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
