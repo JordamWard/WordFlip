@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>WordFlip</title>
   <meta name="description" content="WordFlip — a daily word memory game. Flip tiles, spell words, earn points." />
   <meta name="theme-color" content="#0D1B2A" />
@@ -29,6 +29,9 @@
     html, body, #root { height: 100%; min-height: 100%; }
     html { background: #0D1B2A; }
     body { background: #0D1B2A; overflow-x: hidden; }
+    /* Pinch zoom stays on for readability; manipulation only stops
+       double-tap zoom so quick tile taps don't zoom the board. */
+    html, body { touch-action: manipulation; }
   </style>
   <!-- Analytics: replace 'wordflipgame.netlify.app' with your domain if it changes -->
   <script defer data-domain="wordflipgame.netlify.app" src="https://plausible.io/js/script.js"></script>
@@ -1908,7 +1911,7 @@ function activePalette() { return themeById(getActiveThemeId()).pal; }
 // tint (the <meta name="theme-color"> and the html element) — otherwise that
 // strip above the app stays the old navy regardless of theme.
 const THEME_CHROME = {
-  default:   { top:'#0D1B2A', surface:'#0a1520', border:'#1e3048', accent:'#00F5C4', accent2:'#FFB703', textDim:'#7a9cc0', textMute:'#3a5570' },
+  default:   { top:'#0D1B2A', surface:'#0a1520', border:'#1e3048', accent:'#00F5C4', accent2:'#FFB703', textDim:'#7a9cc0', textMute:'#6a87a6' }, // textMute was #3a5570 (~2.3:1 on the navy); #6a87a6 is ~4.6:1
   midnight:  { top:'#05070d', surface:'#0a0e18', border:'#222d47', accent:'#9fb2d6', accent2:'#cdd8ee', textDim:'#8a97b5', textMute:'#55618a' },
   sunset:    { top:'#2a1428', surface:'#1e0f22', border:'#3d2340', accent:'#ff9f6b', accent2:'#ff7ba0', textDim:'#c49ab0', textMute:'#7a556e' },
   forest:    { top:'#0c1f17', surface:'#0a1a12', border:'#1e4030', accent:'#34d99a', accent2:'#a8e05f', textDim:'#86ac96', textMute:'#4d7361' },
@@ -3271,7 +3274,7 @@ function GameBoard({ words, onWin, timeLimit, onTimeUp, maxTurns, isDaily, helpL
           return tileEl;
         })}
       </div>
-      <p style={{textAlign:"center",color:"#2a4060",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} guesses · `:""}🟩 +300 · 🟨 +100 · time & efficiency bonus revealed at end</p>
+      <p style={{textAlign:"center",color:"var(--wf-text-dim)",fontSize:"0.75rem",marginTop:8,fontFamily:"'JetBrains Mono',monospace"}}>{maxTurns?`${maxTurns} guesses · `:""}🟩 +300 · 🟨 +100 · time & efficiency bonus revealed at end</p>
     </div>
   );
 }
@@ -4010,7 +4013,7 @@ function LeaderboardView({ onBack, session, onSignIn, onAchievements, onFriends 
         ) : history.length === 0 ? (
           <div style={{textAlign:"center",padding:"32px 0"}}>
             <div style={{fontSize:"2.5rem",marginBottom:12}}>📅</div>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.85rem",lineHeight:1.6}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.85rem",lineHeight:1.6}}>
               No scores yet.<br/>Complete a Daily Challenge<br/>to start your history!
             </p>
           </div>
@@ -5088,7 +5091,7 @@ function LocalMultiScreen({ onBack, refreshWallet, onAchievements }) {
         ))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0}}>
+        <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.75rem",margin:0}}>
           {playerNames[currentPlayer]}'s turn · Turn {turns+1}
         </p>
         <div style={{display:"flex",gap:6}}>
@@ -5803,7 +5806,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
       )}
       <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:12}}>
         <div style={{flex:1, height:1, background:'#1e3048'}} />
-        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem'}}>{fromInvite ? 'join room' : 'or join existing'}</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem'}}>{fromInvite ? 'join room' : 'or join existing'}</span>
         <div style={{flex:1, height:1, background:'#1e3048'}} />
       </div>
       <div style={{display:'flex', gap:8}}>
@@ -5826,14 +5829,14 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
       <button onClick={()=>{ setErrMsg(''); setPhase('join'); phaseRef.current='join'; }} style={{...btnStyle('#1e3048','#7a9cc0'), marginBottom:18, fontSize:'0.8rem'}}>← Back</button>
       <div style={{fontSize:'2rem', marginBottom:8}}>🔍</div>
       <h2 style={{fontFamily:"'Fraunces',serif", color:'var(--wf-heading)', margin:'0 0 6px'}}>Open Games</h2>
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.72rem', margin:'0 0 16px'}}>Join a room someone left open to the public.</p>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.72rem', margin:'0 0 16px'}}>Join a room someone left open to the public.</p>
       {errMsg && <p style={{color:'#FF5E5B', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.8rem', marginBottom:12}}>{errMsg}</p>}
       {accountName ? nameChip : (
         <input value={playerName} onChange={e => setPlayerName(e.target.value.slice(0,12))} placeholder="Your name (max 12 chars)" maxLength={12}
           style={{width:'100%', padding:'12px 14px', borderRadius:10, border:'1.5px solid #2a4060', background:'#0a1520', color:'var(--wf-heading)', fontFamily:"'JetBrains Mono',monospace", fontSize:'0.9rem', marginBottom:16, boxSizing:'border-box', outline:'none'}} />
       )}
       {publicRooms === null ? (
-        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.8rem'}}>Loading…</p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.8rem'}}>Loading…</p>
       ) : publicRooms.length === 0 ? (
         <div style={{background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:12, padding:'18px 16px', fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', lineHeight:1.6}}>
           No open games right now.<br/>Create a room and tick <strong style={{color:'#00F5C4'}}>Public</strong> so others can find you.
@@ -5846,7 +5849,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
             <div key={r.id} style={{display:'flex', alignItems:'center', gap:10, background:'#0a1520', borderRadius:12, padding:'12px 14px', marginBottom:8, border:'1.5px solid #1e3048'}}>
               <div style={{flex:1, textAlign:'left', minWidth:0}}>
                 <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-heading)', fontSize:'0.85rem', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>🎮 {hostName}'s room</div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.66rem', marginTop:2}}>{r.players.length}/{r.settings?.maxPlayers||4} players · {r.code}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.66rem', marginTop:2}}>{r.players.length}/{r.settings?.maxPlayers||4} players · {r.code}</div>
               </div>
               <button onClick={()=>joinRoom(r.code)} disabled={busy} style={{...btnStyle('#00F5C4','#0a2e24'), padding:'9px 16px', fontSize:'0.8rem', flexShrink:0, opacity:busy?0.6:1}}>Join</button>
             </div>
@@ -5863,9 +5866,9 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
   if (phase === 'lobby') return (
     <div style={{textAlign:'center', maxWidth:360, margin:'0 auto'}}>
       <div style={{background:'#0a1520', border:'1.5px solid #1e3048', borderRadius:14, padding:'16px 20px', marginBottom:16}}>
-        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'0 0 6px', letterSpacing:'0.08em'}}>ROOM CODE</p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', margin:'0 0 6px', letterSpacing:'0.08em'}}>ROOM CODE</p>
         <div style={{fontFamily:"'Fraunces',serif", color:'#00F5C4', fontSize:'2.4rem', fontWeight:900, letterSpacing:'0.22em'}}>{room?.code}</div>
-        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.7rem', margin:'6px 0 0'}}>Share with friends to join</p>
+        <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.7rem', margin:'6px 0 0'}}>Share with friends to join</p>
         {room?.is_public && <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#00F5C4', fontSize:'0.66rem', margin:'6px 0 0'}}>🌐 Listed in Open Games</p>}
       </div>
       <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#7a9cc0', fontSize:'0.75rem', margin:'0 0 8px'}}>Players ({players.length}/{room?.settings?.maxPlayers||4})</p>
@@ -5895,11 +5898,11 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
               👥 Invite friends {online.length>0 ? `(${online.length} online)` : ''}
             </p>
             {friends.length === 0 ? (
-              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
                 Add friends from the menu to invite them here.
               </p>
             ) : online.length === 0 ? (
-              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.68rem', margin:0, lineHeight:1.5}}>
                 None of your friends are online right now.
               </p>
             ) : (
@@ -5929,13 +5932,13 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
               {players.length<2?'Waiting for players…':'Start Game →'}
             </button>
             {players.length>=2&&players.length<(room?.settings?.maxPlayers||4)&&(
-              <p style={{fontFamily:"'JetBrains Mono',monospace",color:'#3a5570',fontSize:'0.7rem',margin:'8px 0 0'}}>
+              <p style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--wf-text-mute)',fontSize:'0.7rem',margin:'8px 0 0'}}>
                 You can start now or wait for more (up to {room?.settings?.maxPlayers||4} players). Players can join mid-game too.
               </p>
             )}
           </>
         ) : (
-          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', fontSize:'0.8rem', padding:'12px', background:'#0a1520', borderRadius:10, border:'1.5px solid #1e3048'}}>
+          <div style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', fontSize:'0.8rem', padding:'12px', background:'#0a1520', borderRadius:10, border:'1.5px solid #1e3048'}}>
             ⏳ Waiting for host to start...
           </div>
         )}
@@ -5962,7 +5965,7 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
             const colorIdx = sortedPlayers.findIndex(x => x.id === p.id);
             return (
               <div key={p.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0a1520', borderRadius:10, padding:'10px 16px', border:`1.5px solid ${p.score===maxScore?MP_COLORS[colorIdx>=0?colorIdx:0]:'#1e3048'}`}}>
-                <span style={{fontFamily:"'JetBrains Mono',monospace", color:'#3a5570', marginRight:8, fontSize:'0.8rem'}}>#{i+1}</span>
+                <span style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-mute)', marginRight:8, fontSize:'0.8rem'}}>#{i+1}</span>
                 <span style={{fontFamily:"'JetBrains Mono',monospace", color:p.id===myId?'var(--wf-heading)':'#7a9cc0', flex:1, textAlign:'left'}}>{p.name}{p.id===myId?' (you)':''}</span>
                 <span style={{fontFamily:"'Fraunces',serif", color:'#FFB703', fontWeight:700}}>{p.score.toLocaleString()} pts</span>
               </div>
@@ -6045,15 +6048,15 @@ function OnlineScreen({ onBack, refreshWallet, onAchievements, session, profile,
           });
         })()}
       </div>
-      {!isMyTurn && <p style={{textAlign:'center', color:'#3a5570', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Watching {currentPlayerObj?.name || 'other player'} choose…</p>}
+      {!isMyTurn && <p style={{textAlign:'center', color:'var(--wf-text-mute)', fontSize:'0.72rem', marginTop:8, fontFamily:"'JetBrains Mono',monospace"}}>Watching {currentPlayerObj?.name || 'other player'} choose…</p>}
       {/* Footer: room code for rejoining + leave button */}
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8}}>
         <span
           onClick={() => { const link=`https://wordflipgame.netlify.app?room=${room?.code}`; navigator.clipboard.writeText(link).catch(()=>{}); }}
           title="Tap to copy invite link"
-          style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', cursor:'pointer', userSelect:'none'}}
+          style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.68rem', cursor:'pointer', userSelect:'none'}}
         >
-          Room <strong style={{color:'#3a5570', letterSpacing:'0.1em'}}>{room?.code}</strong> 🔗
+          Room <strong style={{color:'var(--wf-text-mute)', letterSpacing:'0.1em'}}>{room?.code}</strong> 🔗
         </span>
         <button onClick={() => leaveRoom('Leave this game?')}
           style={{...btnStyle('#1e3048','#3a5570'), padding:'4px 10px', fontSize:'0.7rem'}}>Leave</button>
@@ -6143,7 +6146,7 @@ function MultiSetup({ onBack, onLocal, onOnline, session, onlineIds, friends, on
               ))}
             </div>
           ) : (
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#3a5570",fontSize:"0.68rem",margin:"8px 0 0",lineHeight:1.5}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-mute)",fontSize:"0.68rem",margin:"8px 0 0",lineHeight:1.5}}>
               {(friends || []).length === 0
                 ? "Add friends to invite them into a game."
                 : "None of your friends are online right now."}
@@ -7766,7 +7769,7 @@ function ShopScreen({ onBack, balance, refreshWallet, session, activeThemeId, ow
         );
       })}
 
-      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'#2a4060', fontSize:'0.68rem', textAlign:'center', margin:'14px 0 0', lineHeight:1.5}}>
+      <p style={{fontFamily:"'JetBrains Mono',monospace", color:'var(--wf-text-dim)', fontSize:'0.68rem', textAlign:'center', margin:'14px 0 0', lineHeight:1.5}}>
         Power-ups are used during a game — look for the 💡 and 🔍 buttons above the board.
       </p>
 
@@ -8388,7 +8391,7 @@ function WordFlip() {
         <h1 style={{fontFamily:"'Fraunces',serif",fontWeight:900,fontStyle:"italic",fontSize:"clamp(2rem,6vw,3.2rem)",background:theme.title,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",margin:0,letterSpacing:"-0.02em"}}>WordFlip</h1>
         {screen==="menu"&&(
           <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:4}}>
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.8rem",margin:0}}>remember · flip · spell</p>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.8rem",margin:0}}>remember · flip · spell</p>
           </div>
         )}
       </div>
@@ -8462,7 +8465,7 @@ function WordFlip() {
             })()}
           </div>
           <div onClick={()=>setShowTutorial(true)} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" ")setShowTutorial(true);}} style={{marginTop:24,padding:14,background:"var(--wf-surface)",borderRadius:12,border:"1.5px solid var(--wf-border)",cursor:"pointer"}} aria-label="How to play">
-            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"#2a4060",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
+            <p style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--wf-text-dim)",fontSize:"0.75rem",margin:0,lineHeight:1.7}}>
               <strong style={{color:"var(--wf-text-dim)"}}>How to play:</strong> Flip 4 tiles to spell a word. 🟩 In order = +300, 🟨 any order = +100. Bonus points for speed (600) and efficiency ({(MAX_GUESSES-4)*SPARE_GUESS_PTS})! <span style={{color:"var(--wf-accent)",fontWeight:700}}>▶ Full tutorial</span>
             </p>
           </div>
