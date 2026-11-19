@@ -21,7 +21,12 @@
   <meta property="og:description" content="A daily word memory game — flip tiles, spell words, earn points." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://wordflipgame.netlify.app" />
-  <meta name="twitter:card" content="summary" />
+  <meta property="og:image" content="https://wordflipgame.netlify.app/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WordFlip: remember, flip, spell. A new word memory puzzle every day." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://wordflipgame.netlify.app/og-image.png" />
   <meta name="twitter:title" content="WordFlip" />
   <meta name="twitter:description" content="A daily word memory game — flip tiles, spell words, earn points." />
   <style>
@@ -2333,6 +2338,15 @@ function shareOrCopy(text, onDone) {
   onDone && onDone(true);
 }
 
+// Puzzle number for the share text: #1 is Jul 24, 2026, the first day of the
+// curated daily set. Counted on local calendar dates (UTC maths on the Y/M/D),
+// so a daylight-saving change can't skip or repeat a number. Display only;
+// it doesn't choose the puzzle (getDailyWords does).
+const DAILY_NUMBER_START = Date.UTC(2026, 6, 24);
+function dailyPuzzleNumber(d = new Date()) {
+  return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - DAILY_NUMBER_START) / 86400000) + 1;
+}
+
 function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 0) {
   const d = new Date();
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -2347,7 +2361,7 @@ function buildShareText(turns, ms, score, wordResults, totalWords, bonusCount = 
   // "Guesses" = total guesses used to finish = every 4-tile attempt (found +
   // wrong + bonus) = `turns`, out of the 16 you start with. Bonus words are shown
   // separately too, but they DO count as a guess here (they spent an attempt).
-  return "WordFlip Daily \u00B7 " + date + "\n"
+  return "WordFlip Daily #" + dailyPuzzleNumber(d) + " \u00B7 " + date + "\n"
     + blocks + "\n"
     + turns + " guess" + (turns !== 1 ? "es" : "") + " \u00B7 " + formatTime(ms) + " \u00B7 " + bonus + score.toLocaleString() + " pts\n"
     + "https://wordflipgame.netlify.app";
